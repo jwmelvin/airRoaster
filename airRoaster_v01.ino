@@ -375,7 +375,19 @@ void processCommand(String cmd, int8_t clientNum) {
     kw.toUpperCase();
 
     if (kw == "LOG") {
-        if (clientNum >= 0) sendLog((uint8_t)clientNum);
+        if (clientNum >= 0) {
+            sendLog((uint8_t)clientNum);
+        } else {
+            uint8_t start = (errCount < ERR_LOG_SIZE) ? 0 : errHead;
+            if (errCount == 0) {
+                Serial.println("[LOG] no errors");
+            } else {
+                for (uint8_t i = 0; i < errCount; i++) {
+                    Serial.print("[LOG] ");
+                    Serial.println(errLog[(start + i) % ERR_LOG_SIZE]);
+                }
+            }
+        }
         return;
 
     } else if (kw == "OT1") {

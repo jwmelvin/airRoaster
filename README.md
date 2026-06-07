@@ -103,7 +103,7 @@ Token delimiters: space, comma, semicolon, or equals sign. Commands are case-ins
 
 ### Serial (115200 baud)
 
-Accepts the same command set as WebSocket, terminated by newline. Maximum command length is 32 bytes. `LOG` sent over serial prints nothing (no client to reply to); check the WebSocket interface or the Serial monitor for errors broadcast at the time they occur.
+Accepts the same command set as WebSocket, terminated by newline. Maximum command length is 32 bytes. `LOG` prints the error log to Serial, one entry per line prefixed with `[LOG]`.
 
 ---
 
