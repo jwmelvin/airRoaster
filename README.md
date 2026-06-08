@@ -185,6 +185,27 @@ A ready-to-import Artisan settings file is provided at `artisan/airRoaster_v01.a
 
 Temperature channels (`BT`, `ET`) return `0.0` until physical sensors are wired and the `btTemp`/`etTemp` globals are populated in the firmware.
 
+### Adding more sensors
+
+Artisan supports up to 10 channels via WebSocket: 2 on the main device plus 2 per extra device (max 4 extra devices).
+
+**To add channels to the main device** (up to the 10-channel limit):
+1. Add a global float for the new sensor in the firmware
+2. Extend the `data` object in `handleArtisanRequest()`:
+   ```cpp
+   snprintf(buf, sizeof(buf),
+            "{\"id\":%s,\"data\":{\"BT\":%.1f,\"ET\":%.1f,\"inlet\":%.1f}}",
+            idStr, btTemp, etTemp, inletTemp);
+   ```
+3. Add the new node name to `channel_nodes` in `artisan/airRoaster_v01.aset`:
+   ```
+   channel_nodes=BT, ET, inlet, , , , , , ,
+   ```
+
+**To add an extra device** (when channels exceed what fits on the main device, or for logical separation):
+- In Artisan, add a WebSocket extra device pointing at the same `ws://<device-ip>:81` with its own `channel_nodes`
+- The firmware handles extra device requests identically — Artisan connects as another client and polls with the same `getData` protocol; `handleArtisanRequest()` responds to all clients with the full data object, and Artisan picks out whichever nodes it is configured to read per device
+
 ---
 
 ## Dependencies
