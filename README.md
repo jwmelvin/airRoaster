@@ -91,13 +91,15 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 | `OT2 DOWN` | `OT2 DOWN` | Decrease fan by `DUTY_STEP` |
 | `LOG` | `LOG` | Retrieve the error log (sent only to requesting client) |
 
+All unsolicited messages use Artisan's push message envelope so any client can use a consistent format:
+
 **Status broadcast** (sent to all clients on any state change, and to new clients on connect):
 
 ```json
-{"heat": 60, "heatReq": 60, "fan": 50, "interlock": false}
+{"pushMessage": "status", "data": {"heat": 60, "heatReq": 60, "fan": 50, "interlock": false}}
 ```
 
-| Field | Description |
+| `data` field | Description |
 |-------|-------------|
 | `heat` | Actual heat level applied to the dimmer (%) |
 | `heatReq` | Requested heat level before interlock (%) |
@@ -107,14 +109,14 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 **Error broadcast** (sent to all clients when an error is logged):
 
 ```json
-{"error": "DimmerLink 0x51 ERR_PARAM (0xFE)"}
+{"pushMessage": "error", "data": "DimmerLink 0x51 ERR_PARAM (0xFE)"}
 ```
 
 **Log response** (sent only to the client that sent `LOG`):
 
 ```json
-{"log": "DimmerLink 0x52 not ready after 3 tries"}
-{"log": "no errors"}
+{"pushMessage": "log", "data": "DimmerLink 0x52 not ready after 3 tries"}
+{"pushMessage": "log", "data": "no errors"}
 ```
 
 ### Serial (115200 baud)

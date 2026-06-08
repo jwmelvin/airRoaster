@@ -76,8 +76,8 @@ void logError(const char* msg) {
     Serial.print("[ERR] ");
     Serial.println(msg);
 
-    char buf[ERR_MSG_LEN + 12];
-    snprintf(buf, sizeof(buf), "{\"error\":\"%s\"}", msg);
+    char buf[ERR_MSG_LEN + 28];
+    snprintf(buf, sizeof(buf), "{\"pushMessage\":\"error\",\"data\":\"%s\"}", msg);
     webSocket.broadcastTXT(buf);
 }
 
@@ -85,12 +85,12 @@ void sendLog(uint8_t clientNum) {
     uint8_t start = (errCount < ERR_LOG_SIZE) ? 0 : errHead;
     for (uint8_t i = 0; i < errCount; i++) {
         uint8_t idx = (start + i) % ERR_LOG_SIZE;
-        char buf[ERR_MSG_LEN + 12];
-        snprintf(buf, sizeof(buf), "{\"log\":\"%s\"}", errLog[idx]);
+        char buf[ERR_MSG_LEN + 32];
+        snprintf(buf, sizeof(buf), "{\"pushMessage\":\"log\",\"data\":\"%s\"}", errLog[idx]);
         webSocket.sendTXT(clientNum, buf);
     }
     if (errCount == 0) {
-        webSocket.sendTXT(clientNum, "{\"log\":\"no errors\"}");
+        webSocket.sendTXT(clientNum, "{\"pushMessage\":\"log\",\"data\":\"no errors\"}");
     }
 }
 
@@ -176,9 +176,9 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
 // Broadcast status JSON to all WebSocket clients
 // ===========================================================================
 void broadcastStatus() {
-    char buf[80];
+    char buf[96];
     snprintf(buf, sizeof(buf),
-             "{\"heat\":%u,\"heatReq\":%u,\"fan\":%u,\"interlock\":%s}",
+             "{\"pushMessage\":\"status\",\"data\":{\"heat\":%u,\"heatReq\":%u,\"fan\":%u,\"interlock\":%s}}",
              heatLevel,
              requestedHeatLevel,
              fanLevel,
