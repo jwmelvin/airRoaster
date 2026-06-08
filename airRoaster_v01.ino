@@ -36,6 +36,9 @@ uint8_t requestedHeatLevel = 0;  // commanded heat level
 uint8_t heatLevel = 0;           // actual heat level sent to device
 uint8_t fanLevel = 0;
 
+float btTemp = 0.0;  // bean temperature  (populated when sensor added)
+float etTemp = 0.0;  // inlet/env temperature (populated when sensor added)
+
 String inputBuffer = "";
 volatile bool flagDisplayUpdate;
 
@@ -97,6 +100,7 @@ void sendLog(uint8_t clientNum) {
 void processCommand(String cmd, int8_t clientNum = -1);
 void applyInterlock();
 void broadcastStatus();
+bool handleArtisanRequest(uint8_t clientNum, const String& msg);
 
 // ===========================================================================
 // Setup
@@ -157,7 +161,9 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
             String cmd = String((char*)payload, length);
             cmd.trim();
             Serial.printf("[WS] Command from client %u: %s\n", num, cmd.c_str());
-            processCommand(cmd, (int8_t)num);
+            if (!handleArtisanRequest(num, cmd)) {
+                processCommand(cmd, (int8_t)num);
+            }
             break;
         }
 
@@ -178,6 +184,36 @@ void broadcastStatus() {
              fanLevel,
              (fanLevel < FAN_INTERLOCK_THRESHOLD) ? "true" : "false");
     webSocket.broadcastTXT(buf);
+}
+
+// ===========================================================================
+// Artisan WebSocket request handler
+// Artisan sends: {"command":"getData","id":12345,"machine":0}
+// We respond:    {"id":12345,"data":{"BT":0.0,"ET":0.0}}
+// ===========================================================================
+bool handleArtisanRequest(uint8_t clientNum, const String& msg) {
+    if (msg.indexOf("getData") < 0) return false;
+
+    // Extract numeric id value
+    int idPos = msg.indexOf("\"id\"");
+    if (idPos < 0) return false;
+    int colon = msg.indexOf(':', idPos);
+    if (colon < 0) return false;
+    int start = colon + 1;
+    while (start < (int)msg.length() && msg[start] == ' ') start++;
+    int end = start;
+    while (end < (int)msg.length() && isDigit(msg[end])) end++;
+    if (end == start) return false;
+
+    char idStr[12];
+    msg.substring(start, end).toCharArray(idStr, sizeof(idStr));
+
+    char buf[80];
+    snprintf(buf, sizeof(buf),
+             "{\"id\":%s,\"data\":{\"BT\":%.1f,\"ET\":%.1f}}",
+             idStr, btTemp, etTemp);
+    webSocket.sendTXT(clientNum, buf);
+    return true;
 }
 
 // ===========================================================================
