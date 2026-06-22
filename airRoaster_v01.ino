@@ -26,8 +26,13 @@
 // Config
 // ---------------------------------------------------------------------------
 #define DUTY_STEP               5
-#define FAN_INTERLOCK_THRESHOLD 30
 #define WS_PORT                 81
+#define DL_INIT_RETRY_DELAY_MS  500   // ms between initDL ready-check retries
+
+// Interlock config
+#define IL_FAN_MIN      23   // fan level below which heat is always 0
+#define IL_FAN_FULL     30   // fan level at or above which heat is unrestricted
+#define IL_HEAT_AT_MIN  30   // heat cap (%) when fan is exactly at IL_FAN_MIN (soft mode)
 
 // ---------------------------------------------------------------------------
 // State
@@ -35,6 +40,7 @@
 uint8_t requestedHeatLevel = 0;  // commanded heat level
 uint8_t heatLevel = 0;           // actual heat level sent to device
 uint8_t fanLevel = 0;
+bool    interlockSoft = false;   // false = hard (binary), true = soft (linear ramp)
 
 float btTemp = 0.0;  // bean temperature  (populated when sensor added)
 float etTemp = 0.0;  // inlet/env temperature (populated when sensor added)
@@ -95,6 +101,38 @@ void sendLog(uint8_t clientNum) {
 }
 
 // ---------------------------------------------------------------------------
+// JSON field helpers
+// ---------------------------------------------------------------------------
+
+// Extract a quoted string field from a flat JSON object.
+// Returns "" if not found.
+static String jsonString(const String& json, const char* key) {
+    String search = String("\"") + key + "\"";
+    int pos = json.indexOf(search);
+    if (pos < 0) return "";
+    int colon = json.indexOf(':', pos + search.length());
+    if (colon < 0) return "";
+    int q1 = json.indexOf('"', colon + 1);
+    if (q1 < 0) return "";
+    int q2 = json.indexOf('"', q1 + 1);
+    if (q2 < 0) return "";
+    return json.substring(q1 + 1, q2);
+}
+
+// Extract a numeric field from a flat JSON object.
+// Returns NAN if not found.
+static float jsonFloat(const String& json, const char* key) {
+    String search = String("\"") + key + "\"";
+    int pos = json.indexOf(search);
+    if (pos < 0) return NAN;
+    int colon = json.indexOf(':', pos + search.length());
+    if (colon < 0) return NAN;
+    int start = colon + 1;
+    while (start < (int)json.length() && json[start] == ' ') start++;
+    return json.substring(start).toFloat();
+}
+
+// ---------------------------------------------------------------------------
 // Forward declarations
 // ---------------------------------------------------------------------------
 void processCommand(String cmd, int8_t clientNum = -1);
@@ -118,6 +156,10 @@ void setup() {
     display.setTextColor(1, 0);
     display.setRotation(1);
 
+    // DimmerLink init (before WiFi to avoid missing the ready window at power-on)
+    initDL(HEAT_ADDR);
+    initDL(FAN_ADDR);
+
     // WiFi
     Serial.print("Connecting to WiFi");
     WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -132,12 +174,6 @@ void setup() {
     // WebSocket server
     webSocket.begin();
     webSocket.onEvent(webSocketEvent);
-    Serial.print("WebSocket server started on port ");
-    Serial.println(WS_PORT);
-
-    // DimmerLink init (after WebSocket so logError can broadcast)
-    initDL(HEAT_ADDR);
-    initDL(FAN_ADDR);
 
     flagDisplayUpdate = true;
 }
@@ -162,12 +198,29 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
             cmd.trim();
             Serial.printf("[WS] Command from client %u: %s\n", num, cmd.c_str());
             if (!handleArtisanRequest(num, cmd)) {
-                processCommand(cmd, (int8_t)num);
+                // JSON command envelope: {"command":"OT1","value":60.0,...}
+                if (cmd.startsWith("{")) {
+                    String kw = jsonString(cmd, "command");
+                    float val = jsonFloat(cmd, "value");
+                    String plain = kw;
+                    if (!isnan(val)) {
+                        plain += " ";
+                        plain += String((int)roundf(val));
+                    }
+                    processCommand(plain, (int8_t)num);
+                } else {
+                    processCommand(cmd, (int8_t)num);
+                }
             }
             break;
         }
 
+        case WStype_BIN:
+            Serial.printf("[WS] Binary frame from client %u (%u bytes)\n", num, (unsigned)length);
+            break;
+
         default:
+            Serial.printf("[WS] Unhandled event type %u from client %u\n", (unsigned)type, num);
             break;
     }
 }
@@ -178,11 +231,12 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
 void broadcastStatus() {
     char buf[96];
     snprintf(buf, sizeof(buf),
-             "{\"pushMessage\":\"status\",\"data\":{\"heat\":%u,\"heatReq\":%u,\"fan\":%u,\"interlock\":%s}}",
+             "{\"pushMessage\":\"status\",\"data\":{\"heat\":%u,\"heatReq\":%u,\"fan\":%u,\"ilCap\":%u,\"ilSoft\":%s}}",
              heatLevel,
              requestedHeatLevel,
              fanLevel,
-             (fanLevel < FAN_INTERLOCK_THRESHOLD) ? "true" : "false");
+             interlockCap(),
+             interlockSoft ? "true" : "false");
     webSocket.broadcastTXT(buf);
 }
 
@@ -229,8 +283,15 @@ void displayUpdate() {
     display.printf("Fan: %u", fanLevel);
 
     display.setCursor(COL1A, ROW4 * ROWHEIGHT);
-    if (fanLevel < FAN_INTERLOCK_THRESHOLD) {
-        display.printf("INTERLOCK");
+    {
+        uint8_t cap = interlockCap();
+        if (cap == 0) {
+            display.printf("IL:%s BLOCKED", interlockSoft ? "S" : "H");
+        } else if (cap < 100) {
+            display.printf("IL:S cap=%u%%", cap);
+        } else {
+            display.printf("IL:%s ok", interlockSoft ? "S" : "H");
+        }
     }
 
     display.setCursor(COL1A, ROW6 * ROWHEIGHT);
@@ -259,7 +320,7 @@ void initDL(uint8_t addr) {
             checkDLError(addr);
             return;
         }
-        delay(200);
+        delay(DL_INIT_RETRY_DELAY_MS);
     }
     char msg[40];
     snprintf(msg, sizeof(msg), "DimmerLink 0x%02X not ready after 3 tries", addr);
@@ -368,8 +429,18 @@ void checkDLError(uint8_t addr) {
 // ===========================================================================
 // Interlock
 // ===========================================================================
+// Returns the heat cap imposed by the interlock at the current fan level.
+uint8_t interlockCap() {
+    if (fanLevel < IL_FAN_MIN) return 0;
+    if (!interlockSoft || fanLevel >= IL_FAN_FULL) return 100;
+    // Linear ramp: IL_HEAT_AT_MIN% at IL_FAN_MIN, 100% at IL_FAN_FULL
+    return (uint8_t)(IL_HEAT_AT_MIN +
+        (uint32_t)(100 - IL_HEAT_AT_MIN) * (fanLevel - IL_FAN_MIN) / (IL_FAN_FULL - IL_FAN_MIN));
+}
+
 void applyInterlock() {
-    uint8_t effective = (fanLevel >= FAN_INTERLOCK_THRESHOLD) ? requestedHeatLevel : 0;
+    uint8_t cap = interlockCap();
+    uint8_t effective = (requestedHeatLevel < cap) ? requestedHeatLevel : cap;
     if (effective != heatLevel) {
         heatLevel = effective;
         setLevel(HEAT_ADDR, heatLevel);
@@ -456,6 +527,12 @@ void processCommand(String cmd, int8_t clientNum) {
         }
         setLevel(FAN_ADDR, fanLevel);
         checkDLError(FAN_ADDR);
+        flagDisplayUpdate = true;
+        applyInterlock();
+        broadcastStatus();
+
+    } else if (kw == "IL") {
+        interlockSoft = !interlockSoft;
         flagDisplayUpdate = true;
         applyInterlock();
         broadcastStatus();

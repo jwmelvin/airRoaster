@@ -40,17 +40,20 @@ If `secrets.h.example` does not exist yet, create `secrets.h` manually:
 | Constant | Default | Description |
 |----------|---------|-------------|
 | `DUTY_STEP` | `5` | Increment/decrement step for UP/DOWN commands (%) |
-| `FAN_INTERLOCK_THRESHOLD` | `30` | Minimum fan level required to allow heat (%) |
 | `WS_PORT` | `81` | WebSocket server port |
+| `DL_INIT_RETRY_DELAY_MS` | `500` | Delay between DimmerLink ready-check retries at startup (ms) |
+| `IL_FAN_MIN` | `23` | Fan level below which heat is always 0 (both interlock modes) |
+| `IL_FAN_FULL` | `30` | Fan level at or above which heat is fully unrestricted (soft mode) |
+| `IL_HEAT_AT_MIN` | `30` | Heat cap (%) when fan is exactly at `IL_FAN_MIN` (soft mode) |
 
 ---
 
 ## Startup sequence
 
 1. Display and I2C bus initialize
-2. ESP32 connects to WiFi (blocks until connected)
-3. WebSocket server starts on port `81`
-4. Both DimmerLink devices initialize — retried up to 3 times each; failures are logged
+2. Both DimmerLink devices initialize — retried up to 3 times each (`DL_INIT_RETRY_DELAY_MS` apart); failures are logged. Dimmer init happens before WiFi to avoid missing the ready window at power-on.
+3. ESP32 connects to WiFi (blocks until connected)
+4. WebSocket server starts on port `81`
 5. IP address is shown on the display
 
 ---
@@ -89,6 +92,7 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 | `OT2 <value>` | `OT2 50` | Set fan level (0–100%) |
 | `OT2 UP` | `OT2 UP` | Increase fan by `DUTY_STEP` |
 | `OT2 DOWN` | `OT2 DOWN` | Decrease fan by `DUTY_STEP` |
+| `IL` | `IL` | Toggle interlock mode between hard and soft (see [Fan interlock](#fan-interlock)) |
 | `LOG` | `LOG` | Retrieve the error log (sent only to requesting client) |
 
 All unsolicited messages use Artisan's push message envelope so any client can use a consistent format:
@@ -96,7 +100,7 @@ All unsolicited messages use Artisan's push message envelope so any client can u
 **Status broadcast** (sent to all clients on any state change, and to new clients on connect):
 
 ```json
-{"pushMessage": "status", "data": {"heat": 60, "heatReq": 60, "fan": 50, "interlock": false}}
+{"pushMessage": "status", "data": {"heat": 60, "heatReq": 60, "fan": 50, "ilCap": 100, "ilSoft": false}}
 ```
 
 | `data` field | Description |
@@ -104,7 +108,8 @@ All unsolicited messages use Artisan's push message envelope so any client can u
 | `heat` | Actual heat level applied to the dimmer (%) |
 | `heatReq` | Requested heat level before interlock (%) |
 | `fan` | Fan level (%) |
-| `interlock` | `true` if fan is below threshold and heat is suppressed |
+| `ilCap` | Current heat ceiling imposed by the interlock (0–100%); `0` means heat is fully blocked, `100` means unrestricted |
+| `ilSoft` | `true` if soft (linear) interlock mode is active; `false` for hard (binary) mode |
 
 **Error broadcast** (sent to all clients when an error is logged):
 
@@ -127,13 +132,30 @@ Accepts the same command set as WebSocket, terminated by newline. Maximum comman
 
 ## Fan interlock
 
-Heat is suppressed whenever `fanLevel < FAN_INTERLOCK_THRESHOLD` (default 30%). This prevents the heating element from running without adequate airflow.
+The interlock prevents the heating element from running without adequate airflow. It is always active and has two modes, toggled with the `IL` command (default: hard).
 
+### Hard mode (default)
+
+Binary cutoff: heat is forced to `0` when `fan < IL_FAN_MIN`, and fully unrestricted otherwise.
+
+### Soft mode
+
+Linear ramp between two breakpoints:
+
+| Fan level | Heat cap |
+|-----------|----------|
+| `< IL_FAN_MIN` (23) | 0% (blocked) |
+| `IL_FAN_MIN` (23) | `IL_HEAT_AT_MIN` (30%) |
+| `IL_FAN_FULL` (30) | 100% (unrestricted) |
+| `> IL_FAN_FULL` | 100% |
+
+Between 23 and 30 the cap is interpolated linearly, so heat scales with airflow rather than snapping on at a threshold.
+
+In both modes:
 - `heatReq` tracks what the user commanded
-- `heat` reflects what is actually applied — `0` while interlocked
-- Heat resumes automatically to `heatReq` as soon as the fan rises above threshold
-
-The interlock is re-evaluated every loop iteration, so it responds immediately regardless of how the fan level changes.
+- `heat` reflects what is actually applied after capping
+- Heat adjusts automatically whenever the fan level changes
+- The interlock is re-evaluated every loop iteration
 
 ---
 
@@ -144,13 +166,23 @@ The interlock is re-evaluated every loop iteration, so it responds immediately r
 |  (reserved)                    |  ROW1
 |  Heat: 60        Req: 60       |  ROW2
 |  Fan: 50                       |  ROW3
-|  INTERLOCK                     |  ROW4 (shown only when interlocked)
+|  IL:H ok                       |  ROW4 (interlock status — see below)
 |                                |  ROW5
 |  192.168.1.42                  |  ROW6 (IP address or "No WiFi")
 |                                |  ROW7
 |                                |  ROW8
 +--------------------------------+
 ```
+
+ROW4 interlock status values:
+
+| Display | Meaning |
+|---------|---------|
+| `IL:H ok` | Hard mode, fan above threshold, heat unrestricted |
+| `IL:S ok` | Soft mode, fan above `IL_FAN_FULL`, heat unrestricted |
+| `IL:S cap=N%` | Soft mode, fan in ramp zone, heat capped at N% |
+| `IL:H BLOCKED` | Hard mode, fan below `IL_FAN_MIN`, heat forced to 0 |
+| `IL:S BLOCKED` | Soft mode, fan below `IL_FAN_MIN`, heat forced to 0 |
 
 ---
 
