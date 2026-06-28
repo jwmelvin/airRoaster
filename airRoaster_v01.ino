@@ -4,11 +4,30 @@
 #include <Adafruit_SH110X.h>
 #include <WiFi.h>
 #include <WebSocketsServer.h>
+#include <Adafruit_MAX31855.h>
+#include <Adafruit_MAX31865.h>
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
 // ---------------------------------------------------------------------------
 #include "secrets.h"
+
+// ---------------------------------------------------------------------------
+// Sensor SPI chip-select pins  (assign free GPIOs to suit your wiring)
+// ---------------------------------------------------------------------------
+#define CS_RTD_BT   10   // MAX31865 (product 3648) — bean temp RTD
+#define CS_RTD_ET   9    // MAX31865 (product 3648) — exhaust/ET RTD
+#define CS_TC_IN    8    // MAX31855 (product 269)  — inlet thermocouple
+
+// MAX31865 wiring type: MAX31865_2WIRE / MAX31865_3WIRE / MAX31865_4WIRE
+#define RTD_WIRES   MAX31865_4WIRE
+
+// PT1000 reference resistor on the 3648 board is 4300 Ω; nominal at 0 °C is 1000 Ω
+#define RTD_REF     4300.0f
+#define RTD_NOMINAL 1000.0f
+
+// Sensor poll interval (ms) — much shorter than Artisan's sample rate
+#define SENSOR_INTERVAL_MS  250
 
 // ---------------------------------------------------------------------------
 // DimmerLink I2C addresses and registers
@@ -42,11 +61,19 @@ uint8_t heatLevel = 0;           // actual heat level sent to device
 uint8_t fanLevel = 0;
 bool    interlockSoft = false;   // false = hard (binary), true = soft (linear ramp)
 
-float btTemp = 0.0;  // bean temperature  (populated when sensor added)
-float etTemp = 0.0;  // inlet/env temperature (populated when sensor added)
+float btTemp  = 0.0;  // bean temp  — MAX31865 PT1000 (°C)
+float etTemp  = 0.0;  // exhaust/ET — MAX31865 PT1000 (°C)
+float inTemp  = 0.0;  // inlet temp — MAX31855 thermocouple (°C)
 
 String inputBuffer = "";
 volatile bool flagDisplayUpdate;
+
+// ---------------------------------------------------------------------------
+// Sensors
+// ---------------------------------------------------------------------------
+static Adafruit_MAX31865 rtdBT(CS_RTD_BT);
+static Adafruit_MAX31865 rtdET(CS_RTD_ET);
+static Adafruit_MAX31855 tcIN(CS_TC_IN);
 
 // ---------------------------------------------------------------------------
 // Display
@@ -139,6 +166,64 @@ void processCommand(String cmd, int8_t clientNum = -1);
 void applyInterlock();
 void broadcastStatus();
 bool handleArtisanRequest(uint8_t clientNum, const String& msg);
+void initSensors();
+void updateSensors();
+
+// ===========================================================================
+// Sensors — init and periodic update
+// ===========================================================================
+
+void initSensors() {
+    tcIN.begin();
+
+    rtdBT.begin(RTD_WIRES);
+    rtdET.begin(RTD_WIRES);
+
+    // Continuous conversion mode: bias on, auto-convert on, fault detection cleared.
+    // The MAX31865 re-triggers each conversion automatically once this is set.
+    rtdBT.enableBias(true);
+    rtdET.enableBias(true);
+    rtdBT.autoConvert(true);
+    rtdET.autoConvert(true);
+    rtdBT.clearFault();
+    rtdET.clearFault();
+
+    Serial.println("Sensors initialized");
+}
+
+void updateSensors() {
+    // --- MAX31865: bean temp RTD ---
+    uint8_t faultBT = rtdBT.readFault();
+    if (faultBT == 0) {
+        btTemp = rtdBT.temperature(RTD_NOMINAL, RTD_REF);
+    } else {
+        char msg[48];
+        snprintf(msg, sizeof(msg), "MAX31865 BT fault: 0x%02X", faultBT);
+        logError(msg);
+        rtdBT.clearFault();
+    }
+
+    // --- MAX31865: exhaust / ET RTD ---
+    uint8_t faultET = rtdET.readFault();
+    if (faultET == 0) {
+        etTemp = rtdET.temperature(RTD_NOMINAL, RTD_REF);
+    } else {
+        char msg[48];
+        snprintf(msg, sizeof(msg), "MAX31865 ET fault: 0x%02X", faultET);
+        logError(msg);
+        rtdET.clearFault();
+    }
+
+    // --- MAX31855: inlet thermocouple ---
+    double tc = tcIN.readCelsius();
+    if (!isnan(tc)) {
+        inTemp = (float)tc;
+    } else {
+        char msg[48];
+        snprintf(msg, sizeof(msg), "MAX31855 IN fault: 0x%02X", tcIN.readError());
+        logError(msg);
+    }
+}
 
 // ===========================================================================
 // Setup
@@ -159,6 +244,9 @@ void setup() {
     // DimmerLink init (before WiFi to avoid missing the ready window at power-on)
     initDL(HEAT_ADDR);
     initDL(FAN_ADDR);
+
+    // Sensor init
+    initSensors();
 
     // WiFi
     Serial.print("Connecting to WiFi");
@@ -243,7 +331,7 @@ void broadcastStatus() {
 // ===========================================================================
 // Artisan WebSocket request handler
 // Artisan sends: {"command":"getData","id":12345,"machine":0}
-// We respond:    {"id":12345,"data":{"BT":0.0,"ET":0.0}}
+// We respond:    {"id":12345,"data":{"BT":0.0,"ET":0.0,"IN":0.0}}
 // ===========================================================================
 bool handleArtisanRequest(uint8_t clientNum, const String& msg) {
     if (msg.indexOf("getData") < 0) return false;
@@ -262,10 +350,10 @@ bool handleArtisanRequest(uint8_t clientNum, const String& msg) {
     char idStr[12];
     msg.substring(start, end).toCharArray(idStr, sizeof(idStr));
 
-    char buf[80];
+    char buf[96];
     snprintf(buf, sizeof(buf),
-             "{\"id\":%s,\"data\":{\"BT\":%.1f,\"ET\":%.1f}}",
-             idStr, btTemp, etTemp);
+             "{\"id\":%s,\"data\":{\"BT\":%.1f,\"ET\":%.1f,\"IN\":%.1f}}",
+             idStr, btTemp, etTemp, inTemp);
     webSocket.sendTXT(clientNum, buf);
     return true;
 }
@@ -300,6 +388,9 @@ void displayUpdate() {
     } else {
         display.printf("No WiFi");
     }
+
+    display.setCursor(COL1A, ROW8 * ROWHEIGHT);
+    display.printf("B:%.1f E:%.1f I:%.1f", btTemp, etTemp, inTemp);
 
     display.display();
 }
@@ -556,9 +647,16 @@ void loop() {
         }
     }
 
+    // Sensor update (every SENSOR_INTERVAL_MS)
+    static uint32_t lastSensorPoll = 0;
+    uint32_t now = millis();
+    if (now - lastSensorPoll >= SENSOR_INTERVAL_MS) {
+        lastSensorPoll = now;
+        updateSensors();
+    }
+
     // Periodic DimmerLink error poll (every 5 s)
     static uint32_t lastErrorPoll = 0;
-    uint32_t now = millis();
     if (now - lastErrorPoll >= 5000) {
         lastErrorPoll = now;
         checkDLError(HEAT_ADDR);
