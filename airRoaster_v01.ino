@@ -18,7 +18,7 @@
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.4.0"
+#define FW_VERSION  "0.5.0"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -148,6 +148,15 @@ float                tuneSugKi   = 0.0f;
 float pidKp = 1.5f;
 float pidKi = 0.05f;   // 1/s
 float pidKd = 0.0f;
+
+// Feedforward power map (the main robustness-to-airflow mechanism). Physically,
+// steady-state heat scales with airflow × temperature rise, so
+//   heat_ff = ffK · fan · (SV − ffAmbient)
+// One coefficient suffices across the narrow fan band; a fan change moves the
+// feedforward immediately and the PID only trims the residual. ffK defaults to 0
+// (feedforward off) until calibrated — see the FF command / FF CAL.
+float ffK       = 0.0f;    // %·/(fan-level·°C); 0 disables feedforward
+float ffAmbient = 25.0f;   // reference/ambient temp the rise is measured from (°C)
 
 // Cooperative-cadence jitter watch (worst control-step late-fire, µs). This is
 // the evidence that decides whether a dedicated core is ever warranted — read
@@ -893,6 +902,35 @@ void processCommand(String cmd, int8_t clientNum) {
         } else if (tunePhase == TUNE_IDLE) {
             startTune((float)TUNE_STEP_DELTA);
         }
+
+    } else if (kw == "FF") {
+        // FF            — report feedforward params + current value.
+        // FF <k>        — set ffK directly.
+        // FF AMB <degC> — set the ambient reference temp.
+        // FF CAL        — derive ffK from the current (assumed steady) point.
+        // FF OFF        — disable feedforward (ffK = 0).
+        if (n >= 2) {
+            String p = tokens[1];
+            String up = p;
+            up.toUpperCase();
+            if (up == "OFF") {
+                ffK = 0.0f;
+            } else if (up == "AMB") {
+                if (n >= 3) ffAmbient = tokens[2].toFloat();
+            } else if (up == "CAL") {
+                float denom = (float)fanLevel * (inTemp - ffAmbient);
+                if (heatLevel > 0 && denom > 1.0f) ffK = (float)heatLevel / denom;
+            } else {
+                ffK = p.toFloat();
+            }
+        }
+        char b[160];
+        snprintf(b, sizeof(b),
+            "{\"pushMessage\":\"ff\",\"data\":{\"ffK\":%.5f,\"amb\":%.1f,\"ff\":%.1f}}",
+            ffK, ffAmbient,
+            feedforward(ctrlMode == MODE_INLET ? inletSV : inTemp, fanLevel));
+        if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
+        Serial.println(b);
     }
 }
 
@@ -912,12 +950,16 @@ static float    pidDFilt  = 0.0f;   // filtered derivative term
 static bool     ctrlPrimed = false; // false until the first step seeds pvPrev
 // (ctrlMaxJitterUs is declared up in the state section, ahead of processCommand.)
 
-// Static feedforward heat estimate. Phase-4 hook (work.md): returns 0 until the
-// power map f(setpoint, fan) is calibrated. Wired into the loop now so the
-// engage-seed and anti-windup math already account for it.
+// Static feedforward heat estimate: heat_ff = ffK · fan · (sv − ffAmbient),
+// clamped to 0..100. Returns 0 when ffK <= 0 (feedforward disabled). Wired into
+// the control law, the engage-seed, and the anti-windup so they all stay
+// consistent when it is active.
 float feedforward(float sv, uint8_t fan) {
-    (void)sv; (void)fan;
-    return 0.0f;
+    if (ffK <= 0.0f) return 0.0f;
+    float ff = ffK * (float)fan * (sv - ffAmbient);
+    if (ff < 0.0f)   ff = 0.0f;
+    if (ff > 100.0f) ff = 100.0f;
+    return ff;
 }
 
 // Engage closed-loop control with a bumpless transfer: seed the integrator so
@@ -1252,6 +1294,14 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.5.0  2026-06-29  Feedforward power map (robustness to airflow changes):
+//                     heat_ff = ffK · fan · (SV − ffAmbient), summed into the
+//                     control law so a fan change moves heat immediately and the
+//                     PID only trims the residual. FF command: report / set ffK /
+//                     FF AMB <degC> / FF CAL (auto-calibrate ffK from the current
+//                     steady point) / FF OFF. Defaults off (ffK = 0). Already
+//                     consistent with the bumpless engage-seed and anti-windup,
+//                     which referenced feedforward() from the start.
 // v0.4.0  2026-06-29  Open-loop step-test autotune (TUNE command). Holds the
 //                     current heat to measure a baseline, applies a heat step,
 //                     samples the inlet response, fits an FOPDT model (two-point

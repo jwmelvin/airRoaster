@@ -100,6 +100,11 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 | `TUNE <pct>` | `TUNE 20` | Step test with a specific heat step (% points) |
 | `TUNE ABORT` | `TUNE ABORT` | Cancel a running step test |
 | `TUNE APPLY` | `TUNE APPLY` | Apply the last test's "tight" suggested gains |
+| `FF` | `FF` | Report feedforward params and current value (see [Feedforward](#feedforward-airflow-compensation)) |
+| `FF <k>` | `FF 0.0045` | Set the feedforward coefficient `ffK` directly |
+| `FF AMB <degC>` | `FF AMB 24` | Set the ambient reference temperature |
+| `FF CAL` | `FF CAL` | Auto-calibrate `ffK` from the current (steady) operating point |
+| `FF OFF` | `FF OFF` | Disable feedforward (`ffK = 0`) |
 | `STAT` | `STAT` | Report and reset the control-cadence jitter watch (worst late-fire, µs) |
 | `IL` | `IL` | Toggle interlock mode between hard and soft (see [Fan interlock](#fan-interlock)) |
 | `LOG` | `LOG` | Retrieve the error log (sent only to requesting client) |
@@ -259,8 +264,36 @@ airflow aborts the test (`interlock capped step`). It also aborts on over-temp
 `{"ok":false,"reason":...}`.
 
 Because plant gain and time constant vary with airflow, run `TUNE` at the center
-of your fan range (~57); a fan-scheduled feedforward power map — the main
-mechanism for robustness against airflow changes — is the next phase (`work.md`).
+of your fan range (~57). The feedforward below — not the PID gains — is the main
+mechanism for robustness against airflow changes.
+
+### Feedforward (airflow compensation)
+
+Steady-state heater power scales with airflow × temperature rise, so the
+controller adds a feedforward term:
+
+```
+heat_ff = ffK · fan · (SV − ambient)
+```
+
+summed into the control output. The PID then only has to trim the residual. The
+payoff is **airflow rejection**: when the fan changes mid-roast, `heat_ff` moves
+*immediately* in proportion, instead of waiting for the inlet temperature to
+drift and the integrator to catch up. One coefficient covers the narrow fan band.
+
+Feedforward is **off by default** (`ffK = 0`). To set it up:
+
+1. Stabilize the roaster in closed loop (or manual) at a representative fan and
+   inlet temperature.
+2. Send `FF AMB <degC>` with your ambient temperature (once), then `FF CAL`. This
+   derives `ffK` from the current operating point:
+   `ffK = heat / (fan · (inlet − ambient))`.
+3. `FF` reports the result; `FF <k>` sets the coefficient by hand; `FF OFF`
+   disables it.
+
+With feedforward calibrated, the integrator settles near zero and the loop
+rejects fan-speed changes largely through the feedforward path. Reported as an
+`ff` push message: `{"ffK":0.00451,"amb":24.0,"ff":38.7}`.
 
 ## OLED display layout
 

@@ -184,10 +184,14 @@ sTune is still the intended tool for the `TUNE` step-test routine (phase 3).
    SIMC tight/conservative gains) rather than with sTune, for full control over
    step safety/abort and to stay dependency-free + compile-checkable here.
    Operator still needs to run it at center fan (~57) and spot-check 50 / 65.
-4. Feedforward power map (2–3 points across 50/57/65) + lambda/IMC gains from
-   step (3); add gain scheduling only if band-edge validation needs it. **next**
+4. ~~Feedforward power map + apply SIMC gains.~~ **done (v0.5.0)** — implemented
+   as a physics-form linear feedforward `heat_ff = ffK·fan·(SV−ambient)` with
+   `FF CAL` auto-calibration, rather than a multi-point table; one coefficient
+   covers the narrow band and a fan change moves heat immediately. Gain
+   scheduling still deferred (add only if band-edge validation needs it).
 5. Validation roasts: step + ramp setpoints, deliberate mid-roast fan changes;
-   measure tracking/overshoot/settling and confirm robustness. Tune λ.
+   measure tracking/overshoot/settling and confirm robustness. Tune λ and
+   confirm feedforward rejects fan changes. **next — needs hardware**
 6. ~~Docs: README control-mode section.~~ **done (v0.3.0)** — Artisan
    integration + `.aset` for driving the setpoint still to do in phase 4.
 
