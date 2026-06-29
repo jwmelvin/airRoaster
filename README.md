@@ -92,15 +92,23 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 | `OT2 <value>` | `OT2 50` | Set fan level (0–100%) |
 | `OT2 UP` | `OT2 UP` | Increase fan by `DUTY_STEP` |
 | `OT2 DOWN` | `OT2 DOWN` | Decrease fan by `DUTY_STEP` |
+| `INLET <degC>` | `INLET 165` | Set inlet setpoint and engage closed-loop control (see [Inlet temperature control](#inlet-temperature-control)) |
+| `INLET OFF` | `INLET OFF` | Disengage closed-loop control; heat holds at its current level |
+| `PID` | `PID` | Report current PID gains, setpoint, and mode |
+| `PID <kp ki kd>` | `PID 1.5 0.05 0` | Set PID gains live (for manual tuning) |
+| `STAT` | `STAT` | Report and reset the control-cadence jitter watch (worst late-fire, µs) |
 | `IL` | `IL` | Toggle interlock mode between hard and soft (see [Fan interlock](#fan-interlock)) |
 | `LOG` | `LOG` | Retrieve the error log (sent only to requesting client) |
+
+Sending `OT1 <value>` (manual heat) at any time is an **instant override**: it
+drops the controller out of closed-loop mode and applies the manual level.
 
 All unsolicited messages use Artisan's push message envelope so any client can use a consistent format:
 
 **Status broadcast** (sent to all clients on any state change, and to new clients on connect):
 
 ```json
-{"pushMessage": "status", "data": {"heat": 60, "heatReq": 60, "fan": 50, "ilCap": 100, "ilSoft": false}}
+{"pushMessage": "status", "data": {"heat": 60, "heatReq": 60, "fan": 50, "ilCap": 100, "ilSoft": false, "mode": "manual", "inSV": 0.0}}
 ```
 
 | `data` field | Description |
@@ -110,6 +118,8 @@ All unsolicited messages use Artisan's push message envelope so any client can u
 | `fan` | Fan level (%) |
 | `ilCap` | Current heat ceiling imposed by the interlock (0–100%); `0` means heat is fully blocked, `100` means unrestricted |
 | `ilSoft` | `true` if soft (linear) interlock mode is active; `false` for hard (binary) mode |
+| `mode` | `"manual"` (heat set directly by `OT1`) or `"inlet"` (heat modulated by the closed loop) |
+| `inSV` | Inlet setpoint (°C) in use when `mode` is `"inlet"` |
 
 **Error broadcast** (sent to all clients when an error is logged):
 
@@ -159,6 +169,61 @@ In both modes:
 
 ---
 
+## Inlet temperature control
+
+The controller can hold a target **inlet** temperature itself, closing the loop
+on-device instead of relying on Artisan's 1 Hz command cycle. This is a
+switchable mode layered on top of manual heat control.
+
+### Modes
+
+| Mode | How heat is set |
+|------|-----------------|
+| `manual` (default) | Heat is whatever `OT1` last commanded |
+| `inlet` | Heat is modulated by a PI(D) loop to hold the inlet setpoint |
+
+- `INLET <degC>` engages `inlet` mode (bumpless — no heat step on engage) and
+  sets the setpoint. Sending `INLET` again just retargets the setpoint and keeps
+  the integrator, so a gradually-changing setpoint during a roast (e.g. driven
+  from an Artisan background profile) does not reset the loop.
+- `INLET OFF` returns to `manual`, holding heat at its current level.
+- `OT1 <value>` is an instant manual override (drops back to `manual`).
+
+### Control law
+
+`controlStep()` runs on a fixed cadence (`CONTROL_PERIOD_MS`, default 250 ms)
+from the main loop. The law is intentionally isolated in that one function
+operating on shared globals — the *seam* that lets it move to a dedicated
+FreeRTOS task later without changing the math (see `work.md`). It is currently
+**cooperative** (single-core): adequate for a thermal plant with tens-of-seconds
+time constants, and free of the cross-core I²C/SPI bus contention a dedicated
+control task would introduce. The `STAT` command reports the worst observed
+control-step timing jitter as evidence on whether a dedicated core is ever
+warranted.
+
+Key properties:
+- **Derivative on measurement** (no setpoint-change kick), low-pass filtered.
+- **Back-calculation anti-windup** against the *actually applied* heat — i.e.
+  post-interlock — so the fan interlock capping heat does not wind up the
+  integrator.
+- Starts **PI-only** (`Kd = 0`); the inlet thermocouple is noisy near the
+  dimmers (see [hardware/emi.md](hardware/emi.md)), so derivative is added only
+  after the plant is characterized.
+
+### Tuning
+
+> ⚠️ The default gains (`pidKp`/`pidKi`/`pidKd` in the firmware) are **untuned
+> placeholders** and are not expected to control well. Characterize the plant
+> and tune before relying on closed-loop control.
+
+- `PID` reports the current gains, setpoint, and mode.
+- `PID <kp> <ki> <kd>` sets the gains live over WebSocket/serial, so you can tune
+  without recompiling.
+
+A step-test autotune routine (sTune) and a fan-scheduled feedforward power map —
+the mechanisms for robustness against airflow changes — are planned next; see
+the plan in `work.md`.
+
 ## OLED display layout
 
 ```
@@ -167,7 +232,7 @@ In both modes:
 |  Heat: 60        Req: 60       |  ROW2
 |  Fan: 50                       |  ROW3
 |  IL:H ok                       |  ROW4 (interlock status — see below)
-|                                |  ROW5
+|  Inlet SV:165                  |  ROW5 ("Inlet: off" in manual mode)
 |  192.168.1.42                  |  ROW6 (IP address or "No WiFi")
 |                                |  ROW7
 |  B:198.4 E:212.0 I:264.1       |  ROW8 (BT / ET / inlet temps, °C)

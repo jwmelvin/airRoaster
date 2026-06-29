@@ -18,7 +18,7 @@
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.2.1"
+#define FW_VERSION  "0.3.0"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -79,6 +79,18 @@
 #define IL_HEAT_AT_MIN  30   // heat cap (%) when fan is exactly at IL_FAN_MIN (soft mode)
 
 // ---------------------------------------------------------------------------
+// Inlet-temperature control (closed loop) — see the control section below and
+// work.md for the design. Cooperative for now: controlStep() runs on a fixed
+// cadence from loop(); the "seam" keeps the law liftable into a FreeRTOS task
+// later without changing the math.
+// ---------------------------------------------------------------------------
+#define CONTROL_PERIOD_MS   250     // control cadence (Hz = 1000/this); matches sensor poll
+#define INLET_SV_MIN_C      0.0f    // plausibility window for an inlet setpoint
+#define INLET_SV_MAX_C      300.0f
+#define PID_D_FILTER_TC     1.0f    // derivative low-pass time constant (s); 0 = off
+#define PID_KAW             0.1f    // anti-windup back-calculation gain (1/s)
+
+// ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 uint8_t requestedHeatLevel = 0;  // commanded heat level
@@ -92,6 +104,31 @@ float inTemp  = 0.0;  // inlet temp — MAX31855 thermocouple (°C)
 
 String inputBuffer = "";
 volatile bool flagDisplayUpdate;
+
+// ---------------------------------------------------------------------------
+// Inlet control state
+// ---------------------------------------------------------------------------
+// Operating mode: MANUAL = heat is whatever OT1 last set; INLET = heat is
+// modulated by the closed loop to hold inletSV. Marked volatile because a
+// future FreeRTOS control task would read/write these across cores.
+enum ctrlMode_t { MODE_MANUAL, MODE_INLET };
+volatile ctrlMode_t ctrlMode = MODE_MANUAL;
+volatile float       inletSV  = 0.0f;   // inlet setpoint (°C), valid in MODE_INLET
+
+// PID gains — PLACEHOLDERS. The plant has NOT been characterized yet; these are
+// deliberately gentle and are not expected to control well. Tune via the step
+// test / TUNE routine (work.md phase 3) or live with the PID command before
+// relying on closed-loop control. Starts PI-only (Kd = 0) — the inlet TC is
+// noisy near the dimmers, so derivative is added only after characterization.
+float pidKp = 1.5f;
+float pidKi = 0.05f;   // 1/s
+float pidKd = 0.0f;
+
+// Cooperative-cadence jitter watch (worst control-step late-fire, µs). This is
+// the evidence that decides whether a dedicated core is ever warranted — read
+// and zeroed via the STAT command. Declared here (ahead of processCommand,
+// which reports it) rather than beside the other PID working state below.
+volatile uint32_t ctrlMaxJitterUs = 0;
 
 // ---------------------------------------------------------------------------
 // Sensors
@@ -209,6 +246,9 @@ bool handleArtisanRequest(uint8_t clientNum, const String& msg);
 void initSensors();
 void updateSensors();
 void serviceRtd(Adafruit_MAX31865 &dev, SensorFaultState &st, float &out, const char *name);
+float feedforward(float sv, uint8_t fan);
+void  engageInlet(float sv);
+void  controlStep(uint32_t dtMs);
 
 // ===========================================================================
 // Sensors — init and periodic update
@@ -426,14 +466,16 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
 // Broadcast status JSON to all WebSocket clients
 // ===========================================================================
 void broadcastStatus() {
-    char buf[96];
+    char buf[160];
     snprintf(buf, sizeof(buf),
-             "{\"pushMessage\":\"status\",\"data\":{\"heat\":%u,\"heatReq\":%u,\"fan\":%u,\"ilCap\":%u,\"ilSoft\":%s}}",
+             "{\"pushMessage\":\"status\",\"data\":{\"heat\":%u,\"heatReq\":%u,\"fan\":%u,\"ilCap\":%u,\"ilSoft\":%s,\"mode\":\"%s\",\"inSV\":%.1f}}",
              heatLevel,
              requestedHeatLevel,
              fanLevel,
              interlockCap(),
-             interlockSoft ? "true" : "false");
+             interlockSoft ? "true" : "false",
+             ctrlMode == MODE_INLET ? "inlet" : "manual",
+             inletSV);
     webSocket.broadcastTXT(buf);
 }
 
@@ -492,6 +534,13 @@ void displayUpdate() {
         } else {
             display.printf("IL:%s ok", interlockSoft ? "S" : "H");
         }
+    }
+
+    display.setCursor(COL1A, ROW5 * ROWHEIGHT);
+    if (ctrlMode == MODE_INLET) {
+        display.printf("Inlet SV:%.0f", inletSV);
+    } else {
+        display.printf("Inlet: off");
     }
 
     display.setCursor(COL1A, ROW6 * ROWHEIGHT);
@@ -702,6 +751,7 @@ void processCommand(String cmd, int8_t clientNum) {
 
     } else if (kw == "OT1") {
         if (n < 2) return;
+        ctrlMode = MODE_MANUAL;   // manual heat command is an instant override
         String param = tokens[1];
         param.toUpperCase();
         if (param == "UP") {
@@ -739,7 +789,141 @@ void processCommand(String cmd, int8_t clientNum) {
         flagDisplayUpdate = true;
         applyInterlock();
         broadcastStatus();
+
+    } else if (kw == "INLET") {
+        // INLET <degC> — set inlet setpoint and engage closed-loop control.
+        // INLET OFF      — disengage; heat holds at its current level.
+        if (n < 2) return;
+        String param = tokens[1];
+        String upper = param;
+        upper.toUpperCase();
+        if (upper == "OFF") {
+            ctrlMode = MODE_MANUAL;   // leave requestedHeatLevel where it is
+        } else {
+            engageInlet(param.toFloat());
+        }
+        flagDisplayUpdate = true;
+        broadcastStatus();
+
+    } else if (kw == "PID") {
+        // PID            — report current gains/setpoint/mode.
+        // PID <kp ki kd> — set gains live (for manual tuning).
+        if (n >= 4) {
+            pidKp = tokens[1].toFloat();
+            pidKi = tokens[2].toFloat();
+            pidKd = tokens[3].toFloat();
+        }
+        char b[112];
+        snprintf(b, sizeof(b),
+            "{\"pushMessage\":\"pid\",\"data\":{\"kp\":%.3f,\"ki\":%.3f,\"kd\":%.3f,\"sv\":%.1f,\"mode\":\"%s\"}}",
+            pidKp, pidKi, pidKd, inletSV, ctrlMode == MODE_INLET ? "inlet" : "manual");
+        if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
+        Serial.println(b);
+
+    } else if (kw == "STAT") {
+        // Report the control-cadence jitter watch (worst late-fire, µs) and zero
+        // it. Evidence on whether the cooperative loop ever needs a real core.
+        char b[96];
+        snprintf(b, sizeof(b),
+            "{\"pushMessage\":\"stat\",\"data\":{\"ctrlMaxJitterUs\":%lu}}",
+            (unsigned long)ctrlMaxJitterUs);
+        if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
+        Serial.println(b);
+        ctrlMaxJitterUs = 0;
     }
+}
+
+// ===========================================================================
+// Inlet temperature control (closed loop)
+// ===========================================================================
+// The entire control law lives in controlStep(), operating only on shared
+// globals (inTemp, fanLevel, requestedHeatLevel, the PID state). That is the
+// "seam": cooperative now (called on a fixed cadence from loop()), but liftable
+// into a pinned FreeRTOS control task later with no change to the math — see
+// work.md. In MODE_MANUAL it does nothing; OT1 drives heat directly.
+
+// PID working state (file-local).
+static float    pidITerm  = 0.0f;   // integral accumulator, in heat-% units
+static float    pidPvPrev = 0.0f;   // previous process value (inTemp)
+static float    pidDFilt  = 0.0f;   // filtered derivative term
+static bool     ctrlPrimed = false; // false until the first step seeds pvPrev
+// (ctrlMaxJitterUs is declared up in the state section, ahead of processCommand.)
+
+// Static feedforward heat estimate. Phase-4 hook (work.md): returns 0 until the
+// power map f(setpoint, fan) is calibrated. Wired into the loop now so the
+// engage-seed and anti-windup math already account for it.
+float feedforward(float sv, uint8_t fan) {
+    (void)sv; (void)fan;
+    return 0.0f;
+}
+
+// Engage closed-loop control with a bumpless transfer: seed the integrator so
+// the first output equals the current heat level (u = Kp*e + iTerm + FF must
+// equal heatLevel  =>  iTerm = heatLevel - Kp*e - FF). No step on engage.
+void engageInlet(float sv) {
+    if (sv < INLET_SV_MIN_C) sv = INLET_SV_MIN_C;
+    if (sv > INLET_SV_MAX_C) sv = INLET_SV_MAX_C;
+
+    // Already closed-loop: just retarget and keep the integrator. The setpoint
+    // changes gradually during a roast (Artisan drives INLET repeatedly), so
+    // re-seeding here would reset integral action on every update.
+    if (ctrlMode == MODE_INLET) { inletSV = sv; return; }
+
+    // Manual -> inlet: bumpless transfer. Seed the integrator so the first
+    // output equals the current heat level (u = Kp*e + iTerm + FF == heatLevel).
+    inletSV = sv;
+    float e = sv - inTemp;
+    pidITerm  = (float)heatLevel - pidKp * e - feedforward(sv, fanLevel);
+    pidPvPrev = inTemp;
+    pidDFilt  = 0.0f;
+    ctrlPrimed = true;
+    ctrlMode  = MODE_INLET;
+}
+
+// One control iteration. dtMs is the measured interval since the last call, so
+// timing jitter doesn't bias the integral/derivative.
+void controlStep(uint32_t dtMs) {
+    if (ctrlMode != MODE_INLET) { ctrlPrimed = false; return; }
+
+    float dt = dtMs * 0.001f;
+    if (dt <= 0.0f) return;
+    if (dt > 1.0f) dt = 1.0f;   // clamp a pathological gap (e.g. post-stall)
+
+    float pv = inTemp;
+    if (!ctrlPrimed) { pidPvPrev = pv; ctrlPrimed = true; }  // belt-and-suspenders
+
+    float e  = inletSV - pv;
+    float P  = pidKp * e;
+    float ff = feedforward(inletSV, fanLevel);
+
+    // Derivative on measurement (no setpoint-change kick), low-pass filtered.
+    float dRaw = -pidKd * (pv - pidPvPrev) / dt;
+    if (PID_D_FILTER_TC > 0.0f) {
+        float a = dt / (PID_D_FILTER_TC + dt);
+        pidDFilt += a * (dRaw - pidDFilt);
+    } else {
+        pidDFilt = dRaw;
+    }
+    float D = pidDFilt;
+
+    pidITerm += pidKi * e * dt;            // provisional integration
+    float u = P + pidITerm + D + ff;
+
+    // What the hardware will actually apply: clamp to 0..100 and the interlock.
+    float uClamped = u < 0.0f ? 0.0f : (u > 100.0f ? 100.0f : u);
+    float cap      = (float)interlockCap();
+    float applied  = uClamped < cap ? uClamped : cap;
+
+    // Back-calculation anti-windup against the *applied* value, so saturation —
+    // including the fan interlock capping heat — doesn't wind the integrator up.
+    pidITerm += PID_KAW * (applied - u) * dt;
+    if (pidITerm < 0.0f)   pidITerm = 0.0f;
+    if (pidITerm > 100.0f) pidITerm = 100.0f;
+
+    pidPvPrev = pv;
+
+    requestedHeatLevel = (uint8_t)lroundf(uClamped);
+    applyInterlock();   // writes min(requestedHeatLevel, cap) to the heat dimmer
 }
 
 // ===========================================================================
@@ -767,6 +951,21 @@ void loop() {
         updateSensors();
     }
 
+    // Inlet control step (fixed cadence; the controlStep() seam). Uses the
+    // measured interval so cooperative jitter doesn't bias the integral, and
+    // records the worst late-fire as evidence on whether a dedicated core is
+    // ever needed (read via STAT). controlStep() is a no-op in MODE_MANUAL.
+    static uint32_t lastCtrl = 0;
+    uint32_t ctrlDt = now - lastCtrl;
+    if (ctrlDt >= CONTROL_PERIOD_MS) {
+        if (lastCtrl != 0 && ctrlDt > CONTROL_PERIOD_MS) {
+            uint32_t jitterUs = (ctrlDt - CONTROL_PERIOD_MS) * 1000UL;
+            if (jitterUs > ctrlMaxJitterUs) ctrlMaxJitterUs = jitterUs;
+        }
+        lastCtrl = now;
+        controlStep(ctrlDt);
+    }
+
     // Periodic DimmerLink error poll (every 5 s)
     static uint32_t lastErrorPoll = 0;
     if (now - lastErrorPoll >= 5000) {
@@ -789,6 +988,18 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.3.0  2026-06-29  Inlet-temperature closed-loop control (cooperative). New
+//                     MODE_INLET: controlStep() modulates heat from measured
+//                     inlet temp with a PI(D) loop — derivative-on-measurement,
+//                     back-calculation anti-windup against the *applied* (post-
+//                     interlock) heat, bumpless engage. Commands: INLET <degC> /
+//                     INLET OFF, PID (report/set gains live), STAT (control
+//                     jitter watch). OT1 is an instant manual override. Mode +
+//                     setpoint added to the status broadcast and OLED row 5.
+//                     Gains are untuned placeholders. Feedforward + sTune TUNE
+//                     routine are the next phases (see work.md). The control law
+//                     is isolated in controlStep() so it can later move to a
+//                     pinned FreeRTOS task unchanged.
 // v0.2.1  2026-06-28  RTD read robustness: periodic VBIAS/auto-convert re-assert
 //                     (guards against a silently-stalled converter), and a median
 //                     filter over recent samples (rejects single-sample spikes).
