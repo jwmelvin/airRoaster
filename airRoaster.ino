@@ -14,11 +14,12 @@
 #include <WebSocketsServer.h>
 #include <Adafruit_MAX31855.h>
 #include <Adafruit_MAX31865.h>
+#include <Preferences.h>   // NVS-backed persistence of the tuning set
 
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.5.0"
+#define FW_VERSION  "0.6.0"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -410,6 +411,39 @@ void updateSensors() {
 }
 
 // ===========================================================================
+// Tuning persistence (NVS)
+// ===========================================================================
+// The tuning set — PID gains and feedforward params — survives reboots in the
+// ESP32's NVS flash. Defaults above are compile-time placeholders; on a virgin
+// device (no stored keys) load() leaves them untouched, so the firmware behaves
+// identically until the first PID/FF/TUNE-APPLY commits a value. save() is
+// called only from those (infrequent) mutation paths, never the control loop,
+// so flash wear is a non-issue. Preferences.putFloat() also skips the write
+// when the value is unchanged.
+static Preferences prefs;
+static const char *NVS_NS = "tuning";
+
+void loadTuning() {
+    prefs.begin(NVS_NS, true);               // read-only
+    pidKp     = prefs.getFloat("kp",    pidKp);
+    pidKi     = prefs.getFloat("ki",    pidKi);
+    pidKd     = prefs.getFloat("kd",    pidKd);
+    ffK       = prefs.getFloat("ffK",   ffK);
+    ffAmbient = prefs.getFloat("ffAmb", ffAmbient);
+    prefs.end();
+}
+
+void saveTuning() {
+    prefs.begin(NVS_NS, false);              // read-write
+    prefs.putFloat("kp",    pidKp);
+    prefs.putFloat("ki",    pidKi);
+    prefs.putFloat("kd",    pidKd);
+    prefs.putFloat("ffK",   ffK);
+    prefs.putFloat("ffAmb", ffAmbient);
+    prefs.end();
+}
+
+// ===========================================================================
 // Setup
 // ===========================================================================
 void setup() {
@@ -418,6 +452,11 @@ void setup() {
     delay(250);
 
     Serial.printf("\nairRoaster firmware v%s\n", FW_VERSION);
+
+    // Restore persisted tuning (overrides the compile-time placeholders if a
+    // device has been tuned before). Before WiFi/sensors so the loaded gains are
+    // in force the moment control can engage.
+    loadTuning();
 
     // Display init
     display.begin(0x3C, true);
@@ -853,6 +892,7 @@ void processCommand(String cmd, int8_t clientNum) {
             pidKp = tokens[1].toFloat();
             pidKi = tokens[2].toFloat();
             pidKd = tokens[3].toFloat();
+            saveTuning();
         }
         char b[112];
         snprintf(b, sizeof(b),
@@ -889,6 +929,7 @@ void processCommand(String cmd, int8_t clientNum) {
                     pidKp = tuneSugKp;
                     pidKi = tuneSugKi;
                     pidKd = 0.0f;
+                    saveTuning();
                     char b[112];
                     snprintf(b, sizeof(b),
                         "{\"pushMessage\":\"tune\",\"data\":{\"applied\":true,\"kp\":%.3f,\"ki\":%.4f}}",
@@ -923,6 +964,7 @@ void processCommand(String cmd, int8_t clientNum) {
             } else {
                 ffK = p.toFloat();
             }
+            saveTuning();   // OFF / AMB / CAL / direct-set all mutate the tuning set
         }
         char b[160];
         snprintf(b, sizeof(b),
@@ -1257,6 +1299,16 @@ void loop() {
         updateSensors();
     }
 
+    // Display heartbeat: repaint at 1 Hz, decoupled from the sensor poll so the
+    // full-framebuffer I2C push (~30 ms, a cooperative-loop blocker) hits the
+    // control deadline at most once a second. Event handlers still flag an
+    // immediate repaint for instant response to commands.
+    static uint32_t lastDisplayMs = 0;
+    if (now - lastDisplayMs >= 1000) {
+        lastDisplayMs = now;
+        flagDisplayUpdate = true;
+    }
+
     // Inlet control step (fixed cadence; the controlStep() seam). Uses the
     // measured interval so cooperative jitter doesn't bias the integral, and
     // records the worst late-fire as evidence on whether a dedicated core is
@@ -1294,6 +1346,13 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.6.0  2026-06-29  Persist the tuning set (PID gains + feedforward params) in
+//                     NVS flash via the Preferences library. loadTuning() at
+//                     boot restores stored values over the compile-time
+//                     placeholders (virgin device keeps the defaults);
+//                     saveTuning() is called from the PID, TUNE APPLY, and FF
+//                     mutation paths only — never the control loop — so flash
+//                     wear is negligible. Namespace "tuning".
 // v0.5.0  2026-06-29  Feedforward power map (robustness to airflow changes):
 //                     heat_ff = ffK · fan · (SV − ffAmbient), summed into the
 //                     control law so a fan change moves heat immediately and the
