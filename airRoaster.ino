@@ -1,5 +1,5 @@
 // ===========================================================================
-// airRoaster v01 — ESP32-S3 hot-air coffee roaster controller
+// airRoaster — ESP32-S3 hot-air coffee roaster controller
 //
 // Firmware version: see FW_VERSION below.
 // Change history:   bottom of this file.
@@ -14,11 +14,12 @@
 #include <WebSocketsServer.h>
 #include <Adafruit_MAX31855.h>
 #include <Adafruit_MAX31865.h>
+#include <Preferences.h>   // NVS-backed persistence of the tuning set
 
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.2.1"
+#define FW_VERSION  "0.6.0"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -79,6 +80,35 @@
 #define IL_HEAT_AT_MIN  30   // heat cap (%) when fan is exactly at IL_FAN_MIN (soft mode)
 
 // ---------------------------------------------------------------------------
+// Inlet-temperature control (closed loop) — see the control section below and
+// work.md for the design. Cooperative for now: controlStep() runs on a fixed
+// cadence from loop(); the "seam" keeps the law liftable into a FreeRTOS task
+// later without changing the math.
+// ---------------------------------------------------------------------------
+#define CONTROL_PERIOD_MS   250     // control cadence (Hz = 1000/this); matches sensor poll
+#define INLET_SV_MIN_C      0.0f    // plausibility window for an inlet setpoint
+#define INLET_SV_MAX_C      300.0f
+#define PID_D_FILTER_TC     1.0f    // derivative low-pass time constant (s); 0 = off
+#define PID_KAW             0.1f    // anti-windup back-calculation gain (1/s)
+
+// Open-loop step-test autotune (TUNE command). Holds the current heat to measure
+// a baseline, applies a heat step, records the inlet response, fits a first-order-
+// plus-dead-time (FOPDT) model, and suggests PI gains (SIMC/lambda). Run it with
+// fan in the normal range and the roaster roughly steady first.
+#define TUNE_STEP_DELTA     15      // default heat step (% points) if none given
+#define TUNE_STEP_DELTA_MIN 5
+#define TUNE_STEP_DELTA_MAX 40
+#define TUNE_BASELINE_MS    8000    // hold current heat this long to measure T0
+#define TUNE_MAX_MS         180000  // hard cap on the step-observation phase
+#define TUNE_MIN_TEST_MS    10000   // suppress settle detection before this
+#define TUNE_SAMPLE_MS      500     // response sampling interval
+#define TUNE_MAX_SAMPLES    360     // 180 s at TUNE_SAMPLE_MS
+#define TUNE_SETTLE_SECS    15      // response flat this long => settled
+#define TUNE_SETTLE_BAND_C  1.0f    // "flat" = max-min within this band (°C)
+#define TUNE_MIN_RISE_C     3.0f    // require at least this rise to identify (°C)
+#define TUNE_TEMP_ABORT_C   280.0f  // abort the test above this inlet temp (°C)
+
+// ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 uint8_t requestedHeatLevel = 0;  // commanded heat level
@@ -92,6 +122,48 @@ float inTemp  = 0.0;  // inlet temp — MAX31855 thermocouple (°C)
 
 String inputBuffer = "";
 volatile bool flagDisplayUpdate;
+
+// ---------------------------------------------------------------------------
+// Inlet control state
+// ---------------------------------------------------------------------------
+// Operating mode: MANUAL = heat is whatever OT1 last set; INLET = heat is
+// modulated by the closed loop to hold inletSV. Marked volatile because a
+// future FreeRTOS control task would read/write these across cores.
+enum ctrlMode_t { MODE_MANUAL, MODE_INLET, MODE_TUNE };
+volatile ctrlMode_t ctrlMode = MODE_MANUAL;
+volatile float       inletSV  = 0.0f;   // inlet setpoint (°C), valid in MODE_INLET
+
+// Autotune progress + last suggestion. Declared here (ahead of processCommand,
+// which starts/aborts/applies a tune) rather than beside the tune internals.
+enum tunePhase_t { TUNE_IDLE, TUNE_BASELINE, TUNE_STEP };
+volatile tunePhase_t tunePhase   = TUNE_IDLE;
+bool                 tuneHaveSug = false;   // a suggested-gain set is available
+float                tuneSugKp   = 0.0f;    // SIMC "tight" suggestion from last tune
+float                tuneSugKi   = 0.0f;
+
+// PID gains — PLACEHOLDERS. The plant has NOT been characterized yet; these are
+// deliberately gentle and are not expected to control well. Tune via the step
+// test / TUNE routine (work.md phase 3) or live with the PID command before
+// relying on closed-loop control. Starts PI-only (Kd = 0) — the inlet TC is
+// noisy near the dimmers, so derivative is added only after characterization.
+float pidKp = 1.5f;
+float pidKi = 0.05f;   // 1/s
+float pidKd = 0.0f;
+
+// Feedforward power map (the main robustness-to-airflow mechanism). Physically,
+// steady-state heat scales with airflow × temperature rise, so
+//   heat_ff = ffK · fan · (SV − ffAmbient)
+// One coefficient suffices across the narrow fan band; a fan change moves the
+// feedforward immediately and the PID only trims the residual. ffK defaults to 0
+// (feedforward off) until calibrated — see the FF command / FF CAL.
+float ffK       = 0.0f;    // %·/(fan-level·°C); 0 disables feedforward
+float ffAmbient = 25.0f;   // reference/ambient temp the rise is measured from (°C)
+
+// Cooperative-cadence jitter watch (worst control-step late-fire, µs). This is
+// the evidence that decides whether a dedicated core is ever warranted — read
+// and zeroed via the STAT command. Declared here (ahead of processCommand,
+// which reports it) rather than beside the other PID working state below.
+volatile uint32_t ctrlMaxJitterUs = 0;
 
 // ---------------------------------------------------------------------------
 // Sensors
@@ -209,6 +281,12 @@ bool handleArtisanRequest(uint8_t clientNum, const String& msg);
 void initSensors();
 void updateSensors();
 void serviceRtd(Adafruit_MAX31865 &dev, SensorFaultState &st, float &out, const char *name);
+float feedforward(float sv, uint8_t fan);
+void  engageInlet(float sv);
+void  controlStep(uint32_t dtMs);
+void  startTune(float deltaPct);
+void  abortTune(const char *why);
+void  tuneStep(uint32_t dtMs);
 
 // ===========================================================================
 // Sensors — init and periodic update
@@ -333,6 +411,39 @@ void updateSensors() {
 }
 
 // ===========================================================================
+// Tuning persistence (NVS)
+// ===========================================================================
+// The tuning set — PID gains and feedforward params — survives reboots in the
+// ESP32's NVS flash. Defaults above are compile-time placeholders; on a virgin
+// device (no stored keys) load() leaves them untouched, so the firmware behaves
+// identically until the first PID/FF/TUNE-APPLY commits a value. save() is
+// called only from those (infrequent) mutation paths, never the control loop,
+// so flash wear is a non-issue. Preferences.putFloat() also skips the write
+// when the value is unchanged.
+static Preferences prefs;
+static const char *NVS_NS = "tuning";
+
+void loadTuning() {
+    prefs.begin(NVS_NS, true);               // read-only
+    pidKp     = prefs.getFloat("kp",    pidKp);
+    pidKi     = prefs.getFloat("ki",    pidKi);
+    pidKd     = prefs.getFloat("kd",    pidKd);
+    ffK       = prefs.getFloat("ffK",   ffK);
+    ffAmbient = prefs.getFloat("ffAmb", ffAmbient);
+    prefs.end();
+}
+
+void saveTuning() {
+    prefs.begin(NVS_NS, false);              // read-write
+    prefs.putFloat("kp",    pidKp);
+    prefs.putFloat("ki",    pidKi);
+    prefs.putFloat("kd",    pidKd);
+    prefs.putFloat("ffK",   ffK);
+    prefs.putFloat("ffAmb", ffAmbient);
+    prefs.end();
+}
+
+// ===========================================================================
 // Setup
 // ===========================================================================
 void setup() {
@@ -341,6 +452,11 @@ void setup() {
     delay(250);
 
     Serial.printf("\nairRoaster firmware v%s\n", FW_VERSION);
+
+    // Restore persisted tuning (overrides the compile-time placeholders if a
+    // device has been tuned before). Before WiFi/sensors so the loaded gains are
+    // in force the moment control can engage.
+    loadTuning();
 
     // Display init
     display.begin(0x3C, true);
@@ -426,14 +542,16 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
 // Broadcast status JSON to all WebSocket clients
 // ===========================================================================
 void broadcastStatus() {
-    char buf[96];
+    char buf[160];
     snprintf(buf, sizeof(buf),
-             "{\"pushMessage\":\"status\",\"data\":{\"heat\":%u,\"heatReq\":%u,\"fan\":%u,\"ilCap\":%u,\"ilSoft\":%s}}",
+             "{\"pushMessage\":\"status\",\"data\":{\"heat\":%u,\"heatReq\":%u,\"fan\":%u,\"ilCap\":%u,\"ilSoft\":%s,\"mode\":\"%s\",\"inSV\":%.1f}}",
              heatLevel,
              requestedHeatLevel,
              fanLevel,
              interlockCap(),
-             interlockSoft ? "true" : "false");
+             interlockSoft ? "true" : "false",
+             ctrlMode == MODE_INLET ? "inlet" : (ctrlMode == MODE_TUNE ? "tune" : "manual"),
+             inletSV);
     webSocket.broadcastTXT(buf);
 }
 
@@ -492,6 +610,15 @@ void displayUpdate() {
         } else {
             display.printf("IL:%s ok", interlockSoft ? "S" : "H");
         }
+    }
+
+    display.setCursor(COL1A, ROW5 * ROWHEIGHT);
+    if (ctrlMode == MODE_INLET) {
+        display.printf("Inlet SV:%.0f", inletSV);
+    } else if (ctrlMode == MODE_TUNE) {
+        display.printf("Tuning...");
+    } else {
+        display.printf("Inlet: off");
     }
 
     display.setCursor(COL1A, ROW6 * ROWHEIGHT);
@@ -702,6 +829,8 @@ void processCommand(String cmd, int8_t clientNum) {
 
     } else if (kw == "OT1") {
         if (n < 2) return;
+        if (tunePhase != TUNE_IDLE) abortTune("manual override");
+        ctrlMode = MODE_MANUAL;   // manual heat command is an instant override
         String param = tokens[1];
         param.toUpperCase();
         if (param == "UP") {
@@ -739,6 +868,409 @@ void processCommand(String cmd, int8_t clientNum) {
         flagDisplayUpdate = true;
         applyInterlock();
         broadcastStatus();
+
+    } else if (kw == "INLET") {
+        // INLET <degC> — set inlet setpoint and engage closed-loop control.
+        // INLET OFF      — disengage; heat holds at its current level.
+        if (n < 2) return;
+        if (tunePhase != TUNE_IDLE) abortTune("inlet override");
+        String param = tokens[1];
+        String upper = param;
+        upper.toUpperCase();
+        if (upper == "OFF") {
+            ctrlMode = MODE_MANUAL;   // leave requestedHeatLevel where it is
+        } else {
+            engageInlet(param.toFloat());
+        }
+        flagDisplayUpdate = true;
+        broadcastStatus();
+
+    } else if (kw == "PID") {
+        // PID            — report current gains/setpoint/mode.
+        // PID <kp ki kd> — set gains live (for manual tuning).
+        if (n >= 4) {
+            pidKp = tokens[1].toFloat();
+            pidKi = tokens[2].toFloat();
+            pidKd = tokens[3].toFloat();
+            saveTuning();
+        }
+        char b[112];
+        snprintf(b, sizeof(b),
+            "{\"pushMessage\":\"pid\",\"data\":{\"kp\":%.3f,\"ki\":%.3f,\"kd\":%.3f,\"sv\":%.1f,\"mode\":\"%s\"}}",
+            pidKp, pidKi, pidKd, inletSV,
+            ctrlMode == MODE_INLET ? "inlet" : (ctrlMode == MODE_TUNE ? "tune" : "manual"));
+        if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
+        Serial.println(b);
+
+    } else if (kw == "STAT") {
+        // Report the control-cadence jitter watch (worst late-fire, µs) and zero
+        // it. Evidence on whether the cooperative loop ever needs a real core.
+        char b[96];
+        snprintf(b, sizeof(b),
+            "{\"pushMessage\":\"stat\",\"data\":{\"ctrlMaxJitterUs\":%lu}}",
+            (unsigned long)ctrlMaxJitterUs);
+        if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
+        Serial.println(b);
+        ctrlMaxJitterUs = 0;
+
+    } else if (kw == "TUNE") {
+        // TUNE              — start a step test (default step size).
+        // TUNE <pct>        — start with a specific heat step (% points).
+        // TUNE ABORT|OFF    — cancel a running test.
+        // TUNE APPLY        — apply the last "tight" suggestion as PID gains.
+        if (n >= 2) {
+            String p = tokens[1];
+            String up = p;
+            up.toUpperCase();
+            if (up == "OFF" || up == "ABORT") {
+                if (tunePhase != TUNE_IDLE) abortTune("operator abort");
+            } else if (up == "APPLY") {
+                if (tuneHaveSug) {
+                    pidKp = tuneSugKp;
+                    pidKi = tuneSugKi;
+                    pidKd = 0.0f;
+                    saveTuning();
+                    char b[112];
+                    snprintf(b, sizeof(b),
+                        "{\"pushMessage\":\"tune\",\"data\":{\"applied\":true,\"kp\":%.3f,\"ki\":%.4f}}",
+                        pidKp, pidKi);
+                    webSocket.broadcastTXT(b);
+                    Serial.println(b);
+                }
+            } else {
+                if (tunePhase == TUNE_IDLE) startTune(p.toFloat());
+            }
+        } else if (tunePhase == TUNE_IDLE) {
+            startTune((float)TUNE_STEP_DELTA);
+        }
+
+    } else if (kw == "FF") {
+        // FF            — report feedforward params + current value.
+        // FF <k>        — set ffK directly.
+        // FF AMB <degC> — set the ambient reference temp.
+        // FF CAL        — derive ffK from the current (assumed steady) point.
+        // FF OFF        — disable feedforward (ffK = 0).
+        if (n >= 2) {
+            String p = tokens[1];
+            String up = p;
+            up.toUpperCase();
+            if (up == "OFF") {
+                ffK = 0.0f;
+            } else if (up == "AMB") {
+                if (n >= 3) ffAmbient = tokens[2].toFloat();
+            } else if (up == "CAL") {
+                float denom = (float)fanLevel * (inTemp - ffAmbient);
+                if (heatLevel > 0 && denom > 1.0f) ffK = (float)heatLevel / denom;
+            } else {
+                ffK = p.toFloat();
+            }
+            saveTuning();   // OFF / AMB / CAL / direct-set all mutate the tuning set
+        }
+        char b[160];
+        snprintf(b, sizeof(b),
+            "{\"pushMessage\":\"ff\",\"data\":{\"ffK\":%.5f,\"amb\":%.1f,\"ff\":%.1f}}",
+            ffK, ffAmbient,
+            feedforward(ctrlMode == MODE_INLET ? inletSV : inTemp, fanLevel));
+        if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
+        Serial.println(b);
+    }
+}
+
+// ===========================================================================
+// Inlet temperature control (closed loop)
+// ===========================================================================
+// The entire control law lives in controlStep(), operating only on shared
+// globals (inTemp, fanLevel, requestedHeatLevel, the PID state). That is the
+// "seam": cooperative now (called on a fixed cadence from loop()), but liftable
+// into a pinned FreeRTOS control task later with no change to the math — see
+// work.md. In MODE_MANUAL it does nothing; OT1 drives heat directly.
+
+// PID working state (file-local).
+static float    pidITerm  = 0.0f;   // integral accumulator, in heat-% units
+static float    pidPvPrev = 0.0f;   // previous process value (inTemp)
+static float    pidDFilt  = 0.0f;   // filtered derivative term
+static bool     ctrlPrimed = false; // false until the first step seeds pvPrev
+// (ctrlMaxJitterUs is declared up in the state section, ahead of processCommand.)
+
+// Static feedforward heat estimate: heat_ff = ffK · fan · (sv − ffAmbient),
+// clamped to 0..100. Returns 0 when ffK <= 0 (feedforward disabled). Wired into
+// the control law, the engage-seed, and the anti-windup so they all stay
+// consistent when it is active.
+float feedforward(float sv, uint8_t fan) {
+    if (ffK <= 0.0f) return 0.0f;
+    float ff = ffK * (float)fan * (sv - ffAmbient);
+    if (ff < 0.0f)   ff = 0.0f;
+    if (ff > 100.0f) ff = 100.0f;
+    return ff;
+}
+
+// Engage closed-loop control with a bumpless transfer: seed the integrator so
+// the first output equals the current heat level (u = Kp*e + iTerm + FF must
+// equal heatLevel  =>  iTerm = heatLevel - Kp*e - FF). No step on engage.
+void engageInlet(float sv) {
+    if (sv < INLET_SV_MIN_C) sv = INLET_SV_MIN_C;
+    if (sv > INLET_SV_MAX_C) sv = INLET_SV_MAX_C;
+
+    // Already closed-loop: just retarget and keep the integrator. The setpoint
+    // changes gradually during a roast (Artisan drives INLET repeatedly), so
+    // re-seeding here would reset integral action on every update.
+    if (ctrlMode == MODE_INLET) { inletSV = sv; return; }
+
+    // Manual -> inlet: bumpless transfer. Seed the integrator so the first
+    // output equals the current heat level (u = Kp*e + iTerm + FF == heatLevel).
+    inletSV = sv;
+    float e = sv - inTemp;
+    pidITerm  = (float)heatLevel - pidKp * e - feedforward(sv, fanLevel);
+    pidPvPrev = inTemp;
+    pidDFilt  = 0.0f;
+    ctrlPrimed = true;
+    ctrlMode  = MODE_INLET;
+}
+
+// One control iteration. dtMs is the measured interval since the last call, so
+// timing jitter doesn't bias the integral/derivative.
+void controlStep(uint32_t dtMs) {
+    if (ctrlMode == MODE_TUNE) { tuneStep(dtMs); return; }
+    if (ctrlMode != MODE_INLET) { ctrlPrimed = false; return; }
+
+    float dt = dtMs * 0.001f;
+    if (dt <= 0.0f) return;
+    if (dt > 1.0f) dt = 1.0f;   // clamp a pathological gap (e.g. post-stall)
+
+    float pv = inTemp;
+    if (!ctrlPrimed) { pidPvPrev = pv; ctrlPrimed = true; }  // belt-and-suspenders
+
+    float e  = inletSV - pv;
+    float P  = pidKp * e;
+    float ff = feedforward(inletSV, fanLevel);
+
+    // Derivative on measurement (no setpoint-change kick), low-pass filtered.
+    float dRaw = -pidKd * (pv - pidPvPrev) / dt;
+    if (PID_D_FILTER_TC > 0.0f) {
+        float a = dt / (PID_D_FILTER_TC + dt);
+        pidDFilt += a * (dRaw - pidDFilt);
+    } else {
+        pidDFilt = dRaw;
+    }
+    float D = pidDFilt;
+
+    pidITerm += pidKi * e * dt;            // provisional integration
+    float u = P + pidITerm + D + ff;
+
+    // What the hardware will actually apply: clamp to 0..100 and the interlock.
+    float uClamped = u < 0.0f ? 0.0f : (u > 100.0f ? 100.0f : u);
+    float cap      = (float)interlockCap();
+    float applied  = uClamped < cap ? uClamped : cap;
+
+    // Back-calculation anti-windup against the *applied* value, so saturation —
+    // including the fan interlock capping heat — doesn't wind the integrator up.
+    pidITerm += PID_KAW * (applied - u) * dt;
+    if (pidITerm < 0.0f)   pidITerm = 0.0f;
+    if (pidITerm > 100.0f) pidITerm = 100.0f;
+
+    pidPvPrev = pv;
+
+    requestedHeatLevel = (uint8_t)lroundf(uClamped);
+    applyInterlock();   // writes min(requestedHeatLevel, cap) to the heat dimmer
+}
+
+// ===========================================================================
+// Open-loop step-test autotune (TUNE)
+// ===========================================================================
+// State machine, stepped from controlStep() at the control cadence while in
+// MODE_TUNE: hold baseline -> step heat -> sample the inlet response -> fit an
+// FOPDT model (two-point 28.3%/63.2% method) -> suggest PI gains (SIMC). The
+// step goes through applyInterlock(), so inadequate airflow aborts the test.
+
+static uint8_t  tuneU0        = 0;     // baseline applied heat (%)
+static uint8_t  tuneCmdDelta  = 0;     // commanded step size (% points)
+static uint8_t  tuneStepHeat  = 0;     // commanded heat during the step
+static float    tuneStepDelta = 0.0f;  // actual applied heat delta (post-interlock)
+static float    tuneT0        = 0.0f;  // measured baseline temp (°C)
+static uint32_t tunePhaseMs   = 0;     // elapsed time in the current phase
+static uint32_t tuneSampleAcc = 0;     // ms since the last response sample
+static float    tuneBaseAcc   = 0.0f;  // baseline-temp accumulator
+static uint16_t tuneBaseN     = 0;     // baseline samples
+static float    tuneBuf[TUNE_MAX_SAMPLES];  // sampled response (buf[0] at step)
+static uint16_t tuneCount     = 0;     // samples recorded
+
+// Send a result line to every client and the serial console, then return to
+// manual holding the pre-test baseline heat.
+static void tuneReportAndRestore(const char *json) {
+    webSocket.broadcastTXT(json);
+    Serial.println(json);
+    requestedHeatLevel = tuneU0;
+    ctrlMode  = MODE_MANUAL;
+    tunePhase = TUNE_IDLE;
+    applyInterlock();
+    flagDisplayUpdate = true;
+    broadcastStatus();
+}
+
+void abortTune(const char *why) {
+    char buf[128];
+    snprintf(buf, sizeof(buf),
+        "{\"pushMessage\":\"tune\",\"data\":{\"ok\":false,\"reason\":\"%s\"}}", why);
+    tuneReportAndRestore(buf);
+}
+
+// First time (s, relative to the step) the response reaches `target`, linearly
+// interpolated; -1 if it never does. Assumes a rising response (buf[0] ~ T0).
+static float tuneCrossTime(float target) {
+    for (uint16_t i = 0; i < tuneCount; i++) {
+        if (tuneBuf[i] >= target) {
+            if (i == 0) return 0.0f;
+            float a = tuneBuf[i - 1], b = tuneBuf[i];
+            float frac = (b > a) ? (target - a) / (b - a) : 0.0f;
+            return ((float)(i - 1) + frac) * (TUNE_SAMPLE_MS * 0.001f);
+        }
+    }
+    return -1.0f;
+}
+
+// SIMC (Skogestad) PI tuning for an FOPDT model. lambda is the closed-loop time
+// constant (robustness knob: smaller = brisker). Outputs gains in our units —
+// kc [%/°C], ki [%/(°C·s)] = kc / Ti.
+static void tuneSimcPI(float Kp, float tau, float theta, float lambda,
+                       float &kc, float &ki) {
+    float denom = lambda + theta;
+    if (denom < 1e-3f) denom = 1e-3f;
+    kc = (1.0f / Kp) * (tau / denom);
+    float Ti = (tau < 4.0f * denom) ? tau : 4.0f * denom;
+    ki = (Ti > 1e-3f) ? kc / Ti : 0.0f;
+}
+
+// Fit the recorded response and report the model + suggested gains.
+static void tuneFinish() {
+    uint16_t navg = tuneCount < 8 ? tuneCount : 8;
+    float sum = 0.0f;
+    for (uint16_t i = tuneCount - navg; i < tuneCount; i++) sum += tuneBuf[i];
+    float Tfinal = navg ? sum / navg : tuneT0;
+    float dT = Tfinal - tuneT0;
+
+    char buf[256];
+    if (dT < TUNE_MIN_RISE_C || tuneStepDelta < 1.0f) {
+        snprintf(buf, sizeof(buf),
+            "{\"pushMessage\":\"tune\",\"data\":{\"ok\":false,\"reason\":\"insufficient response\",\"dT\":%.1f,\"step\":%.0f}}",
+            dT, tuneStepDelta);
+        tuneReportAndRestore(buf);
+        return;
+    }
+
+    float Kp = dT / tuneStepDelta;                       // process gain (°C/%)
+    float t28 = tuneCrossTime(tuneT0 + 0.283f * dT);
+    float t63 = tuneCrossTime(tuneT0 + 0.632f * dT);
+    if (t28 < 0.0f || t63 <= t28) {
+        snprintf(buf, sizeof(buf),
+            "{\"pushMessage\":\"tune\",\"data\":{\"ok\":false,\"reason\":\"could not fit FOPDT\",\"dT\":%.1f}}",
+            dT);
+        tuneReportAndRestore(buf);
+        return;
+    }
+    float tau   = 1.5f * (t63 - t28);
+    float theta = t63 - tau;
+    if (theta < 0.0f) theta = 0.0f;
+
+    // Two robustness levels: "tight" (brisk, per the operator's tracking-first
+    // preference) and "cons" (conservative). Bound lambda so a tiny dead time
+    // doesn't blow the gains up.
+    float lamT = (theta > 0.1f * tau) ? theta : 0.1f * tau;
+    float lamC = (3.0f * theta > 0.5f * tau) ? 3.0f * theta : 0.5f * tau;
+    float kpT, kiT, kpC, kiC;
+    tuneSimcPI(Kp, tau, theta, lamT, kpT, kiT);
+    tuneSimcPI(Kp, tau, theta, lamC, kpC, kiC);
+
+    tuneSugKp = kpT;
+    tuneSugKi = kiT;
+    tuneHaveSug = true;
+
+    snprintf(buf, sizeof(buf),
+        "{\"pushMessage\":\"tune\",\"data\":{\"ok\":true,\"fan\":%u,\"step\":%.0f,\"dT\":%.1f,"
+        "\"Kp\":%.3f,\"tau\":%.1f,\"theta\":%.1f,"
+        "\"tight\":{\"kp\":%.3f,\"ki\":%.4f},\"cons\":{\"kp\":%.3f,\"ki\":%.4f}}}",
+        fanLevel, tuneStepDelta, dT, Kp, tau, theta, kpT, kiT, kpC, kiC);
+    tuneReportAndRestore(buf);
+}
+
+// Begin a step test from the current operating point.
+void startTune(float deltaPct) {
+    if (deltaPct < TUNE_STEP_DELTA_MIN) deltaPct = TUNE_STEP_DELTA_MIN;
+    if (deltaPct > TUNE_STEP_DELTA_MAX) deltaPct = TUNE_STEP_DELTA_MAX;
+    tuneU0       = heatLevel;            // current applied heat is the baseline
+    tuneCmdDelta = (uint8_t)deltaPct;
+    tuneBaseAcc  = 0.0f;
+    tuneBaseN    = 0;
+    tunePhaseMs  = 0;
+    tuneSampleAcc = 0;
+    tuneCount    = 0;
+    tunePhase    = TUNE_BASELINE;
+    ctrlMode     = MODE_TUNE;
+    flagDisplayUpdate = true;
+    broadcastStatus();
+}
+
+void tuneStep(uint32_t dtMs) {
+    const uint16_t settleSamples = (TUNE_SETTLE_SECS * 1000) / TUNE_SAMPLE_MS;
+
+    if (inTemp > TUNE_TEMP_ABORT_C) { abortTune("over-temp"); return; }
+
+    switch (tunePhase) {
+
+    case TUNE_BASELINE:
+        requestedHeatLevel = tuneU0;
+        applyInterlock();
+        tuneBaseAcc += inTemp;
+        tuneBaseN++;
+        tunePhaseMs += dtMs;
+        if (tunePhaseMs >= TUNE_BASELINE_MS) {
+            tuneT0 = tuneBaseN ? tuneBaseAcc / tuneBaseN : inTemp;
+            uint16_t cmd = (uint16_t)tuneU0 + tuneCmdDelta;
+            if (cmd > 100) cmd = 100;
+            tuneStepHeat = (uint8_t)cmd;
+            requestedHeatLevel = tuneStepHeat;
+            applyInterlock();
+            tuneStepDelta = (float)heatLevel - (float)tuneU0;   // actual, post-interlock
+            if (tuneStepDelta < 1.0f) { abortTune("interlock capped step (raise fan)"); return; }
+            tuneBuf[0] = inTemp;       // sample at t = 0 (≈ T0)
+            tuneCount  = 1;
+            tuneSampleAcc = 0;
+            tunePhaseMs = 0;
+            tunePhase = TUNE_STEP;
+        }
+        break;
+
+    case TUNE_STEP:
+        requestedHeatLevel = tuneStepHeat;
+        applyInterlock();
+        tunePhaseMs   += dtMs;
+        tuneSampleAcc += dtMs;
+
+        if (tuneSampleAcc >= TUNE_SAMPLE_MS) {
+            tuneSampleAcc -= TUNE_SAMPLE_MS;
+            if (tuneCount < TUNE_MAX_SAMPLES) tuneBuf[tuneCount++] = inTemp;
+
+            // Settled? Response flat (max-min within band) over the last window.
+            if (tuneCount >= settleSamples && tunePhaseMs >= TUNE_MIN_TEST_MS) {
+                float mn = 1e9f, mx = -1e9f;
+                for (uint16_t i = tuneCount - settleSamples; i < tuneCount; i++) {
+                    float v = tuneBuf[i];
+                    if (v < mn) mn = v;
+                    if (v > mx) mx = v;
+                }
+                if (mx - mn < TUNE_SETTLE_BAND_C) { tuneFinish(); return; }
+            }
+        }
+
+        if (tunePhaseMs >= TUNE_MAX_MS || tuneCount >= TUNE_MAX_SAMPLES) {
+            tuneFinish();   // timeout — fit whatever we have
+            return;
+        }
+        break;
+
+    default:
+        tunePhase = TUNE_IDLE;
+        ctrlMode  = MODE_MANUAL;
+        break;
     }
 }
 
@@ -767,6 +1299,31 @@ void loop() {
         updateSensors();
     }
 
+    // Display heartbeat: repaint at 1 Hz, decoupled from the sensor poll so the
+    // full-framebuffer I2C push (~30 ms, a cooperative-loop blocker) hits the
+    // control deadline at most once a second. Event handlers still flag an
+    // immediate repaint for instant response to commands.
+    static uint32_t lastDisplayMs = 0;
+    if (now - lastDisplayMs >= 1000) {
+        lastDisplayMs = now;
+        flagDisplayUpdate = true;
+    }
+
+    // Inlet control step (fixed cadence; the controlStep() seam). Uses the
+    // measured interval so cooperative jitter doesn't bias the integral, and
+    // records the worst late-fire as evidence on whether a dedicated core is
+    // ever needed (read via STAT). controlStep() is a no-op in MODE_MANUAL.
+    static uint32_t lastCtrl = 0;
+    uint32_t ctrlDt = now - lastCtrl;
+    if (ctrlDt >= CONTROL_PERIOD_MS) {
+        if (lastCtrl != 0 && ctrlDt > CONTROL_PERIOD_MS) {
+            uint32_t jitterUs = (ctrlDt - CONTROL_PERIOD_MS) * 1000UL;
+            if (jitterUs > ctrlMaxJitterUs) ctrlMaxJitterUs = jitterUs;
+        }
+        lastCtrl = now;
+        controlStep(ctrlDt);
+    }
+
     // Periodic DimmerLink error poll (every 5 s)
     static uint32_t lastErrorPoll = 0;
     if (now - lastErrorPoll >= 5000) {
@@ -789,6 +1346,43 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.6.0  2026-06-29  Persist the tuning set (PID gains + feedforward params) in
+//                     NVS flash via the Preferences library. loadTuning() at
+//                     boot restores stored values over the compile-time
+//                     placeholders (virgin device keeps the defaults);
+//                     saveTuning() is called from the PID, TUNE APPLY, and FF
+//                     mutation paths only — never the control loop — so flash
+//                     wear is negligible. Namespace "tuning".
+// v0.5.0  2026-06-29  Feedforward power map (robustness to airflow changes):
+//                     heat_ff = ffK · fan · (SV − ffAmbient), summed into the
+//                     control law so a fan change moves heat immediately and the
+//                     PID only trims the residual. FF command: report / set ffK /
+//                     FF AMB <degC> / FF CAL (auto-calibrate ffK from the current
+//                     steady point) / FF OFF. Defaults off (ffK = 0). Already
+//                     consistent with the bumpless engage-seed and anti-windup,
+//                     which referenced feedforward() from the start.
+// v0.4.0  2026-06-29  Open-loop step-test autotune (TUNE command). Holds the
+//                     current heat to measure a baseline, applies a heat step,
+//                     samples the inlet response, fits an FOPDT model (two-point
+//                     28.3%/63.2% method) and suggests PI gains via SIMC at two
+//                     robustness levels (tight/conservative). New MODE_TUNE; the
+//                     step runs through applyInterlock() so inadequate airflow
+//                     aborts it, with over-temp and operator-override aborts too.
+//                     TUNE [pct] / TUNE ABORT / TUNE APPLY. Results broadcast as
+//                     a "tune" push message. No external library — identification
+//                     and tuning are inline (see work.md phase 3).
+// v0.3.0  2026-06-29  Inlet-temperature closed-loop control (cooperative). New
+//                     MODE_INLET: controlStep() modulates heat from measured
+//                     inlet temp with a PI(D) loop — derivative-on-measurement,
+//                     back-calculation anti-windup against the *applied* (post-
+//                     interlock) heat, bumpless engage. Commands: INLET <degC> /
+//                     INLET OFF, PID (report/set gains live), STAT (control
+//                     jitter watch). OT1 is an instant manual override. Mode +
+//                     setpoint added to the status broadcast and OLED row 5.
+//                     Gains are untuned placeholders. Feedforward + sTune TUNE
+//                     routine are the next phases (see work.md). The control law
+//                     is isolated in controlStep() so it can later move to a
+//                     pinned FreeRTOS task unchanged.
 // v0.2.1  2026-06-28  RTD read robustness: periodic VBIAS/auto-convert re-assert
 //                     (guards against a silently-stalled converter), and a median
 //                     filter over recent samples (rejects single-sample spikes).

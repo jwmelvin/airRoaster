@@ -1,4 +1,4 @@
-# airRoaster v01
+# airRoaster
 
 ESP32-based controller for a hot-air coffee roaster. Controls a heating element and fan independently via two [RBDimmer DimmerLink](https://www.rbdimmer.com/docs/dimmerlink-I2CCommunication) I2C AC dimmers, with a WebSocket interface for remote control and an OLED display for local status.
 
@@ -92,15 +92,32 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 | `OT2 <value>` | `OT2 50` | Set fan level (0–100%) |
 | `OT2 UP` | `OT2 UP` | Increase fan by `DUTY_STEP` |
 | `OT2 DOWN` | `OT2 DOWN` | Decrease fan by `DUTY_STEP` |
+| `INLET <degC>` | `INLET 165` | Set inlet setpoint and engage closed-loop control (see [Inlet temperature control](#inlet-temperature-control)) |
+| `INLET OFF` | `INLET OFF` | Disengage closed-loop control; heat holds at its current level |
+| `PID` | `PID` | Report current PID gains, setpoint, and mode |
+| `PID <kp ki kd>` | `PID 1.5 0.05 0` | Set PID gains live (for manual tuning) |
+| `TUNE` | `TUNE` | Run an open-loop step test and suggest PI gains (see [Tuning](#tuning)) |
+| `TUNE <pct>` | `TUNE 20` | Step test with a specific heat step (% points) |
+| `TUNE ABORT` | `TUNE ABORT` | Cancel a running step test |
+| `TUNE APPLY` | `TUNE APPLY` | Apply the last test's "tight" suggested gains |
+| `FF` | `FF` | Report feedforward params and current value (see [Feedforward](#feedforward-airflow-compensation)) |
+| `FF <k>` | `FF 0.0045` | Set the feedforward coefficient `ffK` directly |
+| `FF AMB <degC>` | `FF AMB 24` | Set the ambient reference temperature |
+| `FF CAL` | `FF CAL` | Auto-calibrate `ffK` from the current (steady) operating point |
+| `FF OFF` | `FF OFF` | Disable feedforward (`ffK = 0`) |
+| `STAT` | `STAT` | Report and reset the control-cadence jitter watch (worst late-fire, µs) |
 | `IL` | `IL` | Toggle interlock mode between hard and soft (see [Fan interlock](#fan-interlock)) |
 | `LOG` | `LOG` | Retrieve the error log (sent only to requesting client) |
+
+Sending `OT1 <value>` (manual heat) at any time is an **instant override**: it
+drops the controller out of closed-loop mode and applies the manual level.
 
 All unsolicited messages use Artisan's push message envelope so any client can use a consistent format:
 
 **Status broadcast** (sent to all clients on any state change, and to new clients on connect):
 
 ```json
-{"pushMessage": "status", "data": {"heat": 60, "heatReq": 60, "fan": 50, "ilCap": 100, "ilSoft": false}}
+{"pushMessage": "status", "data": {"heat": 60, "heatReq": 60, "fan": 50, "ilCap": 100, "ilSoft": false, "mode": "manual", "inSV": 0.0}}
 ```
 
 | `data` field | Description |
@@ -110,6 +127,8 @@ All unsolicited messages use Artisan's push message envelope so any client can u
 | `fan` | Fan level (%) |
 | `ilCap` | Current heat ceiling imposed by the interlock (0–100%); `0` means heat is fully blocked, `100` means unrestricted |
 | `ilSoft` | `true` if soft (linear) interlock mode is active; `false` for hard (binary) mode |
+| `mode` | `"manual"` (heat set directly by `OT1`), `"inlet"` (heat modulated by the closed loop), or `"tune"` (a step test is running) |
+| `inSV` | Inlet setpoint (°C) in use when `mode` is `"inlet"` |
 
 **Error broadcast** (sent to all clients when an error is logged):
 
@@ -159,6 +178,149 @@ In both modes:
 
 ---
 
+## Inlet temperature control
+
+The controller can hold a target **inlet** temperature itself, closing the loop
+on-device instead of relying on Artisan's 1 Hz command cycle. This is a
+switchable mode layered on top of manual heat control.
+
+### Modes
+
+| Mode | How heat is set |
+|------|-----------------|
+| `manual` (default) | Heat is whatever `OT1` last commanded |
+| `inlet` | Heat is modulated by a PI(D) loop to hold the inlet setpoint |
+
+- `INLET <degC>` engages `inlet` mode (bumpless — no heat step on engage) and
+  sets the setpoint. Sending `INLET` again just retargets the setpoint and keeps
+  the integrator, so a gradually-changing setpoint during a roast (e.g. driven
+  from an Artisan background profile) does not reset the loop.
+- `INLET OFF` returns to `manual`, holding heat at its current level.
+- `OT1 <value>` is an instant manual override (drops back to `manual`).
+
+### Control law
+
+`controlStep()` runs on a fixed cadence (`CONTROL_PERIOD_MS`, default 250 ms)
+from the main loop. The law is intentionally isolated in that one function
+operating on shared globals — the *seam* that lets it move to a dedicated
+FreeRTOS task later without changing the math (see `work.md`). It is currently
+**cooperative** (single-core): adequate for a thermal plant with tens-of-seconds
+time constants, and free of the cross-core I²C/SPI bus contention a dedicated
+control task would introduce. The `STAT` command reports the worst observed
+control-step timing jitter as evidence on whether a dedicated core is ever
+warranted.
+
+Key properties:
+- **Derivative on measurement** (no setpoint-change kick), low-pass filtered.
+- **Back-calculation anti-windup** against the *actually applied* heat — i.e.
+  post-interlock — so the fan interlock capping heat does not wind up the
+  integrator.
+- Starts **PI-only** (`Kd = 0`); the inlet thermocouple is noisy near the
+  dimmers (see [hardware/emi.md](hardware/emi.md)), so derivative is added only
+  after the plant is characterized.
+
+### Tuning
+
+> ⚠️ The default gains (`pidKp`/`pidKi`/`pidKd` in the firmware) are **untuned
+> placeholders** and are not expected to control well. Characterize the plant
+> with `TUNE` (below) and apply gains before relying on closed-loop control.
+
+- `PID` reports the current gains, setpoint, and mode.
+- `PID <kp> <ki> <kd>` sets the gains live over WebSocket/serial, so you can tune
+  without recompiling.
+
+#### Autotune (`TUNE`)
+
+`TUNE` runs an **open-loop step test**: it holds the current heat to measure a
+baseline inlet temperature, applies a heat step, records the response, fits a
+first-order-plus-dead-time (FOPDT) model (two-point 28.3%/63.2% method), and
+suggests PI gains via the SIMC rule at two robustness levels.
+
+**Procedure**
+
+1. Set the fan to a representative level (your normal roasting range) and a
+   moderate heat, and let the inlet temperature settle.
+2. Send `TUNE` (default step) or `TUNE <pct>` (e.g. `TUNE 20`). The display shows
+   `Tuning...` and `mode` becomes `tune`.
+3. The test holds baseline (~8 s), steps heat up, and watches until the response
+   flattens (or a 180 s cap). Heat returns to baseline and mode returns to
+   `manual` automatically.
+4. The result is broadcast as a `tune` push message:
+   ```json
+   {"pushMessage":"tune","data":{"ok":true,"fan":57,"step":15,"dT":42.3,
+     "Kp":2.82,"tau":18.5,"theta":3.2,
+     "tight":{"kp":1.97,"ki":0.13},"cons":{"kp":0.79,"ki":0.05}}}
+   ```
+   - `Kp` (°C/%), `tau`, `theta` (s) are the identified plant model.
+   - `tight` is the brisker suggestion (tracking-first); `cons` is more
+     conservative. Start with `tight`, fall back to `cons` if it overshoots or
+     oscillates.
+5. Apply gains with `TUNE APPLY` (uses the `tight` set) or `PID <kp> <ki> <kd>`
+   to enter a chosen pair manually. Then `INLET <degC>` to run closed-loop.
+
+**Safety / aborts.** The step goes through the fan interlock, so inadequate
+airflow aborts the test (`interlock capped step`). It also aborts on over-temp
+(`> 280 °C` inlet) and on any `OT1`/`INLET`/`TUNE ABORT`. A failed fit reports
+`{"ok":false,"reason":...}`.
+
+Because plant gain and time constant vary with airflow, run `TUNE` at the center
+of your fan range (~57). The feedforward below — not the PID gains — is the main
+mechanism for robustness against airflow changes.
+
+### Feedforward (airflow compensation)
+
+Steady-state heater power scales with airflow × temperature rise, so the
+controller adds a feedforward term:
+
+```
+heat_ff = ffK · fan · (SV − ambient)
+```
+
+summed into the control output. The PID then only has to trim the residual. The
+payoff is **airflow rejection**: when the fan changes mid-roast, `heat_ff` moves
+*immediately* in proportion, instead of waiting for the inlet temperature to
+drift and the integrator to catch up. One coefficient covers the narrow fan band.
+
+Feedforward is **off by default** (`ffK = 0`). To set it up:
+
+1. Stabilize the roaster in closed loop (or manual) at a representative fan and
+   inlet temperature.
+2. Send `FF AMB <degC>` with your ambient temperature (once), then `FF CAL`. This
+   derives `ffK` from the current operating point:
+   `ffK = heat / (fan · (inlet − ambient))`.
+3. `FF` reports the result; `FF <k>` sets the coefficient by hand; `FF OFF`
+   disables it.
+
+With feedforward calibrated, the integrator settles near zero and the loop
+rejects fan-speed changes largely through the feedforward path. Reported as an
+`ff` push message: `{"ffK":0.00451,"amb":24.0,"ff":38.7}`.
+
+---
+
+## Commissioning
+
+Bring the controller up in this order. Every step after the flash is a command
+sent over WebSocket — the console page at [artisan/dashboard.html](artisan/dashboard.html)
+has a **Commissioning sequence** panel that walks these steps with the value
+fields prefilled.
+
+1. **Flash.** With the board connected, run `./verify.sh upload` on the host.
+2. **Sanity.** Stay in `manual`; confirm sensors, OLED, and Artisan still behave.
+   After a few minutes send `STAT` to read control-cadence jitter — this is the
+   evidence on whether the cooperative single-core design holds (expect
+   single-digit ms).
+3. **Characterize.** Set the fan to the center of your range (`OT2 57`) and a
+   moderate heat (`OT1 40`), let the inlet temperature settle, then run `TUNE`.
+   Eyeball the reported `dT`/`Kp`/`tau`/`theta` for sanity.
+4. **Apply gains.** `TUNE APPLY` uses the `tight` suggestion; if it looks twitchy,
+   enter the `cons` set by hand with `PID <kp> <ki> <kd>`.
+5. **Calibrate feedforward.** Still steady, send `FF AMB <ambient>` then `FF CAL`.
+6. **Close the loop.** `INLET <degC>` near the current inlet temp (bumpless), then
+   nudge the setpoint and watch tracking.
+7. **The real test.** With the loop holding, deliberately change fan speed and
+   confirm the inlet temperature barely moves — that is the feedforward earning
+   its keep. Tune gains from there.
+
 ## OLED display layout
 
 ```
@@ -167,7 +329,7 @@ In both modes:
 |  Heat: 60        Req: 60       |  ROW2
 |  Fan: 50                       |  ROW3
 |  IL:H ok                       |  ROW4 (interlock status — see below)
-|                                |  ROW5
+|  Inlet SV:165                  |  ROW5 ("Inlet: off" in manual mode)
 |  192.168.1.42                  |  ROW6 (IP address or "No WiFi")
 |                                |  ROW7
 |  B:198.4 E:212.0 I:264.1       |  ROW8 (BT / ET / inlet temps, °C)
@@ -201,7 +363,7 @@ Retrieve the log at any time by sending `LOG` over WebSocket.
 
 ## Artisan integration
 
-A ready-to-import Artisan settings file is provided at `artisan/airRoaster_v01.aset` in this repo.
+A ready-to-import Artisan settings file is provided at `artisan/airRoaster.aset` in this repo.
 
 **Before importing**, open the file in a text editor and replace `<device-ip>` with your ESP32's IP address (shown on the OLED at startup). Then import via **File › Load Settings** in Artisan.
 
