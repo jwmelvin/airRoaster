@@ -20,7 +20,7 @@
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.8.0"
+#define FW_VERSION  "0.9.0"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -62,11 +62,18 @@
 #define HEAT_ADDR   0x51
 #define FAN_ADDR    0x52
 
-#define REG_STATUS  0x00
-#define REG_ERROR   0x02
-#define REG_LEVEL   0x10
-#define REG_CURVE   0x11
-#define REG_FREQ    0x20
+#define REG_STATUS   0x00
+#define REG_COMMAND  0x01   // write ops: RESET / RECALIBRATE / SWITCH_UART
+#define REG_ERROR    0x02
+#define REG_VERSION  0x03
+#define REG_LEVEL    0x10
+#define REG_CURVE    0x11
+#define REG_FREQ     0x20
+
+#define DL_CMD_RESET 0x01   // COMMAND register value: module soft-reset
+
+// Consecutive 5 s error polls with a fault before commanding a module reset
+#define DL_ERR_STREAK_RESET  3
 
 // ---------------------------------------------------------------------------
 // Config
@@ -84,6 +91,15 @@
 #define WDT_TIMEOUT_MS      8000    // task watchdog: panic->reset if loop() hangs this long
 #define INLET_PV_STALE_MS   3000    // closed loop / tune abort if the inlet PV is older than this
 #define INLET_OVERTEMP_C    280.0f  // closed loop aborts above this inlet temp (matches tune abort)
+
+// WiFi: bounded connect wait at boot; reconnection is watched from loop().
+// The roaster must be fully operable over serial with no network present.
+#define WIFI_CONNECT_TIMEOUT_MS  15000
+#define WIFI_CHECK_MS            10000   // link watch cadence in loop()
+
+// Telemetry push (dashboard feed): temps, setpoint, levels, mode, PID terms.
+#define TELEM_PERIOD_MS       1000   // default cadence; runtime-set via TELEM command
+#define TELEM_TUNE_PERIOD_MS  500    // faster while a step test is running
 
 // ---------------------------------------------------------------------------
 // Inlet-temperature control (closed loop) — see the control section below and
@@ -160,6 +176,14 @@ float                tuneSugKi   = 0.0f;
 float pidKp = 1.5f;
 float pidKi = 0.05f;   // 1/s
 float pidKd = 0.0f;
+
+// Telemetry cadence (ms), runtime-adjustable via TELEM <ms>|OFF; 0 disables.
+uint16_t telemPeriodMs = TELEM_PERIOD_MS;
+
+// Last control-step terms, captured for telemetry so the dashboard can show
+// what the loop is doing (P/I/D contributions and the feedforward share).
+// Only meaningful while mode is "inlet"; the mode field says whether to trust.
+float ctlP = 0.0f, ctlI = 0.0f, ctlD = 0.0f, ctlFF = 0.0f;
 
 // Feedforward power map (the main robustness-to-airflow mechanism). Physically,
 // steady-state heat scales with airflow × temperature rise, so
@@ -299,6 +323,7 @@ static float jsonFloat(const String& json, const char* key) {
 void processCommand(String cmd, int8_t clientNum = -1);
 void applyInterlock();
 void broadcastStatus();
+void broadcastTelemetry();
 bool handleArtisanRequest(uint8_t clientNum, const String& msg);
 void initSensors();
 void updateSensors();
@@ -533,17 +558,27 @@ void setup() {
     // Sensor init
     initSensors();
 
-    // WiFi
+    // WiFi: bounded wait, then proceed regardless — the roaster must be fully
+    // operable over serial (control loop, interlock, display) with no network.
+    // setAutoReconnect covers drops; the loop() watch kicks a full reconnect
+    // if the link stays down.
     Serial.print("Connecting to WiFi");
+    WiFi.setAutoReconnect(true);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
-    while (WiFi.status() != WL_CONNECTED) {
+    uint32_t wifiStartMs = millis();
+    while (WiFi.status() != WL_CONNECTED &&
+           millis() - wifiStartMs < WIFI_CONNECT_TIMEOUT_MS) {
         esp_task_wdt_reset();   // connect can exceed the WDT timeout legitimately
-        delay(500);
+        delay(250);
         Serial.print(".");
     }
     Serial.println();
-    Serial.print("WiFi connected. IP: ");
-    Serial.println(WiFi.localIP());
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.print("WiFi connected. IP: ");
+        Serial.println(WiFi.localIP());
+    } else {
+        Serial.println("WiFi not connected — continuing; retrying in background");
+    }
 
     // WebSocket server
     webSocket.begin();
@@ -579,7 +614,10 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
                     String plain = kw;
                     if (!isnan(val)) {
                         plain += " ";
-                        plain += String((int)roundf(val));
+                        // Keep the fraction: Artisan's ramped INLET playback
+                        // sends sub-degree setpoints every tick, and rounding
+                        // here would quantize the ramp to 1 °C steps.
+                        plain += String(val, 2);
                     }
                     processCommand(plain, (int8_t)num);
                 } else {
@@ -602,6 +640,10 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
 // ===========================================================================
 // Broadcast status JSON to all WebSocket clients
 // ===========================================================================
+static const char* modeName() {
+    return ctrlMode == MODE_INLET ? "inlet" : (ctrlMode == MODE_TUNE ? "tune" : "manual");
+}
+
 void broadcastStatus() {
     char buf[160];
     snprintf(buf, sizeof(buf),
@@ -611,8 +653,25 @@ void broadcastStatus() {
              fanLevel,
              interlockCap(),
              interlockSoft ? "true" : "false",
-             ctrlMode == MODE_INLET ? "inlet" : (ctrlMode == MODE_TUNE ? "tune" : "manual"),
+             modeName(),
              inletSV);
+    webSocket.broadcastTXT(buf);
+}
+
+// Telemetry: the periodic dashboard feed. Everything a tuning session needs in
+// one line — temps, setpoint, applied/requested levels, mode, and the last
+// control-step term breakdown. Cadence set by telemPeriodMs (TELEM command).
+void broadcastTelemetry() {
+    if (webSocket.connectedClients() == 0) return;   // don't build the string for nobody
+    char buf[288];
+    snprintf(buf, sizeof(buf),
+        "{\"pushMessage\":\"telem\",\"data\":{\"t\":%lu,\"IN\":%.1f,\"BT\":%.1f,\"ET\":%.1f,"
+        "\"sv\":%.1f,\"heat\":%u,\"heatReq\":%u,\"fan\":%u,\"ilCap\":%u,\"mode\":\"%s\","
+        "\"p\":%.1f,\"i\":%.1f,\"d\":%.1f,\"ff\":%.1f,\"fltIN\":%u,\"fltBT\":%u}}",
+        (unsigned long)millis(), inTemp, btTemp, etTemp,
+        inletSV, heatLevel, requestedHeatLevel, fanLevel, interlockCap(), modeName(),
+        ctlP, ctlI, ctlD, ctlFF,
+        tcINfault.faulted ? 1u : 0u, rtdBTfault.faulted ? 1u : 0u);
     webSocket.broadcastTXT(buf);
 }
 
@@ -701,8 +760,7 @@ void displayUpdate() {
 void initDL(uint8_t addr) {
     for (int attempt = 0; attempt < 3; attempt++) {
         if (isReady(addr)) {
-            Serial.print(addr);
-            Serial.println(" DimmerLink ready!");
+            Serial.printf("DimmerLink 0x%02X ready, fw version %d\n", addr, getVersion(addr));
             Serial.print("Mains frequency: ");
             Serial.print(getFrequency(addr));
             Serial.println(" Hz");
@@ -796,6 +854,34 @@ uint8_t getError(uint8_t addr) {
     return 0xFF;
 }
 
+int getVersion(uint8_t addr) {
+    Wire.beginTransmission(addr);
+    Wire.write(REG_VERSION);
+    Wire.endTransmission(false);
+
+    Wire.requestFrom(addr, 1);
+    if (Wire.available()) {
+        return Wire.read();
+    }
+    return -1;
+}
+
+// Last-resort recovery for a module stuck in an error state: command a soft
+// reset, then re-assert curve and level. If the module needs longer than the
+// brief settle to come back, the 5 s readback audit re-asserts state anyway.
+void resetDL(uint8_t addr, uint8_t level) {
+    char msg[48];
+    snprintf(msg, sizeof(msg), "DimmerLink 0x%02X persistent errors: reset", addr);
+    logError(msg);
+    Wire.beginTransmission(addr);
+    Wire.write(REG_COMMAND);
+    Wire.write(DL_CMD_RESET);
+    Wire.endTransmission();
+    delay(20);
+    setCurve(addr, 1);
+    setLevel(addr, level);
+}
+
 const char* dlErrorName(uint8_t code) {
     switch (code) {
         case 0x00: return nullptr;          // OK — no error
@@ -807,14 +893,30 @@ const char* dlErrorName(uint8_t code) {
     }
 }
 
-void checkDLError(uint8_t addr) {
+// Read + decode the module error register. Returns true if an error is
+// present. Logging is per-address rate-limited: a new code logs immediately,
+// the same code repeating logs once a minute — an absent module (0xFF every
+// poll) must not flood the 8-entry log.
+bool checkDLError(uint8_t addr) {
+    static uint8_t  lastCode[2] = {0, 0};
+    static uint32_t lastMs[2]   = {0, 0};
+    uint8_t idx = (addr == FAN_ADDR) ? 1 : 0;
+
     uint8_t code = getError(addr);
     const char* name = dlErrorName(code);
-    if (name != nullptr) {
+    if (name == nullptr) {
+        lastCode[idx] = 0;      // cleared: the next occurrence logs immediately
+        return false;
+    }
+    uint32_t now = millis();
+    if (code != lastCode[idx] || now - lastMs[idx] >= 60000) {
+        lastCode[idx] = code;
+        lastMs[idx]   = now;
         char msg[48];
         snprintf(msg, sizeof(msg), "DimmerLink 0x%02X %s (0x%02X)", addr, name, code);
         logError(msg);
     }
+    return true;
 }
 
 // Rate-limited log for failed level writes. The caller leaves its cached level
@@ -892,6 +994,42 @@ int tokenize(const String &cmd, String tokens[], int maxTokens) {
     return count;
 }
 
+// Strict numeric parsing. String::toInt()/toFloat() return 0 for garbage, so
+// "OT1 x" once meant heat 0 and "PID a b c" persisted zero gains to NVS —
+// invalid arguments must be rejected, never coerced.
+static bool parseFloatStrict(const String &s, float &out) {
+    if (s.length() == 0) return false;
+    const char *c = s.c_str();
+    char *end = nullptr;
+    float v = strtof(c, &end);
+    if (end == c || *end != '\0') return false;
+    if (isnan(v) || isinf(v)) return false;
+    out = v;
+    return true;
+}
+
+// Integer via the strict float path (Artisan sliders may send "60.00").
+static bool parseIntStrict(const String &s, int &out) {
+    float f;
+    if (!parseFloatStrict(s, f)) return false;
+    out = (int)lroundf(f);
+    return true;
+}
+
+// Reject an invalid argument back to the sender (client or serial) without
+// polluting the 8-entry device error log — a typo is not a device fault.
+static void replyBadArg(int8_t clientNum, const char *kw) {
+    char kwSafe[16];
+    uint8_t i = 0;
+    for (const char *p = kw; *p && i < sizeof(kwSafe) - 1; p++)
+        if (isalnum((unsigned char)*p) || *p == ' ') kwSafe[i++] = *p;
+    kwSafe[i] = '\0';
+    char b[80];
+    snprintf(b, sizeof(b), "{\"pushMessage\":\"error\",\"data\":\"%s: invalid argument\"}", kwSafe);
+    if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
+    Serial.println(b);
+}
+
 void processCommand(String cmd, int8_t clientNum) {
     cmd.trim();
     if (cmd.length() == 0) return;
@@ -921,18 +1059,26 @@ void processCommand(String cmd, int8_t clientNum) {
 
     } else if (kw == "OT1") {
         if (n < 2) return;
-        if (tunePhase != TUNE_IDLE) abortTune("manual override");
-        ctrlMode = MODE_MANUAL;   // manual heat command is an instant override
         String param = tokens[1];
         param.toUpperCase();
+        // Validate before any side effect: a garbage argument must not abort a
+        // running tune or drop out of closed loop, let alone set a level.
+        uint8_t newHeat;
         if (param == "UP") {
-            requestedHeatLevel = (requestedHeatLevel + DUTY_STEP > 100) ? 100 : requestedHeatLevel + DUTY_STEP;
+            newHeat = (requestedHeatLevel + DUTY_STEP > 100) ? 100 : requestedHeatLevel + DUTY_STEP;
         } else if (param == "DOWN") {
-            requestedHeatLevel = (requestedHeatLevel >= DUTY_STEP) ? requestedHeatLevel - DUTY_STEP : 0;
+            newHeat = (requestedHeatLevel >= DUTY_STEP) ? requestedHeatLevel - DUTY_STEP : 0;
         } else {
-            int duty = param.toInt();
-            if (duty >= 0 && duty <= 100) requestedHeatLevel = (uint8_t)duty;
+            int duty;
+            if (!parseIntStrict(tokens[1], duty) || duty < 0 || duty > 100) {
+                replyBadArg(clientNum, "OT1");
+                return;
+            }
+            newHeat = (uint8_t)duty;
         }
+        if (tunePhase != TUNE_IDLE) abortTune("manual override");
+        ctrlMode = MODE_MANUAL;   // manual heat command is an instant override
+        requestedHeatLevel = newHeat;
         flagDisplayUpdate = true;
         applyInterlock();
         broadcastStatus();
@@ -941,14 +1087,18 @@ void processCommand(String cmd, int8_t clientNum) {
         if (n < 2) return;
         String param = tokens[1];
         param.toUpperCase();
-        uint8_t newFan = fanLevel;
+        uint8_t newFan;
         if (param == "UP") {
             newFan = (fanLevel + DUTY_STEP > 100) ? 100 : fanLevel + DUTY_STEP;
         } else if (param == "DOWN") {
             newFan = (fanLevel >= DUTY_STEP) ? fanLevel - DUTY_STEP : 0;
         } else {
-            int duty = param.toInt();
-            if (duty >= 0 && duty <= 100) newFan = (uint8_t)duty;
+            int duty;
+            if (!parseIntStrict(tokens[1], duty) || duty < 0 || duty > 100) {
+                replyBadArg(clientNum, "OT2");
+                return;
+            }
+            newFan = (uint8_t)duty;
         }
         // Commit only on an acknowledged write: the interlock caps heat from
         // fanLevel, so it must track what the fan hardware actually received.
@@ -972,14 +1122,19 @@ void processCommand(String cmd, int8_t clientNum) {
         // INLET <degC> — set inlet setpoint and engage closed-loop control.
         // INLET OFF      — disengage; heat holds at its current level.
         if (n < 2) return;
-        if (tunePhase != TUNE_IDLE) abortTune("inlet override");
-        String param = tokens[1];
-        String upper = param;
+        String upper = tokens[1];
         upper.toUpperCase();
         if (upper == "OFF") {
+            if (tunePhase != TUNE_IDLE) abortTune("inlet override");
             ctrlMode = MODE_MANUAL;   // leave requestedHeatLevel where it is
         } else {
-            engageInlet(param.toFloat());
+            float sv;
+            if (!parseFloatStrict(tokens[1], sv)) {
+                replyBadArg(clientNum, "INLET");
+                return;   // garbage must not engage the loop (or abort a tune)
+            }
+            if (tunePhase != TUNE_IDLE) abortTune("inlet override");
+            engageInlet(sv);
         }
         flagDisplayUpdate = true;
         broadcastStatus();
@@ -988,16 +1143,22 @@ void processCommand(String cmd, int8_t clientNum) {
         // PID            — report current gains/setpoint/mode.
         // PID <kp ki kd> — set gains live (for manual tuning).
         if (n >= 4) {
-            pidKp = tokens[1].toFloat();
-            pidKi = tokens[2].toFloat();
-            pidKd = tokens[3].toFloat();
+            float kp, ki, kd;
+            if (!parseFloatStrict(tokens[1], kp) ||
+                !parseFloatStrict(tokens[2], ki) ||
+                !parseFloatStrict(tokens[3], kd)) {
+                replyBadArg(clientNum, "PID");
+                return;   // a typo must never persist zero gains to NVS
+            }
+            pidKp = kp;
+            pidKi = ki;
+            pidKd = kd;
             saveTuning();
         }
         char b[112];
         snprintf(b, sizeof(b),
             "{\"pushMessage\":\"pid\",\"data\":{\"kp\":%.3f,\"ki\":%.3f,\"kd\":%.3f,\"sv\":%.1f,\"mode\":\"%s\"}}",
-            pidKp, pidKi, pidKd, inletSV,
-            ctrlMode == MODE_INLET ? "inlet" : (ctrlMode == MODE_TUNE ? "tune" : "manual"));
+            pidKp, pidKi, pidKd, inletSV, modeName());
         if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
         Serial.println(b);
 
@@ -1039,7 +1200,12 @@ void processCommand(String cmd, int8_t clientNum) {
                     Serial.println(b);
                 }
             } else {
-                if (tunePhase == TUNE_IDLE) startTune(p.toFloat());
+                float delta;
+                if (!parseFloatStrict(p, delta)) {
+                    replyBadArg(clientNum, "TUNE");
+                    return;   // garbage once clamped to a 5% step and ran a test
+                }
+                if (tunePhase == TUNE_IDLE) startTune(delta);
             }
         } else if (tunePhase == TUNE_IDLE) {
             startTune((float)TUNE_STEP_DELTA);
@@ -1049,21 +1215,42 @@ void processCommand(String cmd, int8_t clientNum) {
         // FF            — report feedforward params + current value.
         // FF <k>        — set ffK directly.
         // FF AMB <degC> — set the ambient reference temp.
+        // FF AMB        — seed ambient from the MAX31855 cold junction (board
+        //                 ambient; the enclosure runs a little warm — override
+        //                 with an explicit value if that matters).
         // FF CAL        — derive ffK from the current (assumed steady) point.
         // FF OFF        — disable feedforward (ffK = 0).
         if (n >= 2) {
-            String p = tokens[1];
-            String up = p;
+            String up = tokens[1];
             up.toUpperCase();
             if (up == "OFF") {
                 ffK = 0.0f;
             } else if (up == "AMB") {
-                if (n >= 3) ffAmbient = tokens[2].toFloat();
+                if (n >= 3) {
+                    float amb;
+                    if (!parseFloatStrict(tokens[2], amb)) {
+                        replyBadArg(clientNum, "FF AMB");
+                        return;
+                    }
+                    ffAmbient = amb;
+                } else {
+                    double cj = tcIN.readInternal();
+                    if (isnan(cj)) {
+                        replyBadArg(clientNum, "FF AMB");   // cold junction unreadable
+                        return;
+                    }
+                    ffAmbient = (float)cj;
+                }
             } else if (up == "CAL") {
                 float denom = (float)fanLevel * (inTemp - ffAmbient);
                 if (heatLevel > 0 && denom > 1.0f) ffK = (float)heatLevel / denom;
             } else {
-                ffK = p.toFloat();
+                float k;
+                if (!parseFloatStrict(tokens[1], k)) {
+                    replyBadArg(clientNum, "FF");
+                    return;
+                }
+                ffK = k;
             }
             saveTuning();   // OFF / AMB / CAL / direct-set all mutate the tuning set
         }
@@ -1072,6 +1259,30 @@ void processCommand(String cmd, int8_t clientNum) {
             "{\"pushMessage\":\"ff\",\"data\":{\"ffK\":%.5f,\"amb\":%.1f,\"ff\":%.1f}}",
             ffK, ffAmbient,
             feedforward(ctrlMode == MODE_INLET ? inletSV : inTemp, fanLevel));
+        if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
+        Serial.println(b);
+
+    } else if (kw == "TELEM") {
+        // TELEM          — report the telemetry period.
+        // TELEM <ms>     — set the period (100–10000 ms).
+        // TELEM OFF      — disable the periodic push.
+        if (n >= 2) {
+            String up = tokens[1];
+            up.toUpperCase();
+            if (up == "OFF") {
+                telemPeriodMs = 0;
+            } else {
+                int ms;
+                if (!parseIntStrict(tokens[1], ms) || ms < 100 || ms > 10000) {
+                    replyBadArg(clientNum, "TELEM");
+                    return;
+                }
+                telemPeriodMs = (uint16_t)ms;
+            }
+        }
+        char b[72];
+        snprintf(b, sizeof(b),
+            "{\"pushMessage\":\"telem\",\"data\":{\"periodMs\":%u}}", telemPeriodMs);
         if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
         Serial.println(b);
     }
@@ -1191,6 +1402,13 @@ void controlStep(uint32_t dtMs) {
 
     pidPvPrev = pv;
 
+    // Term capture for telemetry (dashboard tuning aid). I is the post-anti-
+    // windup value — the one that persists into the next step.
+    ctlP  = P;
+    ctlI  = pidITerm;
+    ctlD  = D;
+    ctlFF = ff;
+
     requestedHeatLevel = (uint8_t)lroundf(uClamped);
     applyInterlock();   // writes min(requestedHeatLevel, cap) to the heat dimmer
 }
@@ -1261,8 +1479,10 @@ static void tuneSimcPI(float Kp, float tau, float theta, float lambda,
     ki = (Ti > 1e-3f) ? kc / Ti : 0.0f;
 }
 
-// Fit the recorded response and report the model + suggested gains.
-static void tuneFinish() {
+// Fit the recorded response and report the model + suggested gains. `settled`
+// says whether the response actually flattened or the test just timed out —
+// a timeout fit underestimates dT and therefore suggests too-hot gains.
+static void tuneFinish(bool settled) {
     uint16_t navg = tuneCount < 8 ? tuneCount : 8;
     float sum = 0.0f;
     for (uint16_t i = tuneCount - navg; i < tuneCount; i++) sum += tuneBuf[i];
@@ -1306,9 +1526,10 @@ static void tuneFinish() {
     tuneHaveSug = true;
 
     snprintf(buf, sizeof(buf),
-        "{\"pushMessage\":\"tune\",\"data\":{\"ok\":true,\"fan\":%u,\"step\":%.0f,\"dT\":%.1f,"
+        "{\"pushMessage\":\"tune\",\"data\":{\"ok\":true,\"settled\":%s,\"fan\":%u,\"step\":%.0f,\"dT\":%.1f,"
         "\"Kp\":%.3f,\"tau\":%.1f,\"theta\":%.1f,"
         "\"tight\":{\"kp\":%.3f,\"ki\":%.4f},\"cons\":{\"kp\":%.3f,\"ki\":%.4f}}}",
+        settled ? "true" : "false",
         fanLevel, tuneStepDelta, dT, Kp, tau, theta, kpT, kiT, kpC, kiC);
     tuneReportAndRestore(buf);
 }
@@ -1379,12 +1600,12 @@ void tuneStep(uint32_t dtMs) {
                     if (v < mn) mn = v;
                     if (v > mx) mx = v;
                 }
-                if (mx - mn < TUNE_SETTLE_BAND_C) { tuneFinish(); return; }
+                if (mx - mn < TUNE_SETTLE_BAND_C) { tuneFinish(true); return; }
             }
         }
 
         if (tunePhaseMs >= TUNE_MAX_MS || tuneCount >= TUNE_MAX_SAMPLES) {
-            tuneFinish();   // timeout — fit whatever we have
+            tuneFinish(false);   // timeout — fit whatever we have, flagged unsettled
             return;
         }
         break;
@@ -1448,14 +1669,41 @@ void loop() {
         controlStep(ctrlDt);
     }
 
-    // Periodic DimmerLink error poll + level readback audit (every 5 s)
+    // Periodic DimmerLink error poll + level readback audit (every 5 s), with
+    // reset escalation: a module erroring through DL_ERR_STREAK_RESET straight
+    // polls gets a soft reset and its curve/level re-asserted.
     static uint32_t lastErrorPoll = 0;
+    static uint8_t  heatErrStreak = 0, fanErrStreak = 0;
     if (now - lastErrorPoll >= 5000) {
         lastErrorPoll = now;
-        checkDLError(HEAT_ADDR);
-        checkDLError(FAN_ADDR);
+        heatErrStreak = checkDLError(HEAT_ADDR) ? heatErrStreak + 1 : 0;
+        fanErrStreak  = checkDLError(FAN_ADDR)  ? fanErrStreak  + 1 : 0;
+        if (heatErrStreak >= DL_ERR_STREAK_RESET) { resetDL(HEAT_ADDR, heatLevel); heatErrStreak = 0; }
+        if (fanErrStreak  >= DL_ERR_STREAK_RESET) { resetDL(FAN_ADDR,  fanLevel);  fanErrStreak  = 0; }
         auditDLLevel(HEAT_ADDR, heatLevel);
         auditDLLevel(FAN_ADDR, fanLevel);
+    }
+
+    // WiFi link watch: autoReconnect covers most drops; if the link is down for
+    // a full check interval, kick an explicit reconnect. Repaint on any change
+    // (the display's IP row).
+    static uint32_t lastWifiCheck = 0;
+    static bool wifiWasUp = false;
+    if (now - lastWifiCheck >= WIFI_CHECK_MS) {
+        lastWifiCheck = now;
+        bool up = (WiFi.status() == WL_CONNECTED);
+        if (up != wifiWasUp) flagDisplayUpdate = true;
+        if (!up && !wifiWasUp) WiFi.reconnect();
+        wifiWasUp = up;
+    }
+
+    // Telemetry push (faster cadence during a tune so the step response is
+    // well-resolved on the dashboard).
+    static uint32_t lastTelem = 0;
+    uint16_t telemDue = (ctrlMode == MODE_TUNE) ? TELEM_TUNE_PERIOD_MS : telemPeriodMs;
+    if (telemDue > 0 && now - lastTelem >= telemDue) {
+        lastTelem = now;
+        broadcastTelemetry();
     }
 
     // Recheck interlock every loop in case fan level changed outside OT2
@@ -1477,6 +1725,24 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.9.0  2026-07-02  Protocol hardening + telemetry (F4/F5/F7/F9). Strict
+//                     numeric parsing everywhere: garbage arguments are
+//                     rejected with an error reply to the sender instead of
+//                     being coerced to 0 (OT1/OT2/INLET/PID/TUNE/FF — "PID a b
+//                     c" no longer persists zero gains). JSON command envelope
+//                     keeps the fractional value (Artisan's ramped INLET
+//                     playback is no longer quantized to 1 °C). WiFi connect is
+//                     bounded (15 s) and the roaster boots without network;
+//                     loop watches the link and kicks reconnects. TUNE results
+//                     carry "settled" (timeout fits underestimate dT => too-hot
+//                     gains). DimmerLink: fw version logged at init, error-poll
+//                     logging rate-limited per address, and a persistent-error
+//                     streak escalates to a module soft reset (COMMAND 0x01)
+//                     with curve/level re-assert. FF AMB with no value seeds
+//                     ambient from the MAX31855 cold junction. New "telem"
+//                     push (default 1 Hz, 2 Hz during tune, TELEM <ms>|OFF):
+//                     temps, SV, levels, interlock cap, mode, P/I/D/FF terms,
+//                     sensor fault flags — the dashboard's data feed.
 // v0.8.0  2026-07-02  MAX31865 direct-register driver (max31865_direct.h),
 //                     replacing the Adafruit library on the RTD path (F2/F10).
 //                     The library's temperature() was a blocking one-shot
