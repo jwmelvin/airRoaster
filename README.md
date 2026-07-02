@@ -198,6 +198,53 @@ switchable mode layered on top of manual heat control.
 - `INLET OFF` returns to `manual`, holding heat at its current level.
 - `OT1 <value>` is an instant manual override (drops back to `manual`).
 
+### Driving the setpoint from a roast profile (Artisan event playback)
+
+Rather than nudging `INLET` by hand, the setpoint can follow a planned curve by
+letting Artisan **replay a background profile's events**. Artisan's background
+event playback (replay *by time*) linearly interpolates a custom event slider
+between successive events and fires the slider's action on every sample tick — so
+a handful of points become a smooth setpoint ramp streamed to the firmware:
+
+```
+background .alog  →  Artisan replays T_inlet events (ramped, by time)
+                  →  slider action: send({"command":"INLET","value":{}})
+                  →  firmware INLET <degC>  →  closed-loop inlet control
+```
+
+Because `INLET` retargeting is bumpless (the loop keeps its integrator), the
+interpolated stream drives the setpoint without resetting the loop between points.
+
+**Artisan setup** (a configured example lives in `artisan/`):
+
+1. **Custom event slider** on event type 3, named `T_inlet`, action **WebSocket**
+   `send({{"command":"INLET","value":{}}})`, **Temp** ticked, unit `C`.
+2. **Config › Background › Playback**: tick **Playback Events**, set replay to
+   **by time**, and tick **Playback** + **Ramp** on the `T_inlet` row. An optional
+   **Ramp lookahead** of a few seconds leads the setpoint against system lag.
+3. Load the generated profile as the background — its events are charge-aligned,
+   so the schedule begins when you mark **CHARGE**.
+
+> The background profile's event-type name for slot 3 **must** be `T_inlet` (it has
+> to match the foreground event type), or Artisan silently skips the replay.
+
+**Generating a profile.** `artisan/make_inlet_background.py --events N` samples a
+shaped curve into `N` discrete `T_inlet` events (default 8), progressively
+concentrated over the final portion of the roast so the setpoint has the finest
+resolution through the development phase and the drop:
+
+```
+python3 artisan/make_inlet_background.py --mode ror_endpoint \
+    --T_start 175 --T_drop 245 --t_drop 330 --ror_start 22 \
+    --unit C --events 8 --out inlet_events.alog
+```
+
+Curve shape comes from the same parameters in either output mode (`ror_endpoint` /
+`anchor` / `ror`); `--events` only changes *how* it is written — discrete playback
+events here, versus a continuous channel for Artisan's software-PID "Follow
+Background" mode without it. See the script's `--help` for `--tail-width` /
+`--tail-bias` (point clustering toward the drop) and the anchor/RoR modes.
+
 ### Control law
 
 `controlStep()` runs on a fixed cadence (`CONTROL_PERIOD_MS`, default 250 ms)
@@ -377,6 +424,10 @@ A ready-to-import Artisan settings file is provided at `artisan/airRoaster.aset`
 | Input 3 → IN | `IN` node — inlet thermocouple |
 | Slider 0 | Fan — sends `OT2;<value>` |
 | Slider 1 | Heat — sends `OT1;<value>` |
+
+A third, temperature-scaled `T_inlet` slider sends `INLET` for closed-loop
+control and can be driven automatically from a background profile — see
+[Driving the setpoint from a roast profile](#driving-the-setpoint-from-a-roast-profile-artisan-event-playback).
 
 **Configuring the WebSocket inputs.** In Artisan, under **Config › Port ›
 WebSocket**, set the input node names to match the firmware's JSON fields:

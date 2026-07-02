@@ -110,6 +110,169 @@ def build_curve(anchors, interval):
     return timex, values
 
 
+# --------------------------------------------------------------------------
+# Discrete-event (ramped playback) support.
+#
+# Instead of a continuous SV channel, emit N special events of type 3
+# (T_inlet). Artisan's background-event playback ("Playback Events", replay
+# "by time") linearly interpolates the slider value between successive events
+# on every sample tick and fires the slider's WebSocket action, so N points
+# reproduce as an (N-1)-segment polyline pushed to the firmware's INLET command.
+# --------------------------------------------------------------------------
+def events_ext_to_internal(v):
+    """Encode a slider/event value the way Artisan stores specialeventsvalue.
+
+    Mirrors artisanlib/util.py:events_external_to_internal_value. The external
+    value is the setpoint number (deg); it is rounded to a whole degree (the
+    same precision Artisan records slider events at)."""
+    v = int(round(v))
+    if v == 0:
+        return 0.0
+    if v >= 1:
+        return v / 10.0 + 1.0
+    return v / 10.0 - 1.0
+
+
+def _interp(xs, ys, x):
+    """Linear interpolation of ys over xs at scalar x (flat outside range)."""
+    if x <= xs[0]:
+        return ys[0]
+    if x >= xs[-1]:
+        return ys[-1]
+    lo, hi = 0, len(xs) - 1
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if xs[mid] <= x:
+            lo = mid
+        else:
+            hi = mid
+    h = xs[hi] - xs[lo]
+    f = (x - xs[lo]) / h if h else 0.0
+    return ys[lo] + f * (ys[hi] - ys[lo])
+
+
+def place_event_times(t_last, n, bias, tail_frac):
+    """Choose n event times over [0, t_last], progressively concentrated over
+    the final `tail_frac` of the roast (finest spacing at the drop).
+
+    Point density is 1 up to the breakpoint t_break = t_last*(1 - tail_frac),
+    then ramps linearly to 1+bias at t_last. Points land at equal quantiles of
+    the cumulative density, so spacing shrinks where density is high (the tail).
+    Endpoints are pinned to 0 and t_last. bias<=0 or tail_frac outside (0,1)
+    gives even spacing."""
+    n = max(2, n)
+    if bias <= 0 or not (0.0 < tail_frac < 1.0) or t_last <= 0:
+        return [t_last * i / (n - 1) for i in range(n)]
+
+    t_break = t_last * (1.0 - tail_frac)
+    span = t_last - t_break
+    M = 2000
+    dt = t_last / M
+    ts = [i * dt for i in range(M + 1)]
+    dens = [1.0 if t <= t_break else 1.0 + bias * (t - t_break) / span
+            for t in ts]
+    cdf = [0.0] * (M + 1)
+    for i in range(1, M + 1):
+        cdf[i] = cdf[i - 1] + 0.5 * (dens[i] + dens[i - 1]) * dt
+    total = cdf[M] or 1.0
+    cdf = [c / total for c in cdf]
+
+    times = []
+    for k in range(n):
+        q = k / (n - 1)
+        lo, hi = 0, M
+        while hi - lo > 1:
+            mid = (lo + hi) // 2
+            if cdf[mid] <= q:
+                lo = mid
+            else:
+                hi = mid
+        c0, c1 = cdf[lo], cdf[hi]
+        frac = (q - c0) / (c1 - c0) if c1 > c0 else 0.0
+        times.append(ts[lo] + frac * (ts[hi] - ts[lo]))
+    times[0] = 0.0
+    times[-1] = t_last
+    return times
+
+
+# Extra-device keys cleared for the events profile (background-event playback
+# does not use extra device channels — the SV lives in the special events).
+_EXTRA_KEYS = (
+    'extraname1', 'extraname2', 'extratimex', 'extratemp1', 'extratemp2',
+    'extramathexpression1', 'extramathexpression2', 'extradevicecolor1',
+    'extradevicecolor2', 'extraLCDvisibility1', 'extraLCDvisibility2',
+    'extraCurveVisibility1', 'extraCurveVisibility2', 'extraDelta1',
+    'extraDelta2', 'extraFill1', 'extraFill2', 'extramarkersizes1',
+    'extramarkersizes2', 'extramarkers1', 'extramarkers2', 'extralinewidths1',
+    'extralinewidths2', 'extralinestyles1', 'extralinestyles2',
+    'extradrawstyles1', 'extradrawstyles2', 'extraNoneTempHint1',
+    'extraNoneTempHint2',
+)
+
+
+def build_events_alog(timex, inlet_values, args):
+    """Assemble an .alog carrying the SV as N type-3 (T_inlet) special events
+    sampled off the shaped curve, for ramped background-event playback.
+
+    Returns (profile_dict, [(time, setpoint), ...])."""
+    interval = args.interval
+    t_last = timex[-1]
+    n = args.events
+
+    ev_times = place_event_times(t_last, n, args.tail_bias, args.tail_width)
+
+    # Map each event onto a timex index (specialevents holds indices, not times)
+    # and read the setpoint off the shaped curve. Dedupe collided indices.
+    seen = set()
+    idxs, pts = [], []
+    for t in ev_times:
+        idx = min(len(timex) - 1, max(0, int(round(t / interval))))
+        if idx in seen:
+            continue
+        seen.add(idx)
+        sv = int(round(_interp(timex, inlet_values, timex[idx])))
+        idxs.append(idx)
+        pts.append((timex[idx], sv))
+
+    internal = [events_ext_to_internal(sv) for _, sv in pts]
+
+    # Optional background curve = the actual playback trajectory (piecewise
+    # linear through the events), so the graph shows what the SV will do.
+    if args.no_mirror:
+        temp_mirror = [-1.0] * len(timex)
+    else:
+        ex_t = [p[0] for p in pts]
+        ex_v = [float(p[1]) for p in pts]
+        temp_mirror = [round(_interp(ex_t, ex_v, tt), 2) for tt in timex]
+
+    mode = 'C' if args.unit.upper() == 'C' else 'F'
+    title = args.title if args.title else default_title(args)
+    # CHARGE at start, DROP at the last sample; other main events unmarked.
+    timeindex = [0, 0, 0, 0, 0, 0, len(timex) - 1, 0]
+
+    profile = _skeleton(timex, [-1.0] * len(timex), True, mode, title, timeindex)
+    profile['temp1'] = temp_mirror
+    profile['temp2'] = [-1.0] * len(timex)
+
+    profile['specialevents'] = idxs
+    profile['specialeventstype'] = [2] * len(idxs)          # type 3 == T_inlet
+    profile['specialeventsvalue'] = internal
+    # Annotation label per event, matching Artisan's "<value><unit>" format.
+    profile['specialeventsStrings'] = ['{}{}'.format(sv, args.unit.upper())
+                                       for _, sv in pts]
+
+    # Playback only fires when the background's event-type name matches the
+    # foreground's (canvas.py:playbackevent). Must equal the .aset etypes.
+    profile['etypes'] = ['', '', 'T_inlet', 'Heater', '']
+
+    # Background-event playback uses no extra devices.
+    profile['extradevices'] = []
+    for key in _EXTRA_KEYS:
+        profile[key] = []
+
+    return profile, pts
+
+
 def build_curve_ror(args):
     """Linear-declining-RoR inlet curve.
 
@@ -498,8 +661,24 @@ artisan usage
     p.add_argument("--title", default=None,
                    help="profile title (default: auto-generated from curve params)")
     p.add_argument("--no-mirror", action="store_true",
-                   help="blank the BT slot; only B3 carries the inlet SV curve")
+                   help="blank the BT slot; only B3 carries the inlet SV curve "
+                        "(events mode: don't draw the SV polyline as background BT)")
     p.add_argument("--out", default="inlet_background.alog")
+
+    # Discrete-event (ramped playback) output
+    p.add_argument("--events", nargs="?", type=int, const=8, default=None,
+                   metavar="N",
+                   help="emit N discrete T_inlet (event type 3) special events "
+                        "sampled off the shaped curve, for Artisan ramped "
+                        "background-event playback, instead of the continuous B3 "
+                        "channel (default N=8)")
+    p.add_argument("--tail-width", type=float, default=0.4,
+                   help="[events] final fraction of the roast over which points "
+                        "are progressively concentrated, finest at the drop "
+                        "(default 0.4; e.g. 0.4 = dense over the last 40%%)")
+    p.add_argument("--tail-bias", type=float, default=2.0,
+                   help="[events] concentration strength in the tail "
+                        "(0 = even spacing; default 2.0)")
 
     args = p.parse_args()
 
@@ -545,20 +724,37 @@ artisan usage
             (args.t_drop, args.T_drop),
         ]
 
-    profile, bvar = build_alog(timex, inlet_values, args, anchors)
+    if args.events is not None:
+        profile, pts = build_events_alog(timex, inlet_values, args)
+    else:
+        profile, bvar = build_alog(timex, inlet_values, args, anchors)
 
     # Artisan reads .alog via ast.literal_eval (Python repr, not JSON).
     with open(args.out, "w") as f:
         f.write(repr(profile))
 
     title_used = profile['title']
-    print("Wrote {} ({} samples, {:.0f}s, every {}s).".format(
-        args.out, len(timex), timex[-1], args.interval))
-    print("Title: {!r}".format(title_used))
-    print("Mode: {}.  Unit: {}.".format(args.mode, args.unit.upper()))
-    print("Inlet SV curve -> extra device #1 channel A -> background variable B{}.".format(bvar))
-    print("In Artisan: load as background, set PID input = live Inlet probe, "
-          "PID mode = Follow Background referencing B{}.".format(bvar))
+
+    if args.events is not None:
+        print("Wrote {} ({} T_inlet events over {:.0f}s, {} timex samples).".format(
+            args.out, len(pts), timex[-1], len(timex)))
+        print("Title: {!r}".format(title_used))
+        print("Mode: {}.  Unit: {}.".format(args.mode, args.unit.upper()))
+        print("SV -> {} type-3 (T_inlet) events; ramped playback interpolates "
+              "between them.".format(len(pts)))
+        for t, sv in pts:
+            mins, secs = divmod(int(round(t)), 60)
+            print("  {}:{:02d}  {:>4d} {}".format(mins, secs, sv, args.unit.upper()))
+        print("In Artisan: load as background; Config>Background>Playback: "
+              "Playback Events on, replay 'by time', playback+ramp on for T_inlet.")
+    else:
+        print("Wrote {} ({} samples, {:.0f}s, every {}s).".format(
+            args.out, len(timex), timex[-1], args.interval))
+        print("Title: {!r}".format(title_used))
+        print("Mode: {}.  Unit: {}.".format(args.mode, args.unit.upper()))
+        print("Inlet SV curve -> extra device #1 channel A -> background variable B{}.".format(bvar))
+        print("In Artisan: load as background, set PID input = live Inlet probe, "
+              "PID mode = Follow Background referencing B{}.".format(bvar))
 
     if args.mode == "ror":
         eff_end = inlet_values[-1]

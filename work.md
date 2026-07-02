@@ -1,42 +1,40 @@
-# Development plan
-
-## inlet-temp control
-
-### framing
-
-The airRoaster now measures inlet temperature, which is a primary process variable. The current system relies on external commands to regulate the heater to maintain a desired inlet temperature. That suffers from the slower reporting cycle by which Artisan receives temperature updates and sends heater commands (1 Hz). Improvement (tighter control) can come from internalizing the control loop. It will also allow flexible control strategies that Artisan may not.
-
-### objectives
-
-Develop a switchable operating mode that accepts "inlet" commands to set the desired inlet temperature, and implements feedback control from the measured inlet temp to modulate the heater with the tightest possible control. The control strategy and tuning should prioritize robustness against flow variation (e.g., from external fan-speed changes). Generally, the inlet setpoint will change gradually during a roast, with large transitions happening only at the start of a roast. The internal controller design should consider how it will be tuned, whether by an autotune procedure or with prescribed routines that an operator can run. 
-
-### design considerations
-
-- as an initial gate, consider whether this change (or other project attributes) would favor moving from the Arduino environment to ESP-IDF (https://docs.espressif.com/projects/esp-idf/en/v6.0.1/esp32s3/index.html)
-
-- one reason for that potential migration is that the microcontroller for this project, ESP32-S3, has dual cores and the temperature-measurement-and-control aspects might benefit from separating them from the interface (WiFi, websocket, and OLED) aspects. I do not know if Arduino supports dual-core implementations but ESP-IDF does.
-
-
-### constraints
-
-- Operate the control loop with deterministic timing.
-- Branch the project so that work can progress on this new capability without disturbing the current code.
-- Initially plan only, no coding. 
-- Consider existing work, and conduct web research to determine if the references in this prompt are the best options for this effort.
-
-### references
-
-- PID library for Arduino environment: https://github.com/br3ttb/Arduino-PID-Library
--- author's explanations: http://brettbeauregard.com/blog/2011/04/improving-the-beginners-pid-introduction/
--- explanation of the library's POM mode:  http://brettbeauregard.com/blog/2017/06/introducing-proportional-on-measurement/
--- and: http://brettbeauregard.com/blog/2017/06/proportional-on-measurement-the-code/ 
-
 # utilities
 
-## Artisan profile generator so a background can drive SV through Inlet control parameter
+## Inlet-SV background generator (`artisan/make_inlet_background.py`)
 
-python3 make_inlet_background.py --out bkgnd_001-base_330-550_5.30.alog --mode ror_endpoint --no-mirror --template bkgnd_001-base.alog \
---t_drop 330 \
---T_start 350 --T_drop 500 \
---ror_start 50
+Builds an Artisan background `.alog` whose inlet setpoint curve drives the
+firmware's `INLET` closed-loop control. Two output modes share the same curve
+parameters (`ror_endpoint` / `anchor` / `ror`); pick shape once, choose how it's
+written.
 
+### Discrete events + ramped playback (preferred)
+
+`--events N` writes the SV as `N` discrete **T_inlet** (event type 3) special
+events sampled off the shaped curve (default 8, concentrated toward the drop).
+Artisan's background-event playback (replay *by time*) linearly interpolates the
+slider between them and fires `send({"command":"INLET","value":{}})` each tick, so
+the points reproduce as a smooth setpoint ramp. Requires the Artisan playback
+config in `artisan/airRoaster.aset` (Playback Events on, by time, T_inlet
+playback+ramp).
+
+```
+python3 artisan/make_inlet_background.py --mode ror_endpoint \
+  --T_start 175 --T_drop 245 --t_drop 330 --ror_start 22 \
+  --unit C --events 8 --out inlet_events.alog
+```
+
+Point clustering: `--tail-width` (final fraction of the roast over which points
+concentrate, finest at the drop; default 0.4) and `--tail-bias` (strength; 0 =
+even spacing). Events are charge-aligned (schedule starts at CHARGE). See
+`--help` for the anchor/RoR modes.
+
+### Continuous channel (legacy, PID Follow-Background)
+
+Without `--events`, the curve is written to extra-device channel B3 for Artisan's
+software-PID "Follow Background" mode instead of the on-firmware loop.
+
+```
+python3 artisan/make_inlet_background.py --mode ror_endpoint \
+  --T_start 350 --T_drop 500 --t_drop 330 --ror_start 50 --no-mirror \
+  --out bkgnd_001-base_330-550_5.30.alog
+```
