@@ -42,9 +42,9 @@ If `secrets.h.example` does not exist yet, create `secrets.h` manually:
 | `DUTY_STEP` | `5` | Increment/decrement step for UP/DOWN commands (%) |
 | `WS_PORT` | `81` | WebSocket server port |
 | `DL_INIT_RETRY_DELAY_MS` | `500` | Delay between DimmerLink ready-check retries at startup (ms) |
-| `IL_FAN_MIN` | `48` | Fan level below which heat is always 0 (both interlock modes) |
-| `IL_FAN_FULL` | `55` | Fan level at or above which heat is fully unrestricted (soft mode) |
-| `IL_HEAT_AT_MIN` | `30` | Heat cap (%) when fan is exactly at `IL_FAN_MIN` (soft mode) |
+| `IL_FAN_MIN_DFLT` | `48` | Default fan level below which heat is always 0 (runtime-set via `IL`, NVS-persisted) |
+| `IL_FAN_FULL_DFLT` | `55` | Default fan level at or above which heat is fully unrestricted (soft mode) |
+| `IL_HEAT_AT_MIN_DFLT` | `30` | Default heat cap (%) when fan is exactly at the fan minimum (soft mode) |
 | `WDT_TIMEOUT_MS` | `8000` | Task watchdog: panic→reset if the loop hangs this long |
 | `INLET_PV_STALE_MS` | `3000` | Closed loop / tune failsafe if the inlet reading is older than this |
 | `INLET_OVERTEMP_C` | `280` | Closed loop failsafe above this inlet temperature (°C) |
@@ -121,8 +121,13 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 | `FF OFF` | `FF OFF` | Disable feedforward (`ffK = 0`) |
 | `STAT` | `STAT` | Report and reset the load counters: worst control-step late-fire and worst single loop pass (µs) |
 | `TELEM <ms>` | `TELEM 500` | Set the telemetry push period (100–10000 ms); `TELEM OFF` disables; `TELEM` reports |
-| `IL` | `IL` | Toggle interlock mode between hard and soft (see [Fan interlock](#fan-interlock)) |
+| `IL` | `IL` | Report interlock mode, limits, and current heat cap (`il` push message) |
+| `IL HARD` / `IL SOFT` | `IL SOFT` | Set the interlock mode explicitly (see [Fan interlock](#fan-interlock)) |
+| `IL <fanMin> <fanFull> <heatAtMin>` | `IL 48 55 30` | Set the interlock limits; validated (`1 ≤ fanMin ≤ fanFull ≤ 100`, `heatAtMin ≤ 100`), applied immediately, NVS-persisted |
 | `LOG` | `LOG` | Retrieve the error log (sent only to requesting client) |
+
+> **Changed in v0.10.0:** bare `IL` used to *toggle* the mode; it now reports.
+> A toggle desyncs against a stateful dashboard — use `IL HARD` / `IL SOFT`.
 
 Numeric arguments are validated strictly: an invalid value (e.g. `OT1 x`) is
 rejected with an `error` push back to the sender — never coerced to `0`.
@@ -182,24 +187,26 @@ Accepts the same command set as WebSocket, terminated by newline. Maximum comman
 
 ## Fan interlock
 
-The interlock prevents the heating element from running without adequate airflow. It is always active and has two modes, toggled with the `IL` command (default: hard).
+The interlock prevents the heating element from running without adequate airflow. It is always active and has two modes, set with `IL HARD` / `IL SOFT` (default: hard).
+
+The mode **and** the three limits are runtime-configurable — from the dashboard's Interlock panel or directly with `IL <fanMin> <fanFull> <heatAtMin>` — and persist in NVS like the controller tunings (the compile-time `*_DFLT` constants are only the first-boot defaults). Values are validated on set *and* on load; inconsistent NVS data falls back to the defaults rather than a weaker interlock.
 
 ### Hard mode (default)
 
-Binary cutoff: heat is forced to `0` when `fan < IL_FAN_MIN`, and fully unrestricted otherwise.
+Binary cutoff: heat is forced to `0` when `fan < fanMin`, and fully unrestricted otherwise.
 
 ### Soft mode
 
-Linear ramp between two breakpoints:
+Linear ramp between two breakpoints (shown with the default limits):
 
 | Fan level | Heat cap |
 |-----------|----------|
-| `< IL_FAN_MIN` (23) | 0% (blocked) |
-| `IL_FAN_MIN` (23) | `IL_HEAT_AT_MIN` (30%) |
-| `IL_FAN_FULL` (30) | 100% (unrestricted) |
-| `> IL_FAN_FULL` | 100% |
+| `< fanMin` (48) | 0% (blocked) |
+| `fanMin` (48) | `heatAtMin` (30%) |
+| `fanFull` (55) | 100% (unrestricted) |
+| `> fanFull` | 100% |
 
-Between 23 and 30 the cap is interpolated linearly, so heat scales with airflow rather than snapping on at a threshold.
+Between `fanMin` and `fanFull` the cap is interpolated linearly, so heat scales with airflow rather than snapping on at a threshold.
 
 In both modes:
 - `heatReq` tracks what the user commanded
@@ -431,10 +438,10 @@ ROW4 interlock status values:
 | Display | Meaning |
 |---------|---------|
 | `IL:H ok` | Hard mode, fan above threshold, heat unrestricted |
-| `IL:S ok` | Soft mode, fan above `IL_FAN_FULL`, heat unrestricted |
+| `IL:S ok` | Soft mode, fan above `fanFull`, heat unrestricted |
 | `IL:S cap=N%` | Soft mode, fan in ramp zone, heat capped at N% |
-| `IL:H BLOCKED` | Hard mode, fan below `IL_FAN_MIN`, heat forced to 0 |
-| `IL:S BLOCKED` | Soft mode, fan below `IL_FAN_MIN`, heat forced to 0 |
+| `IL:H BLOCKED` | Hard mode, fan below `fanMin`, heat forced to 0 |
+| `IL:S BLOCKED` | Soft mode, fan below `fanMin`, heat forced to 0 |
 
 ---
 

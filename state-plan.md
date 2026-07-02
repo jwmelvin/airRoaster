@@ -26,6 +26,10 @@ roughly in commissioning order (`./verify.sh upload`, then the dashboard):
    WS bursts) should approach 8 s — `loopMaxUs` gives the margin number.
 6. **DimmerLink reset escalation** is best left untested unless a module
    actually errors; verify the fw-version line appears at boot.
+7. **Interlock config (v0.10.0)**: from the dashboard panel set soft mode and
+   custom limits, confirm the heat cap follows the fan slider accordingly, then
+   power-cycle and confirm the values and mode survive (NVS). Try an invalid
+   set (`IL 0 55 30`) and confirm it is rejected.
 
 ## Completed phases (specs kept for reference; details in the archive)
 

@@ -220,6 +220,21 @@
         <input class="num" id="mFan"> <button onclick="sendWith('OT2','mFan')">OT2</button>
       </div>
     </div>
+    <div>
+      <h3>Interlock</h3>
+      <button id="ilHardBtn" onclick="send('IL HARD')">Hard</button>
+      <button id="ilSoftBtn" onclick="send('IL SOFT')">Soft</button>
+      <button onclick="send('IL')">Read</button>
+      <div style="margin-top:0.4em">
+        fan min <input class="num" id="iFanMin">
+        fan full <input class="num" id="iFanFull"><br>
+        <span style="display:inline-block; margin-top:0.3em">heat@min %</span>
+        <input class="num" id="iHeatMin">
+        <button onclick="sendIL()">Set</button>
+      </div>
+      <div class="kv" style="margin-top:0.3em">heat blocked below fan&nbsp;min; soft mode
+        ramps the cap from heat@min to 100% at fan&nbsp;full. Saved to NVS.</div>
+    </div>
   </div>
 </div>
 
@@ -330,6 +345,7 @@ function connect() {
     ws.send("LOG");   // pull the device's RAM log into the durable buffer
     ws.send("PID");   // prefill the gain fields
     ws.send("FF");
+    ws.send("IL");    // prefill the interlock panel
   };
 
   ws.onclose = () => {
@@ -418,11 +434,12 @@ function handleMessage(raw) {
       case "log":    cls = "log";    break;
       case "status": cls = "status"; applyStatus(obj.data); break;
       case "telem":  cls = "telem";  applyTelem(obj.data);  break;
-      case "tune": case "pid": case "ff": case "stat":
+      case "tune": case "pid": case "ff": case "stat": case "il":
         cls = "report";
         if (obj.pushMessage === "tune") applyTune(obj.data);
         if (obj.pushMessage === "pid")  applyPid(obj.data);
         if (obj.pushMessage === "ff")   applyFF(obj.data);
+        if (obj.pushMessage === "il")   applyIL(obj.data);
         break;
     }
   }
@@ -495,6 +512,23 @@ function applyFF(d) {
   if (!d || d.ffK === undefined) return;
   document.getElementById("fK").value = d.ffK;
   document.getElementById("fAmb").value = d.amb;
+}
+
+function applyIL(d) {
+  if (!d || d.fanMin === undefined) return;
+  document.getElementById("iFanMin").value = d.fanMin;
+  document.getElementById("iFanFull").value = d.fanFull;
+  document.getElementById("iHeatMin").value = d.heatAtMin;
+  document.getElementById("ilHardBtn").className = d.soft ? "" : "primary";
+  document.getElementById("ilSoftBtn").className = d.soft ? "primary" : "";
+}
+
+function sendIL() {
+  const a = document.getElementById("iFanMin").value.trim();
+  const b = document.getElementById("iFanFull").value.trim();
+  const c = document.getElementById("iHeatMin").value.trim();
+  if (a === "" || b === "" || c === "") { logLine("(enter fan min, fan full, heat@min)", "error"); return; }
+  send("IL " + a + " " + b + " " + c);
 }
 
 function setMode(mode, sv) {

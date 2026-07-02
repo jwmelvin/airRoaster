@@ -20,7 +20,7 @@
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.9.0"
+#define FW_VERSION  "0.10.0"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -82,10 +82,12 @@
 #define WS_PORT                 81
 #define DL_INIT_RETRY_DELAY_MS  500   // ms between initDL ready-check retries
 
-// Interlock config
-#define IL_FAN_MIN      48   // fan level below which heat is always 0
-#define IL_FAN_FULL     55   // fan level at or above which heat is unrestricted
-#define IL_HEAT_AT_MIN  30   // heat cap (%) when fan is exactly at IL_FAN_MIN (soft mode)
+// Interlock config — power-on defaults only. The live values are runtime
+// globals (ilFanMin / ilFanFull / ilHeatAtMin), settable over the IL command
+// and persisted in NVS alongside the tuning set (loadInterlock/saveInterlock).
+#define IL_FAN_MIN_DFLT      48   // fan level below which heat is always 0
+#define IL_FAN_FULL_DFLT     55   // fan level at or above which heat is unrestricted
+#define IL_HEAT_AT_MIN_DFLT  30   // heat cap (%) when fan is exactly at ilFanMin (soft mode)
 
 // Safety guards
 #define WDT_TIMEOUT_MS      8000    // task watchdog: panic->reset if loop() hangs this long
@@ -137,6 +139,13 @@ uint8_t requestedHeatLevel = 0;  // commanded heat level
 uint8_t heatLevel = 0;           // actual heat level sent to device
 uint8_t fanLevel = 0;
 bool    interlockSoft = false;   // false = hard (binary), true = soft (linear ramp)
+
+// Interlock limits (see the IL command; persisted in NVS, defaults above).
+// Invariants enforced everywhere they are set: 1 <= fanMin <= fanFull <= 100,
+// heatAtMin <= 100 — fanMin == 0 would let the heater run with the fan off.
+uint8_t ilFanMin    = IL_FAN_MIN_DFLT;
+uint8_t ilFanFull   = IL_FAN_FULL_DFLT;
+uint8_t ilHeatAtMin = IL_HEAT_AT_MIN_DFLT;
 
 float btTemp  = 0.0;  // bean temp  — MAX31865 PT1000 (°C)
 float etTemp  = 0.0;  // exhaust/ET — MAX31865 PT1000 (°C)
@@ -501,6 +510,36 @@ void saveTuning() {
     prefs.end();
 }
 
+// Interlock configuration persists the same way (separate namespace). Because
+// this is a safety configuration, load() re-validates: anything inconsistent
+// (bad write, downgrade, manual NVS edit) falls back to the compile-time
+// defaults rather than a weaker-than-intended interlock.
+static const char *NVS_IL_NS = "interlock";
+
+void loadInterlock() {
+    prefs.begin(NVS_IL_NS, true);            // read-only
+    ilFanMin      = prefs.getUChar("fanMin",  ilFanMin);
+    ilFanFull     = prefs.getUChar("fanFull", ilFanFull);
+    ilHeatAtMin   = prefs.getUChar("heatMin", ilHeatAtMin);
+    interlockSoft = prefs.getBool("soft",     interlockSoft);
+    prefs.end();
+    if (ilFanMin < 1 || ilFanFull < ilFanMin || ilFanFull > 100 || ilHeatAtMin > 100) {
+        ilFanMin    = IL_FAN_MIN_DFLT;
+        ilFanFull   = IL_FAN_FULL_DFLT;
+        ilHeatAtMin = IL_HEAT_AT_MIN_DFLT;
+        logError("interlock NVS invalid: defaults restored");
+    }
+}
+
+void saveInterlock() {
+    prefs.begin(NVS_IL_NS, false);           // read-write
+    prefs.putUChar("fanMin",  ilFanMin);
+    prefs.putUChar("fanFull", ilFanFull);
+    prefs.putUChar("heatMin", ilHeatAtMin);
+    prefs.putBool("soft",     interlockSoft);
+    prefs.end();
+}
+
 // ===========================================================================
 // Setup
 // ===========================================================================
@@ -513,8 +552,11 @@ void setup() {
 
     // Restore persisted tuning (overrides the compile-time placeholders if a
     // device has been tuned before). Before WiFi/sensors so the loaded gains are
-    // in force the moment control can engage.
+    // in force the moment control can engage. Interlock config likewise —
+    // before the boot dimmer sync so the very first applyInterlock() runs with
+    // the operator's limits.
     loadTuning();
+    loadInterlock();
 
     // Task watchdog on the loop task. A hang with the heater energized is the
     // worst failure mode; panic->reset is safe because the boot dimmer sync
@@ -950,11 +992,12 @@ void auditDLLevel(uint8_t addr, uint8_t expected) {
 // ===========================================================================
 // Returns the heat cap imposed by the interlock at the current fan level.
 uint8_t interlockCap() {
-    if (fanLevel < IL_FAN_MIN) return 0;
-    if (!interlockSoft || fanLevel >= IL_FAN_FULL) return 100;
-    // Linear ramp: IL_HEAT_AT_MIN% at IL_FAN_MIN, 100% at IL_FAN_FULL
-    return (uint8_t)(IL_HEAT_AT_MIN +
-        (uint32_t)(100 - IL_HEAT_AT_MIN) * (fanLevel - IL_FAN_MIN) / (IL_FAN_FULL - IL_FAN_MIN));
+    if (fanLevel < ilFanMin) return 0;
+    if (!interlockSoft || fanLevel >= ilFanFull) return 100;
+    // Linear ramp: ilHeatAtMin% at ilFanMin, 100% at ilFanFull. Unreachable
+    // when ilFanFull == ilFanMin (the >= check above wins), so no div-by-zero.
+    return (uint8_t)(ilHeatAtMin +
+        (uint32_t)(100 - ilHeatAtMin) * (fanLevel - ilFanMin) / (ilFanFull - ilFanMin));
 }
 
 void applyInterlock() {
@@ -1113,10 +1156,46 @@ void processCommand(String cmd, int8_t clientNum) {
         broadcastStatus();
 
     } else if (kw == "IL") {
-        interlockSoft = !interlockSoft;
-        flagDisplayUpdate = true;
-        applyInterlock();
-        broadcastStatus();
+        // IL                                — report interlock mode + limits.
+        // IL HARD | IL SOFT                 — set the mode explicitly.
+        // IL <fanMin> <fanFull> <heatAtMin> — set the limits.
+        // Mode and limits persist in NVS. (The pre-v0.10 bare-IL toggle is
+        // gone: a toggle desyncs against a stateful dashboard.)
+        if (n >= 2) {
+            String up = tokens[1];
+            up.toUpperCase();
+            if (up == "HARD") {
+                interlockSoft = false;
+            } else if (up == "SOFT") {
+                interlockSoft = true;
+            } else if (n >= 4) {
+                int fmin, ffull, hmin;
+                if (!parseIntStrict(tokens[1], fmin) ||
+                    !parseIntStrict(tokens[2], ffull) ||
+                    !parseIntStrict(tokens[3], hmin) ||
+                    fmin < 1 || ffull < fmin || ffull > 100 ||   // fanMin 0 would
+                    hmin < 0 || hmin > 100) {                    // defeat the interlock
+                    replyBadArg(clientNum, "IL");
+                    return;
+                }
+                ilFanMin    = (uint8_t)fmin;
+                ilFanFull   = (uint8_t)ffull;
+                ilHeatAtMin = (uint8_t)hmin;
+            } else {
+                replyBadArg(clientNum, "IL");
+                return;
+            }
+            saveInterlock();
+            flagDisplayUpdate = true;
+            applyInterlock();     // new limits take effect immediately
+            broadcastStatus();
+        }
+        char b[144];
+        snprintf(b, sizeof(b),
+            "{\"pushMessage\":\"il\",\"data\":{\"soft\":%s,\"fanMin\":%u,\"fanFull\":%u,\"heatAtMin\":%u,\"cap\":%u}}",
+            interlockSoft ? "true" : "false", ilFanMin, ilFanFull, ilHeatAtMin, interlockCap());
+        if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
+        Serial.println(b);
 
     } else if (kw == "INLET") {
         // INLET <degC> — set inlet setpoint and engage closed-loop control.
@@ -1725,6 +1804,20 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.10.0 2026-07-02  Runtime-configurable interlock. IL_FAN_MIN/IL_FAN_FULL/
+//                     IL_HEAT_AT_MIN become runtime globals (compile-time
+//                     values remain as power-on defaults), persisted in NVS
+//                     namespace "interlock" alongside the tuning set; load()
+//                     re-validates and falls back to defaults on inconsistent
+//                     data (safety config must never weaken via a bad write).
+//                     IL command reworked — BREAKING: bare IL now *reports*
+//                     (pushMessage "il") instead of toggling; the mode is set
+//                     explicitly with IL HARD / IL SOFT, limits with
+//                     IL <fanMin> <fanFull> <heatAtMin> (validated: fanMin>=1,
+//                     fanMin<=fanFull<=100, heatAtMin<=100). New limits apply
+//                     immediately through applyInterlock(). Dashboard gains an
+//                     Interlock panel (mode buttons + limit fields, prefilled
+//                     from the il report on connect).
 // v0.9.0  2026-07-02  Protocol hardening + telemetry (F4/F5/F7/F9). Strict
 //                     numeric parsing everywhere: garbage arguments are
 //                     rejected with an error reply to the sender instead of

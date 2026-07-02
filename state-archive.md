@@ -5,6 +5,29 @@
 > their F-numbers here even after the fixes land, so plan/commit references
 > stay resolvable.
 
+## 2026-07-02 — Runtime-configurable interlock (v0.10.0)
+
+User-requested follow-on: interlock mode and limits configurable from the
+dashboard, persisted like the tunings. `IL_FAN_MIN`/`IL_FAN_FULL`/
+`IL_HEAT_AT_MIN` became runtime globals (`ilFanMin`/`ilFanFull`/`ilHeatAtMin`;
+compile-time `*_DFLT` constants are first-boot defaults) stored in NVS
+namespace `"interlock"` together with the hard/soft mode.
+
+- **Breaking:** bare `IL` now *reports* (new `il` push:
+  `{soft,fanMin,fanFull,heatAtMin,cap}`) instead of toggling; mode is set with
+  `IL HARD`/`IL SOFT`, limits with `IL <fanMin> <fanFull> <heatAtMin>`.
+- Validation on set **and** on NVS load (`1 ≤ fanMin ≤ fanFull ≤ 100`,
+  `heatAtMin ≤ 100`); inconsistent stored data falls back to defaults with a
+  logged error — a safety config must not weaken via a bad write. `fanMin ≥ 1`
+  because 0 would let the heater run with the fan off. `fanFull == fanMin` is
+  legal and degenerates to hard-style behavior (no div-by-zero: the `>=
+  fanFull` check precedes the ramp).
+- `loadInterlock()` runs before the boot dimmer sync so the first
+  `applyInterlock()` uses the operator's limits; new limits apply immediately
+  through `applyInterlock()`.
+- Dashboard: Interlock panel (Hard/Soft buttons with active highlight, three
+  limit fields, Set/Read), prefilled via `IL` on connect.
+
 ## 2026-07-02 — Robustness + dashboard implementation (phases 1–5)
 
 All five phases from the review below landed on `feature/robustness-dashboard`,
