@@ -2,11 +2,34 @@
 
 > Companion to [state-current.md](state-current.md) (what is active now) and
 > [state-archive.md](state-archive.md) (what is done, and the review findings
-> these phases answer). Each phase below is written so it can be implemented
-> without re-deriving the review: findings are referenced as F-numbers from the
-> archive.
+> these phases answer). Findings are referenced as F-numbers from the archive.
 
-## Phase 1 — firmware safety (FW 0.7.0)
+## NEXT — on-roaster validation (nothing below has run on hardware)
+
+All five phases are implemented and compile-verified only. Validation pass,
+roughly in commissioning order (`./verify.sh upload`, then the dashboard):
+
+1. **Boot sync sanity**: power up with dimmers attached; confirm heat reads 0
+   and a running fan level is adopted (serial prints it). Deliberately reset
+   the MCU mid-fan-run to confirm.
+2. **Sensor path**: BT reads sane and *updates* (continuous mode is new);
+   `STAT` after a few minutes — `loopMaxUs` should now be dominated by the
+   ~30 ms display push, not sensor reads. Compare RTD fault frequency in the
+   log against pre-v0.8.0 roasts (emi.md addendum says what to expect).
+3. **Failsafe drills** (roaster cold, heat low): engage `INLET`, unplug the
+   inlet TC → expect `inlet failsafe: inlet PV stale` within ~3 s, heat 0,
+   mode manual. Confirm a TUNE aborts the same way.
+4. **Telemetry + dashboard**: connect, watch the chart; run the commissioning
+   sequence end-to-end (TUNE → APPLY → FF AMB/CAL → INLET); save a log and a
+   CSV; kill/restore WiFi to see auto-reconnect on both sides.
+5. **WDT confidence**: none of the normal paths (tune, big display repaints,
+   WS bursts) should approach 8 s — `loopMaxUs` gives the margin number.
+6. **DimmerLink reset escalation** is best left untested unless a module
+   actually errors; verify the fw-version line appears at boot.
+
+## Completed phases (specs kept for reference; details in the archive)
+
+## Phase 1 — firmware safety (FW 0.7.0) — DONE 2026-07-02
 
 *Answers F1 (boot level mismatch), F3 (closed-loop sensor failsafe), F6
 (unchecked dimmer writes), F8 (no watchdog).*
@@ -33,7 +56,7 @@
    loop task, `esp_task_wdt_reset()` each loop; feed it inside the WiFi connect
    wait until Phase 3 makes that non-blocking. Safe only because of item 1.
 
-## Phase 2 — MAX31865 direct-register driver (FW 0.8.0)
+## Phase 2 — MAX31865 direct-register driver (FW 0.8.0) — DONE 2026-07-02
 
 *Answers F2 (blocking one-shot reads / defeated continuous-mode design) and
 F10 (blind jitter metric). Datasheet traceability in state-archive.md.*
@@ -70,7 +93,7 @@ F10 (blind jitter metric). Datasheet traceability in state-archive.md.*
    the control-jitter watch; report and reset both via `STAT`
    (`loopMaxUs` field). The old metric couldn't see in-pass blocking.
 
-## Phase 3 — protocol hardening + telemetry (FW 0.9.0)
+## Phase 3 — protocol hardening + telemetry (FW 0.9.0) — DONE 2026-07-02
 
 *Answers F4 (garbage parses as zero), F5 (JSON envelope int-rounds the ramped
 setpoint), F7 (WiFi), F9 (DimmerLink extras), tune-settled flag, and adds the
@@ -101,7 +124,7 @@ telemetry channel the dashboard needs.*
    — the PID terms come from the last `controlStep()`. `TELEM <ms>|OFF` command
    (clamped 100–10000). Skip building the string when no client is connected.
 
-## Phase 4 — dashboard rebuild
+## Phase 4 — dashboard rebuild — DONE 2026-07-02
 
 Single file, zero dependencies, works from `file://`. Grouped panels:
 
@@ -127,7 +150,7 @@ Single file, zero dependencies, works from `file://`. Grouped panels:
    archive; `LOG` requested on connect.
 6. **Commissioning** — existing sequence panel, retained and updated.
 
-## Phase 5 — docs sync
+## Phase 5 — docs sync — DONE 2026-07-02
 
 - README: interlock constants (code says 48/55/30, README says 23/30/30),
   dashboard path (repo root, not `artisan/`), delete the stale "BT/ET stubbed

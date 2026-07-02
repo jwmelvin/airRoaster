@@ -34,7 +34,7 @@ during a roast and, before the firmware fix, would drop to 0 °C (= 32 °F in
 Artisan). The K-type thermocouple (MAX31855) on the same SPI bus is unaffected.
 
 Representative fault log (from `LOG` over WebSocket — see
-[`../artisan/dashboard.html`](../artisan/dashboard.html)):
+[`../dashboard.html`](../dashboard.html)):
 
 ```
 MAX31865 ET fault: 0x60   <- most common
@@ -308,10 +308,42 @@ ceramic, input cap, and a 5 V point-of-load cap up top) are listed in the
 
 ---
 
+## Addendum (2026-07-02): the library's read path was part of the problem
+
+The July 2026 code review found that the Adafruit MAX31865 library's
+`temperature()` never operated the chip the way `serviceRtd()` assumed. Every
+call ran a **one-shot** sequence — clear faults, bias on, 10 ms wait, trigger,
+65 ms wait, read, **bias off** — while the firmware had separately enabled
+auto-convert. Consequences relevant to this document:
+
+- Between polls the chip free-ran conversions **with VBIAS off**, reading near
+  zero against a live reference comparator — a plausible *self-inflicted*
+  contributor to the `0x60` (low + REFIN) fault population, independent of any
+  dimmer transient.
+- The read path cleared the fault register before `serviceRtd()` could read
+  it, so logged codes only reflected the tail of each cycle.
+- The VBIAS/auto-convert re-assert (stall guard) was undone ~4× per second by
+  the reads it was guarding.
+- Each poll blocked the loop ~150 ms, which is also why `STAT` jitter looked
+  clean while the loop was actually stalling (the metric sampled around the
+  block).
+
+As of firmware v0.8.0 the RTDs are driven register-direct
+(`../max31865_direct.h`): true continuous mode with VBIAS held on, µs-scale
+register reads, on-chip fault thresholds armed to the plausibility window, and
+the per-sample fault bit feeding the debounce. **What to watch in the next
+roast logs:** whether the `0x60`/`0x64` population drops now that the unbiased
+windows are gone. Faults that remain are genuine external EMI — attack those
+with the remaining supply-decoupling (item 8) and SPI-wiring (item 9) work.
+
+---
+
 ## Diagnostic workflow
 
-1. Open [`../artisan/dashboard.html`](../artisan/dashboard.html) in a browser, connect to the
-   ESP32 IP, and watch the live `error`/`log` stream during a roast.
+1. Open [`../dashboard.html`](../dashboard.html) in a browser, connect to the
+   ESP32 IP, and watch the live `error`/`log` stream during a roast (the
+   console captures and can save the session — the device log is 8 RAM
+   entries).
 2. Note which channel (BT/ET) and which fault codes appear, and whether they
    correlate with fan level, heat level, or are constant.
 3. Decode codes with the table above. REFIN/over-voltage bits (D5/D2) ⇒ reference

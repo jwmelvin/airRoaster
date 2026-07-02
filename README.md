@@ -42,19 +42,27 @@ If `secrets.h.example` does not exist yet, create `secrets.h` manually:
 | `DUTY_STEP` | `5` | Increment/decrement step for UP/DOWN commands (%) |
 | `WS_PORT` | `81` | WebSocket server port |
 | `DL_INIT_RETRY_DELAY_MS` | `500` | Delay between DimmerLink ready-check retries at startup (ms) |
-| `IL_FAN_MIN` | `23` | Fan level below which heat is always 0 (both interlock modes) |
-| `IL_FAN_FULL` | `30` | Fan level at or above which heat is fully unrestricted (soft mode) |
+| `IL_FAN_MIN` | `48` | Fan level below which heat is always 0 (both interlock modes) |
+| `IL_FAN_FULL` | `55` | Fan level at or above which heat is fully unrestricted (soft mode) |
 | `IL_HEAT_AT_MIN` | `30` | Heat cap (%) when fan is exactly at `IL_FAN_MIN` (soft mode) |
+| `WDT_TIMEOUT_MS` | `8000` | Task watchdog: panic→reset if the loop hangs this long |
+| `INLET_PV_STALE_MS` | `3000` | Closed loop / tune failsafe if the inlet reading is older than this |
+| `INLET_OVERTEMP_C` | `280` | Closed loop failsafe above this inlet temperature (°C) |
+| `WIFI_CONNECT_TIMEOUT_MS` | `15000` | Boot-time WiFi wait; the roaster starts without network after this |
+| `TELEM_PERIOD_MS` | `1000` | Telemetry push cadence (runtime-adjustable via `TELEM`) |
 
 ---
 
 ## Startup sequence
 
-1. Display and I2C bus initialize
-2. Both DimmerLink devices initialize — retried up to 3 times each (`DL_INIT_RETRY_DELAY_MS` apart); failures are logged. Dimmer init happens before WiFi to avoid missing the ready window at power-on.
-3. ESP32 connects to WiFi (blocks until connected)
-4. WebSocket server starts on port `81`
-5. IP address is shown on the display
+1. Task watchdog armed (8 s, panic→reset — safe because of step 4)
+2. Display and I2C bus initialize
+3. Both DimmerLink devices initialize — retried up to 3 times each (`DL_INIT_RETRY_DELAY_MS` apart); failures are logged. Dimmer init happens before WiFi to avoid missing the ready window at power-on.
+4. **Boot dimmer sync**: heat is forced to `0` and the fan's *actual* level is read back and adopted — after an MCU-only reset (crash / watchdog / brownout) the dimmers may still hold their last levels, so a hot roaster keeps its cooling airflow while the heater is killed
+5. Sensors initialize (MAX31865s enter continuous conversion with on-chip fault thresholds armed)
+6. ESP32 connects to WiFi — bounded wait (15 s), then boot proceeds regardless; the link is watched and reconnected from the main loop. The roaster is fully operable over serial with no network.
+7. WebSocket server starts on port `81`
+8. IP address is shown on the display
 
 ---
 
@@ -78,7 +86,12 @@ Artisan polls the device on its sample interval. The controller responds with th
 {"id": 12345, "data": {"BT": 195.3, "ET": 210.0}}
 ```
 
-`BT` and `ET` are currently stubbed at `0.0` pending sensor integration. When sensors are added, populate the `btTemp` and `etTemp` globals in the firmware.
+`BT` is the bean RTD (MAX31865, read register-direct in continuous mode — see
+`max31865_direct.h`), `IN` is the inlet thermocouple (MAX31855). `ET` reads
+`0.0` until a second RTD probe is wired and `RTD_ET_ENABLED` is set to `1`.
+During a sensor fault a channel holds its last good value rather than dropping
+to 0 (see [hardware/emi.md](hardware/emi.md)); anything closing a loop on a
+reading also checks its freshness.
 
 #### Plain-text commands
 
@@ -103,11 +116,16 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 | `FF` | `FF` | Report feedforward params and current value (see [Feedforward](#feedforward-airflow-compensation)) |
 | `FF <k>` | `FF 0.0045` | Set the feedforward coefficient `ffK` directly |
 | `FF AMB <degC>` | `FF AMB 24` | Set the ambient reference temperature |
+| `FF AMB` | `FF AMB` | Seed ambient from the MAX31855 cold-junction temperature (board ambient; the enclosure runs a little warm) |
 | `FF CAL` | `FF CAL` | Auto-calibrate `ffK` from the current (steady) operating point |
 | `FF OFF` | `FF OFF` | Disable feedforward (`ffK = 0`) |
-| `STAT` | `STAT` | Report and reset the control-cadence jitter watch (worst late-fire, µs) |
+| `STAT` | `STAT` | Report and reset the load counters: worst control-step late-fire and worst single loop pass (µs) |
+| `TELEM <ms>` | `TELEM 500` | Set the telemetry push period (100–10000 ms); `TELEM OFF` disables; `TELEM` reports |
 | `IL` | `IL` | Toggle interlock mode between hard and soft (see [Fan interlock](#fan-interlock)) |
 | `LOG` | `LOG` | Retrieve the error log (sent only to requesting client) |
+
+Numeric arguments are validated strictly: an invalid value (e.g. `OT1 x`) is
+rejected with an `error` push back to the sender — never coerced to `0`.
 
 Sending `OT1 <value>` (manual heat) at any time is an **instant override**: it
 drops the controller out of closed-loop mode and applies the manual level.
@@ -129,6 +147,19 @@ All unsolicited messages use Artisan's push message envelope so any client can u
 | `ilSoft` | `true` if soft (linear) interlock mode is active; `false` for hard (binary) mode |
 | `mode` | `"manual"` (heat set directly by `OT1`), `"inlet"` (heat modulated by the closed loop), or `"tune"` (a step test is running) |
 | `inSV` | Inlet setpoint (°C) in use when `mode` is `"inlet"` |
+
+**Telemetry broadcast** (periodic, default 1 Hz, 2 Hz during a tune — the
+dashboard's data feed; `TELEM <ms>|OFF` adjusts):
+
+```json
+{"pushMessage": "telem", "data": {"t": 123456, "IN": 182.4, "BT": 165.1, "ET": 0.0,
+  "sv": 185.0, "heat": 42, "heatReq": 42, "fan": 57, "ilCap": 100, "mode": "inlet",
+  "p": 3.9, "i": 35.2, "d": 0.0, "ff": 0.0, "fltIN": 0, "fltBT": 0}}
+```
+
+`t` is device millis; `p`/`i`/`d`/`ff` are the last control-step term values
+(meaningful in `inlet` mode); `fltIN`/`fltBT` flag a channel currently in the
+debounced-fault state (its value is held, not live).
 
 **Error broadcast** (sent to all clients when an error is logged):
 
@@ -197,6 +228,13 @@ switchable mode layered on top of manual heat control.
   from an Artisan background profile) does not reset the loop.
 - `INLET OFF` returns to `manual`, holding heat at its current level.
 - `OT1 <value>` is an instant manual override (drops back to `manual`).
+
+**Failsafe.** The loop lets go — drops to `manual` at **heat 0** and logs/
+broadcasts an error — if the inlet reading goes stale (no accepted sample for
+`INLET_PV_STALE_MS`, 3 s) or exceeds `INLET_OVERTEMP_C` (280 °C). Stale matters
+because a faulted sensor *holds* its last good value: without the freshness
+check the integrator would wind against a frozen reading indefinitely. The fan
+keeps running (airflow only cools once the heater is off).
 
 ### Driving the setpoint from a roast profile (Artisan event playback)
 
@@ -294,10 +332,13 @@ suggests PI gains via the SIMC rule at two robustness levels.
    `manual` automatically.
 4. The result is broadcast as a `tune` push message:
    ```json
-   {"pushMessage":"tune","data":{"ok":true,"fan":57,"step":15,"dT":42.3,
+   {"pushMessage":"tune","data":{"ok":true,"settled":true,"fan":57,"step":15,"dT":42.3,
      "Kp":2.82,"tau":18.5,"theta":3.2,
      "tight":{"kp":1.97,"ki":0.13},"cons":{"kp":0.79,"ki":0.05}}}
    ```
+   - `settled:false` means the test hit the 180 s cap before the response
+     flattened — the fit underestimates `dT` and the suggested gains run hot.
+     Re-run longer/steadier before trusting them.
    - `Kp` (°C/%), `tau`, `theta` (s) are the identified plant model.
    - `tight` is the brisker suggestion (tracking-first); `cons` is more
      conservative. Start with `tight`, fall back to `cons` if it overshoots or
@@ -347,9 +388,11 @@ rejects fan-speed changes largely through the feedforward path. Reported as an
 ## Commissioning
 
 Bring the controller up in this order. Every step after the flash is a command
-sent over WebSocket — the console page at [artisan/dashboard.html](artisan/dashboard.html)
+sent over WebSocket — the dashboard at [dashboard.html](dashboard.html)
 has a **Commissioning sequence** panel that walks these steps with the value
-fields prefilled.
+fields prefilled, plus a live chart, PID/FF editors, and a filtering console
+that captures the log (the device keeps only 8 entries in RAM — save from the
+dashboard).
 
 1. **Flash.** With the board connected, run `./verify.sh upload` on the host.
 2. **Sanity.** Stay in `manual`; confirm sensors, OLED, and Artisan still behave.
@@ -397,12 +440,15 @@ ROW4 interlock status values:
 
 ## Error logging
 
-Errors are stored in a RAM-only circular buffer (8 entries × 64 chars). No flash writes are performed. The log is lost on reboot.
+Errors are stored in a RAM-only circular buffer (8 entries × 64 chars). No flash writes are performed. The log is lost on reboot — the dashboard's console buffer is the durable record (it requests `LOG` on connect and can save the session to a file).
 
 Errors are generated for:
 - DimmerLink not ready at startup (after 3 retries)
 - DimmerLink error register non-zero after a write (`ERR_SYNTAX`, `ERR_NOT_READY`, `ERR_INDEX`, `ERR_PARAM`, or unknown code)
-- DimmerLink error register polled every 5 seconds during operation
+- DimmerLink error register polled every 5 seconds during operation — logging is rate-limited per module (a repeating identical code logs once a minute), and a module erroring through 3 consecutive polls is soft-reset (`COMMAND` register) with its curve and level re-asserted
+- DimmerLink level write failures and level-readback mismatches (the 5 s audit re-asserts level + curve)
+- Sensor faults (MAX31865 fault codes, MAX31855 fault bits), debounced and rate-limited; the channel holds its last good value during a fault
+- Inlet-control failsafe events (stale PV / over-temp)
 
 Retrieve the log at any time by sending `LOG` over WebSocket.
 
@@ -470,7 +516,13 @@ Install via Arduino Library Manager:
 
 - [Adafruit GFX Library](https://github.com/adafruit/Adafruit-GFX-Library)
 - [Adafruit SH110X](https://github.com/adafruit/Adafruit_SH110x)
+- [Adafruit MAX31855](https://github.com/adafruit/Adafruit-MAX31855-library) (inlet thermocouple)
 - [WebSockets by Markus Sattler](https://github.com/Links2004/arduinoWebSockets)
+
+The MAX31865 RTD boards are **not** driven through the Adafruit library: its
+read path is a blocking one-shot that defeats continuous-mode operation (see
+`max31865_direct.h` for the register-level driver and the rationale, and
+[hardware/emi.md](hardware/emi.md) for the fault history that motivated it).
 
 ---
 

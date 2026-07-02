@@ -58,18 +58,21 @@ commit; stage files explicitly.
 
 ## Active effort (2026-07-02)
 
-**Robustness + dashboard development**, from the July 2026 code review (full
-findings: [state-archive.md](state-archive.md) § Review findings). Phases and
-specs: [state-plan.md](state-plan.md).
+**Robustness + dashboard development** (from the July 2026 code review) is
+**implemented through all five phases** on `feature/robustness-dashboard` —
+firmware v0.9.0, one commit per phase. Full findings and what landed:
+[state-archive.md](state-archive.md). Remaining planned work (chiefly
+**on-roaster validation** — nothing has run on hardware yet, only
+compile-verify): [state-plan.md](state-plan.md).
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| 0 | Review, datasheet verification, state docs | **done** |
-| 1 | Firmware safety: boot dimmer sync, inlet failsafe, checked dimmer writes, watchdog | in progress |
-| 2 | MAX31865 direct-register continuous-mode driver (removes ~150 ms/cycle blocking) | pending |
-| 3 | Protocol hardening + telemetry push (dashboard enabler) | pending |
-| 4 | Dashboard rebuild: grouped panels, tuning chart, log capture/filter/export | pending |
-| 5 | Docs sync: README drift, emi.md addendum | pending |
+| 0 | Review, datasheet verification, state docs | done |
+| 1 | Firmware safety: boot dimmer sync, inlet failsafe, checked dimmer writes, watchdog (v0.7.0) | done |
+| 2 | MAX31865 direct-register continuous-mode driver (v0.8.0) | done |
+| 3 | Protocol hardening + telemetry push (v0.9.0) | done |
+| 4 | Dashboard rebuild: grouped panels, tuning chart, log capture/filter/export | done |
+| 5 | Docs sync: README, emi.md addendum | done |
 
 **Key verified facts the work rests on** (traceable to datasheets, see archive):
 - Adafruit_MAX31865 v1.6.2 `temperature()` is a blocking one-shot (~75 ms) that

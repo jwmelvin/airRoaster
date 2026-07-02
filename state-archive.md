@@ -5,6 +5,44 @@
 > their F-numbers here even after the fixes land, so plan/commit references
 > stay resolvable.
 
+## 2026-07-02 — Robustness + dashboard implementation (phases 1–5)
+
+All five phases from the review below landed on `feature/robustness-dashboard`,
+one commit per phase; firmware v0.6.0 → v0.9.0 (per-version detail in the
+`airRoaster.ino` history block). Compile-verified only — **on-roaster
+validation is the open next step** (checklist in state-plan.md § NEXT).
+
+- **v0.7.0** safety: boot dimmer sync (heat zeroed, fan level adopted), inlet
+  stale-PV/over-temp failsafe (drop to manual at heat 0), commit-on-ack dimmer
+  writes + 5 s readback audit, task watchdog (8 s). → F1 F3 F6 F8
+- **v0.8.0** sensor path: `max31865_direct.h` register-level driver, true
+  continuous mode (~150 ms/cycle of blocking removed), on-chip thresholds
+  armed, per-sample fault bit, meaningful stall-guard re-assert, `loopMaxUs`
+  in STAT. → F2 F10
+- **v0.9.0** protocol: strict numeric parsing with error replies, float-
+  preserving JSON envelope, bounded WiFi boot + loop-side reconnect, tune
+  `settled` flag, DimmerLink version log / rate-limited error poll / soft-reset
+  escalation, no-arg `FF AMB` from cold junction, `telem` push + `TELEM`
+  command. → F4 F5 F7 F9
+- **Dashboard** rebuilt single-file: status/temperature panels, canvas tuning
+  chart with CSV export, PID/FF/TUNE workflow (tight + cons apply, settled
+  warning), timestamped filterable console with save-to-file (the durable log),
+  auto-reconnect. Element-ID/function cross-check passed; JS syntax verified.
+- **Docs**: README brought current (interlock constants, startup sequence,
+  new commands, telem schema, failsafe, dependencies note), emi.md addendum on
+  the library one-shot discovery and what to watch in the next roast's fault
+  log.
+
+Design decisions worth remembering:
+- Failsafe action is **heat 0**, not hold: with an untrusted PV, holding heat
+  unattended can overheat; fan keeps running because airflow only cools.
+- Boot sync **adopts** the fan level rather than zeroing it, so a mid-roast
+  MCU reset keeps cooling airflow on a hot roaster.
+- In-window RTD samples are accepted even with the fault bit set (per the
+  standing EMI policy), but the latch is then cleared so the bit stays fresh.
+- The DimmerLink COMMAND reset values came from the vendor doc (RESET=0x01);
+  power-on level default is undocumented, which is why boot sync exists.
+
 ## 2026-07-02 — Code review (firmware + dashboard) and datasheet verification
 
 Review of firmware v0.6.0 and dashboard against the installed libraries
