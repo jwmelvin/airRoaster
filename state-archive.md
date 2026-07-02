@@ -5,6 +5,38 @@
 > their F-numbers here even after the fixes land, so plan/commit references
 > stay resolvable.
 
+## 2026-07-02 — Heat power linearization + CURVE command (v0.11.0)
+
+Follow-on from the fan-sensitivity discussion. Two findings first: the firmware
+has always run curve mode 1 = **RMS** (not linear, as assumed), and of the three
+DimmerLink curves (0=linear-in-firing-angle, 1=linear-in-Vrms, 2=LED-log) RMS is
+already the best for the fan's mid-scale operating band — LINEAR is steepest
+mid-scale (worse resolution there) and LOG spends resolution below the motor's
+stall threshold. The narrow fan band is motor+blower physics, not a curve
+artifact; the level register is integer 0–100, so 1 count is the hardware
+quantum regardless of curve. Also v0.10.1: DUTY_STEP 5 → 1 (single-percent
+UP/DOWN nudges).
+
+What landed in v0.11.0:
+- **Heat % now means % of max power.** On the RMS curve P ∝ level², so the
+  commanded heat passes through `heatDimmerLevel()` (√ map) at the hardware
+  write boundary. All firmware state — PID, FF, interlock, tune buffers,
+  telemetry, display — stays in command/power units; only `setLevel` writes and
+  the readback-audit/reset paths translate. Constant plant gain across the
+  range; the feedforward's heat ∝ power assumption now actually holds.
+  **Re-TUNE + FF CAL required** — pre-v0.11.0 gains/ffK are in dimmer units.
+- **CURVE command** (report / `CURVE HEAT|FAN 0..2`), runtime-only by design:
+  power-on default returns to RMS so a curve experiment can never survive a
+  reboot into a roast. Module resets/audits re-assert the *active* curve
+  (`curveFor()`), not a hardcoded one. The heat power map disables itself on
+  non-RMS curves (mapping unknown there). Dashboard gained a Curves group
+  (selectors + heatPowerMap indicator). Serves the work.md "test dimmerlink
+  curves" item.
+- Gotcha recorded: Arduino's preprocessor inserts auto-prototypes before the
+  *first function definition* in the sketch — defining helper functions up in
+  the state section broke the build (prototypes landed above struct
+  definitions). Keep function bodies below the type definitions.
+
 ## 2026-07-02 — Runtime-configurable interlock (v0.10.0)
 
 User-requested follow-on: interlock mode and limits configurable from the

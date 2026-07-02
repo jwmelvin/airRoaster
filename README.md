@@ -10,7 +10,7 @@ ESP32-based controller for a hot-air coffee roaster. Controls a heating element 
 |-----------|---------|
 | MCU | ESP32-S3 Feather with 4MB Flash 2MB PSRAM, https://www.adafruit.com/product/5477 (any ESP32 variant with I2C and WiFi) |
 | Display | FeatherWing OLED - 128x64 OLED, https://www.adafruit.com/product/4650 (SH1107 64×128 OLED), I2C address `0x3C` |
-| Dimmer interface | RBDimmer DimmerLink ([overview](https://www.rbdimmer.com/docs/dimmerlink-overview), [I2C protocol](https://www.rbdimmer.com/docs/dimmerlink-I2CCommunication)), I2C address heat: `0x51`; fan: `0x52`, curve is set to mode `1` at startup. |
+| Dimmer interface | RBDimmer DimmerLink ([overview](https://www.rbdimmer.com/docs/dimmerlink-overview), [I2C protocol](https://www.rbdimmer.com/docs/dimmerlink-I2CCommunication)), I2C address heat: `0x51`; fan: `0x52`. Curve is set to RMS (mode `1`) at startup; switchable at runtime with the `CURVE` command. |
 | Dimmers |Dimmers purchased from RobotDyn Official Store on AliExpress. "Dimmer AC module High Power for 40A 600V High Load, 1 Channel, 3.3V/5V logic"; "Dimmer AC module for 16A/24A 600V High Load, 1 Channel, 3.3V/5V logic with current load control" |
 | Heater | from sdm2020_tools on eBay and listed as "1 set 230V 3600W 132.387 Heating Element & mica casing for hot air blower guns". Its power in my use is a little higher because I use 240V.|
 | Blower | Ametek 116392-00 |
@@ -99,7 +99,7 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 
 | Command | Example | Description |
 |---------|---------|-------------|
-| `OT1 <value>` | `OT1 60` | Set heat level (0–100%) |
+| `OT1 <value>` | `OT1 60` | Set heat level, 0–100% **of max power** (power-linearized — see below) |
 | `OT1 UP` | `OT1 UP` | Increase heat by `DUTY_STEP` |
 | `OT1 DOWN` | `OT1 DOWN` | Decrease heat by `DUTY_STEP` |
 | `OT2 <value>` | `OT2 50` | Set fan level (0–100%) |
@@ -124,6 +124,8 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 | `IL` | `IL` | Report interlock mode, limits, and current heat cap (`il` push message) |
 | `IL HARD` / `IL SOFT` | `IL SOFT` | Set the interlock mode explicitly (see [Fan interlock](#fan-interlock)) |
 | `IL <fanMin> <fanFull> <heatAtMin>` | `IL 48 55 30` | Set the interlock limits; validated (`1 ≤ fanMin ≤ fanFull ≤ 100`, `heatAtMin ≤ 100`), applied immediately, NVS-persisted |
+| `CURVE` | `CURVE` | Report both dimmer curve modes (`curve` push message) |
+| `CURVE HEAT\|FAN <0-2>` | `CURVE FAN 0` | Set a channel's dimmer curve: 0=linear, 1=rms, 2=log. Runtime-only — reboot restores RMS |
 | `LOG` | `LOG` | Retrieve the error log (sent only to requesting client) |
 
 > **Changed in v0.10.0:** bare `IL` used to *toggle* the mode; it now reports.
@@ -131,6 +133,14 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 
 Numeric arguments are validated strictly: an invalid value (e.g. `OT1 x`) is
 rejected with an `error` push back to the sender — never coerced to `0`.
+
+**Heat is power-linearized** (v0.11.0): on the RMS curve the dimmer level maps
+linearly to V<sub>rms</sub>, so heater power would go as level². Commanded heat
+passes through a √ map at the hardware write, making **heat % proportional to
+watts** — constant plant gain for the PID across the range, and the
+feedforward's heat ∝ power assumption holds. The map is active only while the
+heat curve is RMS (`CURVE` reports `heatPowerMap`). Gains/`ffK` identified
+before v0.11.0 are in raw dimmer units — **re-run `TUNE` and `FF CAL`**.
 
 Sending `OT1 <value>` (manual heat) at any time is an **instant override**: it
 drops the controller out of closed-loop mode and applies the manual level.

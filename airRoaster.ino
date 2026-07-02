@@ -20,7 +20,7 @@
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.10.1"
+#define FW_VERSION  "0.11.0"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -71,6 +71,11 @@
 #define REG_FREQ     0x20
 
 #define DL_CMD_RESET 0x01   // COMMAND register value: module soft-reset
+
+// Curve modes (register 0x11): how level maps to output
+#define DL_CURVE_LINEAR  0  // linear in firing angle (Vrms S-shaped, steepest mid-scale)
+#define DL_CURVE_RMS     1  // linear in output Vrms (the power-on default here)
+#define DL_CURVE_LOG     2  // perceptual (LED) curve
 
 // Consecutive 5 s error polls with a fault before commanding a module reset
 #define DL_ERR_STREAK_RESET  3
@@ -147,6 +152,17 @@ bool    interlockSoft = false;   // false = hard (binary), true = soft (linear r
 uint8_t ilFanMin    = IL_FAN_MIN_DFLT;
 uint8_t ilFanFull   = IL_FAN_FULL_DFLT;
 uint8_t ilHeatAtMin = IL_HEAT_AT_MIN_DFLT;
+
+// Active dimmer curves (CURVE command; runtime-only, never persisted — an
+// experiment must not survive a reboot into a roast). Power-on default is RMS,
+// asserted by initDL(). The heat power-linearization below applies only while
+// heatCurve is RMS, because the sqrt map is derived from that curve's
+// level-to-Vrms linearity.
+uint8_t heatCurve = DL_CURVE_RMS;
+uint8_t fanCurve  = DL_CURVE_RMS;
+// (heatDimmerLevel() / curveFor() defined with the DimmerLink helpers below —
+// function bodies this early would move the Arduino auto-prototype insertion
+// point above the struct definitions.)
 
 float btTemp  = 0.0;  // bean temp  — MAX31865 PT1000 (°C)
 float etTemp  = 0.0;  // exhaust/ET — MAX31865 PT1000 (°C)
@@ -921,8 +937,25 @@ void resetDL(uint8_t addr, uint8_t level) {
     Wire.write(DL_CMD_RESET);
     Wire.endTransmission();
     delay(20);
-    setCurve(addr, 1);
+    setCurve(addr, curveFor(addr));
     setLevel(addr, level);
+}
+
+// Commanded heat % -> dimmer level. On the RMS curve, level maps linearly to
+// Vrms, so heater power goes as level² (P = V²/R); commanding through the
+// square root makes heat % proportional to *watts*. That keeps the plant gain
+// the PID sees constant across the range and makes the feedforward's
+// heat ∝ power assumption true, at the cost of heat % no longer being the raw
+// dimmer level (all firmware state stays in command/power units; the mapping
+// happens only at the hardware write and readback-audit boundary).
+uint8_t heatDimmerLevel(uint8_t pct) {
+    if (heatCurve != DL_CURVE_RMS) return pct;   // map unknown on other curves
+    return (uint8_t)lroundf(10.0f * sqrtf((float)pct));
+}
+
+// The curve a channel should be running (for re-asserts after module resets).
+uint8_t curveFor(uint8_t addr) {
+    return (addr == FAN_ADDR) ? fanCurve : heatCurve;
 }
 
 const char* dlErrorName(uint8_t code) {
@@ -984,7 +1017,7 @@ void auditDLLevel(uint8_t addr, uint8_t expected) {
     char msg[56];
     snprintf(msg, sizeof(msg), "DimmerLink 0x%02X level %d != expected %u", addr, actual, expected);
     logError(msg);
-    setCurve(addr, 1);            // a self-reset also reverts the curve
+    setCurve(addr, curveFor(addr));   // a self-reset also reverts the curve
     setLevel(addr, expected);
 }
 
@@ -1007,7 +1040,8 @@ void applyInterlock() {
     if (effective != heatLevel) {
         // Commit the cached level only when the hardware acknowledged the write;
         // on failure the stale cache makes this branch retry every loop.
-        if (setLevel(HEAT_ADDR, effective)) {
+        // (heatLevel stays in command/power %; the map applies at the wire.)
+        if (setLevel(HEAT_ADDR, heatDimmerLevel(effective))) {
             heatLevel = effective;
             checkDLError(HEAT_ADDR);
             flagDisplayUpdate = true;
@@ -1363,6 +1397,48 @@ void processCommand(String cmd, int8_t clientNum) {
         char b[72];
         snprintf(b, sizeof(b),
             "{\"pushMessage\":\"telem\",\"data\":{\"periodMs\":%u}}", telemPeriodMs);
+        if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
+        Serial.println(b);
+
+    } else if (kw == "CURVE") {
+        // CURVE                  — report both channels' curve modes.
+        // CURVE HEAT|FAN <0|1|2> — set a channel's curve: 0=linear 1=rms 2=log.
+        // Runtime-only (never persisted): the power-on default is RMS, so an
+        // experiment can't survive a reboot into a roast. Note the heat
+        // power-linearization applies only on RMS — on other curves heat %
+        // falls back to raw dimmer level.
+        if (n >= 3) {
+            String ch = tokens[1];
+            ch.toUpperCase();
+            int cv;
+            bool isHeat = (ch == "HEAT");
+            if ((!isHeat && ch != "FAN") ||
+                !parseIntStrict(tokens[2], cv) || cv < 0 || cv > 2) {
+                replyBadArg(clientNum, "CURVE");
+                return;
+            }
+            uint8_t addr = isHeat ? HEAT_ADDR : FAN_ADDR;
+            if (setCurve(addr, (uint8_t)cv)) {
+                if (isHeat) heatCurve = (uint8_t)cv; else fanCurve = (uint8_t)cv;
+                // The same output needs a different level under the new curve —
+                // re-send the current level through the (possibly new) mapping.
+                if (isHeat) setLevel(HEAT_ADDR, heatDimmerLevel(heatLevel));
+                else        setLevel(FAN_ADDR, fanLevel);
+                checkDLError(addr);
+            } else {
+                char msg[48];
+                snprintf(msg, sizeof(msg), "DimmerLink 0x%02X curve write failed", addr);
+                logError(msg);
+            }
+        } else if (n >= 2) {
+            replyBadArg(clientNum, "CURVE");
+            return;
+        }
+        char b[96];
+        snprintf(b, sizeof(b),
+            "{\"pushMessage\":\"curve\",\"data\":{\"heat\":%u,\"fan\":%u,\"heatPowerMap\":%s}}",
+            heatCurve, fanCurve,
+            heatCurve == DL_CURVE_RMS ? "true" : "false");
         if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
         Serial.println(b);
     }
@@ -1758,9 +1834,11 @@ void loop() {
         lastErrorPoll = now;
         heatErrStreak = checkDLError(HEAT_ADDR) ? heatErrStreak + 1 : 0;
         fanErrStreak  = checkDLError(FAN_ADDR)  ? fanErrStreak  + 1 : 0;
-        if (heatErrStreak >= DL_ERR_STREAK_RESET) { resetDL(HEAT_ADDR, heatLevel); heatErrStreak = 0; }
+        // Heat crosses the power-linearization map at the wire, so reset/audit
+        // must compare and re-assert in dimmer units, not command units.
+        if (heatErrStreak >= DL_ERR_STREAK_RESET) { resetDL(HEAT_ADDR, heatDimmerLevel(heatLevel)); heatErrStreak = 0; }
         if (fanErrStreak  >= DL_ERR_STREAK_RESET) { resetDL(FAN_ADDR,  fanLevel);  fanErrStreak  = 0; }
-        auditDLLevel(HEAT_ADDR, heatLevel);
+        auditDLLevel(HEAT_ADDR, heatDimmerLevel(heatLevel));
         auditDLLevel(FAN_ADDR, fanLevel);
     }
 
@@ -1805,6 +1883,20 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.11.0 2026-07-02  Heat power linearization + CURVE command. On the RMS
+//                     curve the dimmer level maps linearly to Vrms, so heater
+//                     power went as level² — commanded heat % now passes
+//                     through a sqrt map at the hardware write boundary, making
+//                     heat % proportional to WATTS. All firmware state (PID,
+//                     FF, interlock, tune, telemetry, display) stays in
+//                     command/power units; only setLevel and the readback
+//                     audit/reset paths translate. RE-TUNE REQUIRED: gains and
+//                     ffK identified before this version are in dimmer-level
+//                     units and no longer match the plant. New CURVE command
+//                     (report / CURVE HEAT|FAN 0..2, runtime-only, default RMS
+//                     re-asserted at boot) for the work.md curve experiments;
+//                     module resets/audits re-assert the *active* curve. The
+//                     heat power map applies only while the heat curve is RMS.
 // v0.10.1 2026-07-02  DUTY_STEP 5 -> 1: OT1/OT2 UP/DOWN now nudge by a single
 //                     percent. The fan operates over a narrow, sensitive band,
 //                     so 5%-steps overshoot; absolute set commands unchanged.

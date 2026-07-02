@@ -30,6 +30,14 @@ roughly in commissioning order (`./verify.sh upload`, then the dashboard):
    custom limits, confirm the heat cap follows the fan slider accordingly, then
    power-cycle and confirm the values and mode survive (NVS). Try an invalid
    set (`IL 0 55 30`) and confirm it is rejected.
+8. **Power linearization (v0.11.0)**: `OT1 50` should now produce ~half max
+   heater power (dimmer level ~71 — check with the DimmerLink readback or the
+   audit staying quiet). **Re-run `TUNE` and `FF CAL`** — stored gains/ffK are
+   in old dimmer units. Then verify closed-loop tracking at both low and high
+   heat; the point of the map is that the same gains hold across the range.
+9. **Curve experiments** (`CURVE FAN 0|2`, optional): compare fan response per
+   level step on the dashboard chart; expectation is RMS (1) remains best.
+   Reboot restores RMS automatically.
 
 ## Completed phases (specs kept for reference; details in the archive)
 

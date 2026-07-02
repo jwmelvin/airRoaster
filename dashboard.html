@@ -243,6 +243,20 @@
       <div class="kv" style="margin-top:0.3em">heat blocked below fan&nbsp;min; soft mode
         ramps the cap from heat@min to 100% at fan&nbsp;full. Saved to NVS.</div>
     </div>
+    <div>
+      <h3>Curves</h3>
+      heat <select id="cvHeat">
+        <option value="0">linear</option><option value="1" selected>rms</option><option value="2">log</option>
+      </select>
+      <button onclick="sendWith('CURVE HEAT','cvHeat')">Set</button>
+      fan <select id="cvFan">
+        <option value="0">linear</option><option value="1" selected>rms</option><option value="2">log</option>
+      </select>
+      <button onclick="sendWith('CURVE FAN','cvFan')">Set</button>
+      <button onclick="send('CURVE')">Read</button>
+      <div class="kv" style="margin-top:0.3em">runtime only — reboot restores RMS.
+        heat&nbsp;%→power map <span id="pwrMap">?</span> (active only on RMS)</div>
+    </div>
   </div>
 </div>
 
@@ -354,6 +368,7 @@ function connect() {
     ws.send("PID");   // prefill the gain fields
     ws.send("FF");
     ws.send("IL");    // prefill the interlock panel
+    ws.send("CURVE"); // prefill the curve selectors
   };
 
   ws.onclose = () => {
@@ -442,12 +457,13 @@ function handleMessage(raw) {
       case "log":    cls = "log";    break;
       case "status": cls = "status"; applyStatus(obj.data); break;
       case "telem":  cls = "telem";  applyTelem(obj.data);  break;
-      case "tune": case "pid": case "ff": case "stat": case "il":
+      case "tune": case "pid": case "ff": case "stat": case "il": case "curve":
         cls = "report";
-        if (obj.pushMessage === "tune") applyTune(obj.data);
-        if (obj.pushMessage === "pid")  applyPid(obj.data);
-        if (obj.pushMessage === "ff")   applyFF(obj.data);
-        if (obj.pushMessage === "il")   applyIL(obj.data);
+        if (obj.pushMessage === "tune")  applyTune(obj.data);
+        if (obj.pushMessage === "pid")   applyPid(obj.data);
+        if (obj.pushMessage === "ff")    applyFF(obj.data);
+        if (obj.pushMessage === "il")    applyIL(obj.data);
+        if (obj.pushMessage === "curve") applyCurve(obj.data);
         break;
     }
   }
@@ -529,6 +545,13 @@ function applyIL(d) {
   document.getElementById("iHeatMin").value = d.heatAtMin;
   document.getElementById("ilHardBtn").className = d.soft ? "" : "primary";
   document.getElementById("ilSoftBtn").className = d.soft ? "primary" : "";
+}
+
+function applyCurve(d) {
+  if (!d || d.heat === undefined) return;
+  document.getElementById("cvHeat").value = d.heat;
+  document.getElementById("cvFan").value = d.fan;
+  document.getElementById("pwrMap").textContent = d.heatPowerMap ? "ON" : "OFF";
 }
 
 function sendIL() {
