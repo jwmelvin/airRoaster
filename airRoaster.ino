@@ -13,14 +13,14 @@
 #include <WiFi.h>
 #include <WebSocketsServer.h>
 #include <Adafruit_MAX31855.h>
-#include <Adafruit_MAX31865.h>
+#include "max31865_direct.h"   // register-level MAX31865 driver, continuous mode
 #include <Preferences.h>   // NVS-backed persistence of the tuning set
 #include <esp_task_wdt.h>  // task watchdog (a hung loop with heat on is the worst case)
 
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.7.0"
+#define FW_VERSION  "0.8.0"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -37,8 +37,8 @@
 // Set to 1 when the ET RTD probe is installed and filtered
 #define RTD_ET_ENABLED  0
 
-// MAX31865 wiring type: MAX31865_2WIRE / MAX31865_3WIRE / MAX31865_4WIRE
-#define RTD_WIRES   MAX31865_4WIRE
+// MAX31865 wiring: true for 3-wire RTDs, false for 2- or 4-wire (we run 4-wire)
+#define RTD_WIRE3   false
 
 // PT1000 reference resistor on the 3648 board is 4300 Ω; nominal at 0 °C is 1000 Ω
 #define RTD_REF     4300.0f
@@ -176,11 +176,20 @@ float ffAmbient = 25.0f;   // reference/ambient temp the rise is measured from (
 // which reports it) rather than beside the other PID working state below.
 volatile uint32_t ctrlMaxJitterUs = 0;
 
+// Worst single loop() pass (µs). The jitter watch above can't see blocking
+// that happens *inside* the pass that fires the control step (the timestamps
+// are captured at loop top), so this is the honest measure of how long the
+// cooperative loop can go dark — WebSocket, serial, and display service all
+// stall for the duration. Read and zeroed via STAT alongside the jitter.
+volatile uint32_t loopMaxUs = 0;
+
 // ---------------------------------------------------------------------------
 // Sensors
 // ---------------------------------------------------------------------------
-static Adafruit_MAX31865 rtdBT(CS_RTD_BT);
-static Adafruit_MAX31865 rtdET(CS_RTD_ET);
+static Max31865Direct rtdBT(CS_RTD_BT, RTD_NOMINAL, RTD_REF);
+#if RTD_ET_ENABLED
+static Max31865Direct rtdET(CS_RTD_ET, RTD_NOMINAL, RTD_REF);
+#endif
 static Adafruit_MAX31855 tcIN(CS_TC_IN);
 
 // Per-channel fault tracking (debounce + rate-limited logging) and, for the
@@ -195,7 +204,9 @@ struct SensorFaultState {
     uint8_t  histCount;              // valid entries in hist[]
 };
 static SensorFaultState rtdBTfault = {0, false, 0, 0, {0}, 0, 0};
+#if RTD_ET_ENABLED
 static SensorFaultState rtdETfault = {0, false, 0, 0, {0}, 0, 0};
+#endif
 static SensorFaultState tcINfault  = {0, false, 0, 0, {0}, 0, 0};
 
 // ---------------------------------------------------------------------------
@@ -291,7 +302,7 @@ void broadcastStatus();
 bool handleArtisanRequest(uint8_t clientNum, const String& msg);
 void initSensors();
 void updateSensors();
-void serviceRtd(Adafruit_MAX31865 &dev, SensorFaultState &st, float &out, const char *name);
+void serviceRtd(Max31865Direct &dev, SensorFaultState &st, float &out, const char *name);
 float feedforward(float sv, uint8_t fan);
 void  engageInlet(float sv);
 void  controlStep(uint32_t dtMs);
@@ -306,18 +317,21 @@ void  tuneStep(uint32_t dtMs);
 void initSensors() {
     tcIN.begin();
 
-    rtdBT.begin(RTD_WIRES);
-    rtdET.begin(RTD_WIRES);
-
-    // Clear any startup faults first, then enable continuous conversion.
-    // Order matters: clearFault() resets config bits, so bias and autoConvert must come after.
-    rtdBT.clearFault();
-    rtdBT.enableBias(true);
-    rtdBT.autoConvert(true);
+    // begin() puts the chip straight into continuous conversion (VBIAS|AUTO,
+    // 60 Hz notch) and clears power-on faults; then arm the on-chip conversion
+    // window so out-of-plausible-range conversions latch fault bits on silicon.
+    rtdBT.begin(RTD_WIRE3, false /*60 Hz*/);
+    rtdBT.setThresholdsRaw(rtdBT.rawFromTemp(RTD_VALID_MIN_C),
+                           rtdBT.rawFromTemp(RTD_VALID_MAX_C));
 #if RTD_ET_ENABLED
-    rtdET.clearFault();
-    rtdET.enableBias(true);
-    rtdET.autoConvert(true);
+    rtdET.begin(RTD_WIRE3, false /*60 Hz*/);
+    rtdET.setThresholdsRaw(rtdET.rawFromTemp(RTD_VALID_MIN_C),
+                           rtdET.rawFromTemp(RTD_VALID_MAX_C));
+#else
+    // Keep the unpopulated ET board's chip select deasserted so it can never
+    // chatter on the shared MISO line.
+    pinMode(CS_RTD_ET, OUTPUT);
+    digitalWrite(CS_RTD_ET, HIGH);
 #endif
 
     Serial.println("Sensors initialized");
@@ -337,34 +351,42 @@ static float rtdMedian(const SensorFaultState &st) {
     return tmp[n / 2];
 }
 
-// Robust RTD read. Rejects single-cycle SPI glitches (two disagreeing reads),
-// median-filters accepted samples (rejects single-sample spikes), debounces
-// genuine faults, holds the last good value through brief transients, periodically
-// re-asserts VBIAS/auto-convert to guard against a silently-stalled converter, and
-// keeps the converter alive after a fault. See hardware/emi.md for the noise story.
-void serviceRtd(Adafruit_MAX31865 &dev, SensorFaultState &st, float &out, const char *name) {
+// Robust RTD read. Rejects single-cycle SPI glitches (two disagreeing register
+// reads), median-filters accepted samples (rejects single-sample spikes),
+// debounces genuine faults, holds the last good value through brief transients,
+// periodically re-asserts the config byte to guard against a silently-stalled
+// converter, and keeps the converter alive after a fault. The chip runs in
+// continuous auto-convert mode (see max31865_direct.h), so each read here is a
+// microsecond register access, not a blocking conversion. See hardware/emi.md
+// for the noise story.
+void serviceRtd(Max31865Direct &dev, SensorFaultState &st, float &out, const char *name) {
     uint32_t now = millis();
 
-    // Stall guard: a transient can silently clear VBIAS/auto-convert in the config
-    // register, freezing conversions while temperature() keeps returning the last
-    // latched (stale-but-plausible) value. Re-assert them periodically so the
-    // converter always recovers within RTD_REASSERT_MS even with no fault flag set.
+    // Stall guard: a transient can silently clear VBIAS/auto-convert in the
+    // config register, freezing conversions while the RTD register keeps
+    // returning the last latched (stale-but-plausible) value. Re-assert the
+    // config periodically so the converter always recovers within
+    // RTD_REASSERT_MS even with no fault flag set.
     if (now - st.lastReassertMs >= RTD_REASSERT_MS) {
         st.lastReassertMs = now;
-        dev.enableBias(true);
-        dev.autoConvert(true);
+        dev.reassert();
     }
 
-    // Two reads this cycle: if they disagree wildly, the SPI frame was probably
-    // corrupted by a dimmer transient — hold the last good value, retry next cycle.
-    float t1 = dev.temperature(RTD_NOMINAL, RTD_REF);
-    float t2 = dev.temperature(RTD_NOMINAL, RTD_REF);
+    // Two reads this cycle: the RTD register is latched between conversions,
+    // so any disagreement means the SPI frames themselves were corrupted by a
+    // dimmer transient — hold the last good value, retry next cycle.
+    bool f1 = false, f2 = false;
+    float t1 = dev.temperatureFromRaw(dev.readRaw(&f1));
+    float t2 = dev.temperatureFromRaw(dev.readRaw(&f2));
     if (fabsf(t1 - t2) > RTD_READ_DISAGREE_C) return;
 
     float t = 0.5f * (t1 + t2);
 
-    // Good reading — accept even if a transient fault flag was momentarily set.
+    // Good reading — accept even if a transient fault bit was momentarily set
+    // (established policy from the EMI work: in-window data beats a flag), but
+    // clear a lingering latch so the per-sample bit stays meaningful.
     if (t > RTD_VALID_MIN_C && t < RTD_VALID_MAX_C) {
+        if (f1 || f2) dev.clearFault();
         st.hist[st.histHead] = t;                     // push into the median ring
         st.histHead = (st.histHead + 1) % RTD_MEDIAN_WINDOW;
         if (st.histCount < RTD_MEDIAN_WINDOW) st.histCount++;
@@ -377,10 +399,9 @@ void serviceRtd(Adafruit_MAX31865 &dev, SensorFaultState &st, float &out, const 
     // Out of range and consistent across both reads — candidate genuine fault.
     if (st.badCount < 255) st.badCount++;
 
-    uint8_t fault = dev.readFault();
-    dev.clearFault();              // recover the converter so it keeps running
-    dev.enableBias(true);
-    dev.autoConvert(true);
+    uint8_t fault = dev.readFaultReg();  // latched detail, intact: the read
+                                         // path no longer clears it behind us
+    dev.clearFault();                    // recover; also re-asserts VBIAS|AUTO
     // 'out' intentionally holds its last good value (do not zero) during the fault.
 
     if (st.badCount < SENSOR_FAULT_DEBOUNCE) return;  // ignore brief transients
@@ -981,15 +1002,17 @@ void processCommand(String cmd, int8_t clientNum) {
         Serial.println(b);
 
     } else if (kw == "STAT") {
-        // Report the control-cadence jitter watch (worst late-fire, µs) and zero
-        // it. Evidence on whether the cooperative loop ever needs a real core.
-        char b[96];
+        // Report the control-cadence jitter watch (worst late-fire, µs) and the
+        // worst single loop() pass, then zero both. Evidence on whether the
+        // cooperative loop ever needs a real core.
+        char b[112];
         snprintf(b, sizeof(b),
-            "{\"pushMessage\":\"stat\",\"data\":{\"ctrlMaxJitterUs\":%lu}}",
-            (unsigned long)ctrlMaxJitterUs);
+            "{\"pushMessage\":\"stat\",\"data\":{\"ctrlMaxJitterUs\":%lu,\"loopMaxUs\":%lu}}",
+            (unsigned long)ctrlMaxJitterUs, (unsigned long)loopMaxUs);
         if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
         Serial.println(b);
         ctrlMaxJitterUs = 0;
+        loopMaxUs = 0;
 
     } else if (kw == "TUNE") {
         // TUNE              — start a step test (default step size).
@@ -1377,6 +1400,7 @@ void tuneStep(uint32_t dtMs) {
 // Loop
 // ===========================================================================
 void loop() {
+    uint32_t loopStartUs = micros();
     esp_task_wdt_reset();
     webSocket.loop();
 
@@ -1443,11 +1467,33 @@ void loop() {
         displayUpdate();
         flagDisplayUpdate = false;
     }
+
+    // Worst-pass watch (see loopMaxUs declaration): how long this pass kept
+    // the cooperative loop dark.
+    uint32_t loopDurUs = micros() - loopStartUs;
+    if (loopDurUs > loopMaxUs) loopMaxUs = loopDurUs;
 }
 
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.8.0  2026-07-02  MAX31865 direct-register driver (max31865_direct.h),
+//                     replacing the Adafruit library on the RTD path (F2/F10).
+//                     The library's temperature() was a blocking one-shot
+//                     (~75 ms of delay() per read, VBIAS toggled off after,
+//                     fault register cleared on entry), which stalled the
+//                     cooperative loop ~150 ms per 250 ms sensor cycle and
+//                     defeated the continuous-mode design serviceRtd() was
+//                     written against. The chip now genuinely runs in
+//                     auto-convert mode (VBIAS|AUTO, 60 Hz notch, conversions
+//                     free-running); reads are microsecond register accesses;
+//                     the VBIAS re-assert stall guard is real again; on-chip
+//                     fault thresholds are armed to the plausibility window so
+//                     out-of-range conversions latch evidence on silicon; the
+//                     per-sample RTD fault bit feeds the robust-read layer.
+//                     STAT gains loopMaxUs (worst single loop() pass) — the old
+//                     jitter metric couldn't see in-pass blocking. MAX31855
+//                     path unchanged (verified free-running/non-blocking).
 // v0.7.0  2026-07-02  Safety hardening (review findings F1/F3/F6/F8, see
 //                     state-archive.md). Boot dimmer sync: heat forced to 0 and
 //                     the fan's actual level adopted at startup, so an MCU-only
