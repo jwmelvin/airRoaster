@@ -178,6 +178,30 @@
 
   <div class="tune-grid" style="margin-top:0.8em">
     <div>
+      <h3>Setpoint</h3>
+      °C <input class="num" id="svIn">
+      <button class="primary" onclick="sendWith('INLET','svIn')">INLET</button>
+      <button onclick="send('INLET OFF')">OFF</button>
+    </div>
+    <div>
+      <h3>Manual</h3>
+      heat <input class="num" id="mHeat"> <button onclick="sendWith('OT1','mHeat')">OT1</button><br>
+      <span style="display:inline-block; margin-top:0.3em">fan</span>
+      <input class="num" id="mFan"> <button onclick="sendWith('OT2','mFan')">OT2</button>
+      <div style="margin-top:0.4em">
+        <span class="kv">fan:</span>
+        <button onclick="send('OT2 0')">0</button>
+        <button onclick="send('OT2 50')">50</button>
+        <button onclick="send('OT2 55')">55</button>
+        <button onclick="send('OT2 60')">60</button>
+        <button onclick="send('OT2 DOWN')">−</button>
+        <button onclick="send('OT2 UP')">+</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="tune-grid" style="margin-top:0.8em">
+    <div>
       <h3>PID</h3>
       kp <input class="num" id="pKp"> ki <input class="num" id="pKi"> kd <input class="num" id="pKd" value="0">
       <button onclick="sendPid()">Set</button>
@@ -208,30 +232,18 @@
         <button id="applyCons" onclick="applyCons()" disabled>Apply cons</button>
       </div>
     </div>
-    <div>
-      <h3>Setpoint</h3>
-      °C <input class="num" id="svIn">
-      <button class="primary" onclick="sendWith('INLET','svIn')">INLET</button>
-      <button onclick="send('INLET OFF')">OFF</button>
-      <div style="margin-top:0.6em">
-        <h3>Manual</h3>
-        heat <input class="num" id="mHeat"> <button onclick="sendWith('OT1','mHeat')">OT1</button><br>
-        <span style="display:inline-block; margin-top:0.3em">fan</span>
-        <input class="num" id="mFan"> <button onclick="sendWith('OT2','mFan')">OT2</button>
-      </div>
-    </div>
+  </div>
+
+  <div class="tune-grid" style="margin-top:0.8em">
     <div>
       <h3>Interlock</h3>
       <button id="ilHardBtn" onclick="send('IL HARD')">Hard</button>
       <button id="ilSoftBtn" onclick="send('IL SOFT')">Soft</button>
       <button onclick="send('IL')">Read</button>
-      <div style="margin-top:0.4em">
-        fan min <input class="num" id="iFanMin">
-        fan full <input class="num" id="iFanFull"><br>
-        <span style="display:inline-block; margin-top:0.3em">heat@min %</span>
-        <input class="num" id="iHeatMin">
-        <button onclick="sendIL()">Set</button>
-      </div>
+      fan min <input class="num" id="iFanMin">
+      fan full <input class="num" id="iFanFull">
+      heat@min % <input class="num" id="iHeatMin">
+      <button onclick="sendIL()">Set</button>
       <div class="kv" style="margin-top:0.3em">heat blocked below fan&nbsp;min; soft mode
         ramps the cap from heat@min to 100% at fan&nbsp;full. Saved to NVS.</div>
     </div>
