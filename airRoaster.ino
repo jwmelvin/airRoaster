@@ -15,11 +15,12 @@
 #include <Adafruit_MAX31855.h>
 #include <Adafruit_MAX31865.h>
 #include <Preferences.h>   // NVS-backed persistence of the tuning set
+#include <esp_task_wdt.h>  // task watchdog (a hung loop with heat on is the worst case)
 
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.6.0"
+#define FW_VERSION  "0.7.0"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -79,6 +80,11 @@
 #define IL_FAN_FULL     55   // fan level at or above which heat is unrestricted
 #define IL_HEAT_AT_MIN  30   // heat cap (%) when fan is exactly at IL_FAN_MIN (soft mode)
 
+// Safety guards
+#define WDT_TIMEOUT_MS      8000    // task watchdog: panic->reset if loop() hangs this long
+#define INLET_PV_STALE_MS   3000    // closed loop / tune abort if the inlet PV is older than this
+#define INLET_OVERTEMP_C    280.0f  // closed loop aborts above this inlet temp (matches tune abort)
+
 // ---------------------------------------------------------------------------
 // Inlet-temperature control (closed loop) — see the control section below and
 // work.md for the design. Cooperative for now: controlStep() runs on a fixed
@@ -119,6 +125,11 @@ bool    interlockSoft = false;   // false = hard (binary), true = soft (linear r
 float btTemp  = 0.0;  // bean temp  — MAX31865 PT1000 (°C)
 float etTemp  = 0.0;  // exhaust/ET — MAX31865 PT1000 (°C)
 float inTemp  = 0.0;  // inlet temp — MAX31855 thermocouple (°C)
+
+// Freshness stamp of the last *accepted* inlet reading. The hold-last-good
+// policy means inTemp can be a frozen value during a fault; anything closing a
+// loop on inTemp must check this age, never the value alone.
+uint32_t inLastGoodMs = 0;
 
 String inputBuffer = "";
 volatile bool flagDisplayUpdate;
@@ -393,6 +404,7 @@ void updateSensors() {
     double tc = tcIN.readCelsius();
     if (!isnan(tc)) {
         inTemp = (float)tc;
+        inLastGoodMs = millis();
         tcINfault.badCount = 0;
         tcINfault.faulted  = false;
     } else {
@@ -458,6 +470,19 @@ void setup() {
     // in force the moment control can engage.
     loadTuning();
 
+    // Task watchdog on the loop task. A hang with the heater energized is the
+    // worst failure mode; panic->reset is safe because the boot dimmer sync
+    // below re-zeros the heat after any reset. The IDF may have already started
+    // the WDT (watching idle tasks only), so reconfigure first, init as fallback.
+    {
+        esp_task_wdt_config_t wdtCfg;
+        wdtCfg.timeout_ms    = WDT_TIMEOUT_MS;
+        wdtCfg.idle_core_mask = 0;
+        wdtCfg.trigger_panic  = true;
+        if (esp_task_wdt_reconfigure(&wdtCfg) != ESP_OK) esp_task_wdt_init(&wdtCfg);
+        esp_task_wdt_add(NULL);
+    }
+
     // Display init
     display.begin(0x3C, true);
     display.clearDisplay();
@@ -470,6 +495,20 @@ void setup() {
     initDL(HEAT_ADDR);
     initDL(FAN_ADDR);
 
+    // Boot dimmer sync. After an MCU-only reset (crash / WDT / brownout) the
+    // dimmers may still hold their last levels while firmware state restarts at
+    // zero — and applyInterlock() only writes on change, so the mismatch would
+    // persist silently. Kill the heat unconditionally; adopt the fan's actual
+    // level so a hot roaster keeps its cooling airflow after a mid-roast reset.
+    if (!setLevel(HEAT_ADDR, 0)) logError("boot: heat zero write failed");
+    {
+        int fl = getLevel(FAN_ADDR);
+        if (fl > 0 && fl <= 100) {
+            fanLevel = (uint8_t)fl;
+            Serial.printf("boot: adopted running fan level %u\n", fanLevel);
+        }
+    }
+
     // Sensor init
     initSensors();
 
@@ -477,6 +516,7 @@ void setup() {
     Serial.print("Connecting to WiFi");
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     while (WiFi.status() != WL_CONNECTED) {
+        esp_task_wdt_reset();   // connect can exceed the WDT timeout legitimately
         delay(500);
         Serial.print(".");
     }
@@ -756,6 +796,32 @@ void checkDLError(uint8_t addr) {
     }
 }
 
+// Rate-limited log for failed level writes. The caller leaves its cached level
+// unchanged on failure, so the write is retried naturally (applyInterlock runs
+// every loop); this only keeps the retry storm out of the 8-entry error log.
+void logDimmerWriteFail(uint8_t addr) {
+    static uint32_t lastMs = 0;
+    uint32_t now = millis();
+    if (lastMs != 0 && now - lastMs < 5000) return;
+    lastMs = now;
+    char msg[48];
+    snprintf(msg, sizeof(msg), "DimmerLink 0x%02X level write failed", addr);
+    logError(msg);
+}
+
+// Readback audit (called from the 5 s poll): the level the module actually
+// holds must match what we believe we set. A mismatch means a missed write or
+// a module that reset itself (losing curve config too) — log, re-assert both.
+void auditDLLevel(uint8_t addr, uint8_t expected) {
+    int actual = getLevel(addr);
+    if (actual < 0 || actual == expected) return;
+    char msg[56];
+    snprintf(msg, sizeof(msg), "DimmerLink 0x%02X level %d != expected %u", addr, actual, expected);
+    logError(msg);
+    setCurve(addr, 1);            // a self-reset also reverts the curve
+    setLevel(addr, expected);
+}
+
 // ===========================================================================
 // Interlock
 // ===========================================================================
@@ -772,10 +838,15 @@ void applyInterlock() {
     uint8_t cap = interlockCap();
     uint8_t effective = (requestedHeatLevel < cap) ? requestedHeatLevel : cap;
     if (effective != heatLevel) {
-        heatLevel = effective;
-        setLevel(HEAT_ADDR, heatLevel);
-        checkDLError(HEAT_ADDR);
-        flagDisplayUpdate = true;
+        // Commit the cached level only when the hardware acknowledged the write;
+        // on failure the stale cache makes this branch retry every loop.
+        if (setLevel(HEAT_ADDR, effective)) {
+            heatLevel = effective;
+            checkDLError(HEAT_ADDR);
+            flagDisplayUpdate = true;
+        } else {
+            logDimmerWriteFail(HEAT_ADDR);
+        }
     }
 }
 
@@ -849,16 +920,23 @@ void processCommand(String cmd, int8_t clientNum) {
         if (n < 2) return;
         String param = tokens[1];
         param.toUpperCase();
+        uint8_t newFan = fanLevel;
         if (param == "UP") {
-            fanLevel = (fanLevel + DUTY_STEP > 100) ? 100 : fanLevel + DUTY_STEP;
+            newFan = (fanLevel + DUTY_STEP > 100) ? 100 : fanLevel + DUTY_STEP;
         } else if (param == "DOWN") {
-            fanLevel = (fanLevel >= DUTY_STEP) ? fanLevel - DUTY_STEP : 0;
+            newFan = (fanLevel >= DUTY_STEP) ? fanLevel - DUTY_STEP : 0;
         } else {
             int duty = param.toInt();
-            if (duty >= 0 && duty <= 100) fanLevel = (uint8_t)duty;
+            if (duty >= 0 && duty <= 100) newFan = (uint8_t)duty;
         }
-        setLevel(FAN_ADDR, fanLevel);
-        checkDLError(FAN_ADDR);
+        // Commit only on an acknowledged write: the interlock caps heat from
+        // fanLevel, so it must track what the fan hardware actually received.
+        if (setLevel(FAN_ADDR, newFan)) {
+            fanLevel = newFan;
+            checkDLError(FAN_ADDR);
+        } else {
+            logDimmerWriteFail(FAN_ADDR);
+        }
         flagDisplayUpdate = true;
         applyInterlock();
         broadcastStatus();
@@ -1027,11 +1105,31 @@ void engageInlet(float sv) {
     ctrlMode  = MODE_INLET;
 }
 
+// Failsafe: drop out of closed loop to heat 0 (fan keeps running — with the
+// heater off, airflow only cools). Used when the loop can no longer trust its
+// PV: the hold-last-good policy means a faulted sensor presents a frozen,
+// plausible-looking inTemp, and the integrator would wind against it forever.
+static void inletFailsafe(const char *why) {
+    ctrlMode = MODE_MANUAL;
+    requestedHeatLevel = 0;
+    applyInterlock();
+    char msg[48];
+    snprintf(msg, sizeof(msg), "inlet failsafe: %s", why);
+    logError(msg);
+    flagDisplayUpdate = true;
+    broadcastStatus();
+}
+
 // One control iteration. dtMs is the measured interval since the last call, so
 // timing jitter doesn't bias the integral/derivative.
 void controlStep(uint32_t dtMs) {
     if (ctrlMode == MODE_TUNE) { tuneStep(dtMs); return; }
     if (ctrlMode != MODE_INLET) { ctrlPrimed = false; return; }
+
+    // Guard the PV before using it: stale (sensor faulted, value frozen by
+    // hold-last-good) or over-temp both mean the loop must let go.
+    if (millis() - inLastGoodMs > INLET_PV_STALE_MS) { inletFailsafe("inlet PV stale");   return; }
+    if (inTemp > INLET_OVERTEMP_C)                   { inletFailsafe("inlet over-temp"); return; }
 
     float dt = dtMs * 0.001f;
     if (dt <= 0.0f) return;
@@ -1213,6 +1311,7 @@ void tuneStep(uint32_t dtMs) {
     const uint16_t settleSamples = (TUNE_SETTLE_SECS * 1000) / TUNE_SAMPLE_MS;
 
     if (inTemp > TUNE_TEMP_ABORT_C) { abortTune("over-temp"); return; }
+    if (millis() - inLastGoodMs > INLET_PV_STALE_MS) { abortTune("inlet PV stale"); return; }
 
     switch (tunePhase) {
 
@@ -1278,6 +1377,7 @@ void tuneStep(uint32_t dtMs) {
 // Loop
 // ===========================================================================
 void loop() {
+    esp_task_wdt_reset();
     webSocket.loop();
 
     // Serial commands
@@ -1324,12 +1424,14 @@ void loop() {
         controlStep(ctrlDt);
     }
 
-    // Periodic DimmerLink error poll (every 5 s)
+    // Periodic DimmerLink error poll + level readback audit (every 5 s)
     static uint32_t lastErrorPoll = 0;
     if (now - lastErrorPoll >= 5000) {
         lastErrorPoll = now;
         checkDLError(HEAT_ADDR);
         checkDLError(FAN_ADDR);
+        auditDLLevel(HEAT_ADDR, heatLevel);
+        auditDLLevel(FAN_ADDR, fanLevel);
     }
 
     // Recheck interlock every loop in case fan level changed outside OT2
@@ -1346,6 +1448,20 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.7.0  2026-07-02  Safety hardening (review findings F1/F3/F6/F8, see
+//                     state-archive.md). Boot dimmer sync: heat forced to 0 and
+//                     the fan's actual level adopted at startup, so an MCU-only
+//                     reset (crash/WDT/brownout) can't leave the heater running
+//                     against zeroed firmware state. Inlet failsafe: MODE_INLET
+//                     drops to manual at heat 0 on stale PV (>3 s without an
+//                     accepted inlet reading — hold-last-good would otherwise
+//                     feed the integrator a frozen value) or over-temp (280 C);
+//                     TUNE gains the same stale-PV abort. Dimmer level writes
+//                     are now commit-on-ack: the cached level only updates when
+//                     the I2C write succeeds, so failures retry every loop, with
+//                     rate-limited logging; a 5 s readback audit re-asserts
+//                     level+curve if the module state drifts (self-reset).
+//                     Task watchdog (8 s, panic->reset) on the loop task.
 // v0.6.0  2026-06-29  Persist the tuning set (PID gains + feedforward params) in
 //                     NVS flash via the Preferences library. loadTuning() at
 //                     boot restores stored values over the compile-time
