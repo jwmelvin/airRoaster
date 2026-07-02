@@ -4,69 +4,259 @@
 <meta charset="UTF-8">
 <title>airRoaster dashboard</title>
 <style>
-  body { font-family: sans-serif; padding: 1em; max-width: 700px; }
-  #out { background: #1e1e1e; color: #d4d4d4; padding: 1em; min-height: 200px;
-         font-family: monospace; font-size: 0.85em; white-space: pre-wrap;
-         border-radius: 4px; margin-top: 0.75em; }
-  .error  { color: #f48771; }
-  .log    { color: #9cdcfe; }
-  .status { color: #b5cea8; }
-  .other  { color: #d4d4d4; }
-  input  { font-size: 1em; padding: 0.3em 0.5em; width: 160px; }
-  #cmd   { width: 280px; }
-  button { font-size: 1em; padding: 0.3em 0.8em; margin-left: 0.4em; cursor: pointer; }
-  .cmdbar { margin-top: 0.75em; }
-  .quick  { margin-top: 0.5em; }
-  .quick button { margin: 0.15em 0.3em 0.15em 0; font-size: 0.85em; padding: 0.2em 0.6em; }
-  .quick .sep { color: #888; font-size: 0.8em; margin: 0 0.2em 0 0.6em; }
-  .sent { color: #c586c0; }
-  details.commission { margin-top: 1em; border: 1px solid #ccc; border-radius: 4px; padding: 0.4em 0.8em; }
-  details.commission summary { font-weight: bold; cursor: pointer; }
+  :root {
+    --bg: #f5f5f4; --panel: #ffffff; --border: #d6d3d1; --text: #292524;
+    --muted: #78716c; --accent: #0369a1;
+    --ok: #4ec94e; --bad: #e5484d; --warn: #d97706;
+    --con-bg: #1e1e1e; --con-text: #d4d4d4;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 1em;
+         background: var(--bg); color: var(--text); max-width: 1100px; }
+  h2 { margin: 0 0 0.5em 0; font-size: 1.2em; }
+  h3 { margin: 0 0 0.5em 0; font-size: 0.95em; color: var(--muted);
+       text-transform: uppercase; letter-spacing: 0.05em; }
+  .panel { background: var(--panel); border: 1px solid var(--border);
+           border-radius: 6px; padding: 0.75em 1em; margin-top: 0.75em; }
+  .row { display: flex; gap: 0.75em; flex-wrap: wrap; }
+  .row > .panel { flex: 1 1 260px; margin-top: 0.75em; }
+  input, select { font-size: 0.95em; padding: 0.25em 0.4em; border: 1px solid var(--border);
+          border-radius: 4px; background: #fff; color: var(--text); }
+  input.num { width: 70px; }
+  button { font-size: 0.9em; padding: 0.3em 0.7em; cursor: pointer; border-radius: 4px;
+           border: 1px solid var(--border); background: #fafaf9; }
+  button:hover { background: #e7e5e4; }
+  button.danger { border-color: var(--bad); color: var(--bad); }
+  button.primary { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  label.chk { font-size: 0.85em; margin-right: 0.6em; white-space: nowrap; }
+
+  /* connection bar */
+  #topbar { display: flex; align-items: center; gap: 0.5em; flex-wrap: wrap; }
+  #indicator { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+               background: #888; }
+  #indicator.open { background: var(--ok); }
+  #indicator.closed { background: var(--bad); }
+  #status-text { font-size: 0.85em; color: var(--muted); }
+
+  /* status + temps */
+  .mode-badge { display: inline-block; padding: 0.1em 0.6em; border-radius: 10px;
+                font-size: 0.85em; font-weight: 600; background: #e7e5e4; }
+  .mode-badge.inlet { background: #dbeafe; color: #1d4ed8; }
+  .mode-badge.tune  { background: #fef3c7; color: #b45309; }
+  .bar { position: relative; background: #e7e5e4; border-radius: 4px; height: 16px;
+         overflow: hidden; margin: 2px 0 6px 0; }
+  .bar .fill { position: absolute; left: 0; top: 0; bottom: 0; background: #fca5a5; }
+  .bar .req  { position: absolute; top: 0; bottom: 0; width: 2px; background: #7f1d1d; }
+  .bar.fan .fill { background: #93c5fd; }
+  .bar .lbl { position: absolute; right: 4px; top: 0; font-size: 0.75em; line-height: 16px; }
+  .kv { font-size: 0.85em; color: var(--muted); }
+  .kv b { color: var(--text); font-weight: 600; }
+  .temp-big { font-size: 1.7em; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .temp-cell { text-align: center; flex: 1; }
+  .temp-cell .name { font-size: 0.8em; color: var(--muted); }
+  .flt { display: none; font-size: 0.7em; color: #fff; background: var(--bad);
+         border-radius: 8px; padding: 0 0.5em; }
+  .flt.on { display: inline-block; }
+
+  /* chart */
+  #chart { width: 100%; height: 300px; display: block; background: #fff;
+           border: 1px solid var(--border); border-radius: 4px; }
+  .chart-ctl { display: flex; gap: 0.6em; align-items: center; flex-wrap: wrap;
+               margin-top: 0.4em; font-size: 0.85em; }
+  .legend span { display: inline-block; margin-right: 0.8em; }
+  .legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle;
+              margin-right: 4px; }
+
+  /* tuning */
+  .tune-grid { display: flex; gap: 1.5em; flex-wrap: wrap; }
+  .tune-grid > div { min-width: 220px; }
+  .terms { font-family: ui-monospace, monospace; font-size: 0.85em; }
+  #tuneResult { font-family: ui-monospace, monospace; font-size: 0.82em;
+                background: #fafaf9; border: 1px solid var(--border); border-radius: 4px;
+                padding: 0.4em 0.6em; margin-top: 0.4em; white-space: pre-wrap; }
+
+  /* console */
+  #out { background: var(--con-bg); color: var(--con-text); padding: 0.6em 0.8em;
+         height: 260px; overflow-y: auto; font-family: ui-monospace, monospace;
+         font-size: 0.8em; white-space: pre-wrap; border-radius: 4px; margin-top: 0.5em; }
+  #out .error  { color: #f48771; }
+  #out .log    { color: #9cdcfe; }
+  #out .status { color: #b5cea8; }
+  #out .telem  { color: #6b7280; }
+  #out .report { color: #dcd0a5; }
+  #out .sent   { color: #c586c0; }
+  #out .other  { color: #d4d4d4; }
+  #out .ts     { color: #6b7280; }
+  #cmd { width: 300px; }
+
+  details.commission { margin-top: 0.75em; border: 1px solid var(--border);
+                       border-radius: 6px; padding: 0.4em 0.9em; background: var(--panel); }
+  details.commission summary { font-weight: 600; cursor: pointer; }
   details.commission ol { padding-left: 1.4em; }
   details.commission li { margin: 0.7em 0; }
-  details.commission .desc { font-size: 0.85em; color: #555; display: block; margin-bottom: 0.3em; }
-  details.commission input { width: 70px; }
+  details.commission .desc { font-size: 0.85em; color: var(--muted); display: block;
+                             margin-bottom: 0.3em; }
   details.commission code { background: #eee; padding: 0 0.3em; border-radius: 3px; }
-  #indicator { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
-               background: #888; margin-left: 0.6em; vertical-align: middle; }
-  #indicator.open   { background: #4ec94e; }
-  #indicator.closed { background: #f48771; }
 </style>
 </head>
 <body>
-<h2>airRoaster WebSocket console</h2>
 
-<input id="ip" placeholder="192.168.1.x" />
-<button onclick="connect()">Connect</button>
-<button onclick="clearOut()">Clear</button>
-<span id="indicator" class="closed"></span>
-<span id="status-text" style="font-size:0.85em; color:#888; margin-left:0.4em">disconnected</span>
+<h2>airRoaster dashboard</h2>
 
-<div class="cmdbar">
-  <input id="cmd" placeholder="type a command, e.g. PID 1.5 0.05 0" autocomplete="off" />
-  <button onclick="sendInput()">Send</button>
-</div>
-
-<div class="quick">
-  <span class="sep">report:</span>
-  <button onclick="send('LOG')">LOG</button>
-  <button onclick="send('PID')">PID</button>
-  <button onclick="send('FF')">FF</button>
-  <button onclick="send('STAT')">STAT</button>
-  <span class="sep">feedforward:</span>
-  <button onclick="send('FF CAL')">FF CAL</button>
-  <button onclick="send('FF OFF')">FF OFF</button>
-  <span class="sep">tune:</span>
-  <button onclick="send('TUNE')">TUNE</button>
-  <button onclick="send('TUNE APPLY')">TUNE APPLY</button>
-  <button onclick="send('TUNE ABORT')">TUNE ABORT</button>
-  <span class="sep">inlet:</span>
+<!-- ======================= connection ======================= -->
+<div class="panel" id="topbar">
+  <input id="ip" placeholder="192.168.1.x" />
+  <button id="btnConnect" class="primary" onclick="toggleConnect()">Connect</button>
+  <label class="chk"><input type="checkbox" id="autoRe" checked> auto-reconnect</label>
+  <span id="indicator" class="closed"></span>
+  <span id="status-text">disconnected</span>
+  <span style="flex:1"></span>
+  <button class="danger" onclick="send('OT1 0')" title="heat to zero">HEAT 0</button>
   <button onclick="send('INLET OFF')">INLET OFF</button>
-  <span class="sep">safety:</span>
-  <button onclick="send('IL')">IL</button>
-  <button onclick="send('OT1 0')">HEAT 0</button>
+  <button onclick="send('TUNE ABORT')">TUNE ABORT</button>
 </div>
 
+<div class="row">
+  <!-- ======================= status ======================= -->
+  <div class="panel">
+    <h3>Status</h3>
+    <div>
+      <span class="mode-badge" id="modeBadge">—</span>
+      <span class="kv" id="svText"></span>
+    </div>
+    <div style="margin-top:0.6em">
+      <div class="kv">Heat <b id="heatText">–</b>% (req <span id="heatReqText">–</span>%)</div>
+      <div class="bar"><div class="fill" id="heatFill" style="width:0%"></div>
+        <div class="req" id="heatReqMark" style="left:0%"></div></div>
+      <div class="kv">Fan <b id="fanText">–</b>%</div>
+      <div class="bar fan"><div class="fill" id="fanFill" style="width:0%"></div></div>
+      <div class="kv">Interlock: <b id="ilText">–</b></div>
+    </div>
+  </div>
+
+  <!-- ======================= temperatures ======================= -->
+  <div class="panel">
+    <h3>Temperatures (°C)</h3>
+    <div class="row" style="gap:0.4em">
+      <div class="temp-cell"><div class="name">Inlet (IN) <span class="flt" id="fltIN">FAULT</span></div>
+        <div class="temp-big" id="tIN">–</div></div>
+      <div class="temp-cell"><div class="name">Bean (BT) <span class="flt" id="fltBT">FAULT</span></div>
+        <div class="temp-big" id="tBT">–</div></div>
+      <div class="temp-cell"><div class="name">Exhaust (ET)</div>
+        <div class="temp-big" id="tET">–</div></div>
+    </div>
+    <div class="kv" style="margin-top:0.5em">SV <b id="tSV">–</b> &nbsp;·&nbsp;
+      last telem <span id="telemAge">–</span></div>
+  </div>
+</div>
+
+<!-- ======================= tuning chart ======================= -->
+<div class="panel">
+  <h3>Inlet control</h3>
+  <canvas id="chart"></canvas>
+  <div class="chart-ctl">
+    <span class="legend">
+      <span><i style="background:#dc2626"></i>IN</span>
+      <span><i style="background:#dc2626; background-image:repeating-linear-gradient(90deg,#dc2626 0 4px,transparent 4px 8px)"></i>SV</span>
+      <span><i style="background:#f59e0b"></i>heat %</span>
+      <span><i style="background:#2563eb"></i>fan %</span>
+      <span><i style="background:#84532f"></i>BT</span>
+    </span>
+    window
+    <select id="chartWin">
+      <option value="300">5 min</option>
+      <option value="900" selected>15 min</option>
+      <option value="1800">30 min</option>
+      <option value="3600">60 min</option>
+    </select>
+    <label class="chk"><input type="checkbox" id="chartPause"> pause</label>
+    <label class="chk"><input type="checkbox" id="chartBT" checked> BT</label>
+    <button onclick="exportCSV()">Export CSV</button>
+    <button onclick="chartData.length=0; drawChart()">Clear</button>
+  </div>
+
+  <div class="tune-grid" style="margin-top:0.8em">
+    <div>
+      <h3>PID</h3>
+      kp <input class="num" id="pKp"> ki <input class="num" id="pKi"> kd <input class="num" id="pKd" value="0">
+      <button onclick="sendPid()">Set</button>
+      <button onclick="send('PID')">Read</button>
+      <div class="terms" style="margin-top:0.5em">
+        P <span id="termP">–</span> · I <span id="termI">–</span> ·
+        D <span id="termD">–</span> · FF <span id="termFF">–</span>
+      </div>
+    </div>
+    <div>
+      <h3>Feedforward</h3>
+      ffK <input class="num" id="fK"> <button onclick="sendWith('FF','fK')">Set</button>
+      <button onclick="send('FF')">Read</button><br>
+      <span style="font-size:0.85em">amb °C</span> <input class="num" id="fAmb">
+      <button onclick="sendAmb()">FF AMB</button>
+      <button onclick="send('FF CAL')">CAL</button>
+      <button onclick="send('FF OFF')">OFF</button>
+      <div class="kv" style="margin-top:0.3em">blank amb = use cold-junction temp</div>
+    </div>
+    <div>
+      <h3>Step test</h3>
+      step % <input class="num" id="tuneStep" value="15">
+      <button onclick="sendWith('TUNE','tuneStep')">TUNE</button>
+      <button onclick="send('TUNE ABORT')">Abort</button>
+      <div id="tuneResult">no result yet</div>
+      <div style="margin-top:0.3em">
+        <button id="applyTight" onclick="send('TUNE APPLY')" disabled>Apply tight</button>
+        <button id="applyCons" onclick="applyCons()" disabled>Apply cons</button>
+      </div>
+    </div>
+    <div>
+      <h3>Setpoint</h3>
+      °C <input class="num" id="svIn">
+      <button class="primary" onclick="sendWith('INLET','svIn')">INLET</button>
+      <button onclick="send('INLET OFF')">OFF</button>
+      <div style="margin-top:0.6em">
+        <h3>Manual</h3>
+        heat <input class="num" id="mHeat"> <button onclick="sendWith('OT1','mHeat')">OT1</button><br>
+        <span style="display:inline-block; margin-top:0.3em">fan</span>
+        <input class="num" id="mFan"> <button onclick="sendWith('OT2','mFan')">OT2</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= console ======================= -->
+<div class="panel">
+  <h3>Console</h3>
+  <div>
+    <input id="cmd" placeholder="type a command, e.g. PID 1.5 0.05 0" autocomplete="off" />
+    <button onclick="sendInput()">Send</button>
+    <button onclick="send('LOG')">LOG</button>
+    <button onclick="send('STAT')">STAT</button>
+    <button onclick="send('IL')">IL</button>
+    <button onclick="send('TELEM')">TELEM</button>
+  </div>
+  <div style="margin-top:0.5em">
+    show:
+    <label class="chk"><input type="checkbox" class="fcls" value="sent" checked> sent</label>
+    <label class="chk"><input type="checkbox" class="fcls" value="status" checked> status</label>
+    <label class="chk"><input type="checkbox" class="fcls" value="telem"> telem</label>
+    <label class="chk"><input type="checkbox" class="fcls" value="report" checked> reports</label>
+    <label class="chk"><input type="checkbox" class="fcls" value="error" checked> errors</label>
+    <label class="chk"><input type="checkbox" class="fcls" value="log" checked> log</label>
+    <label class="chk"><input type="checkbox" class="fcls" value="other" checked> other</label>
+    filter <input id="ftext" placeholder="text" style="width:120px">
+    <span style="float:right">
+      <button onclick="saveLog()">Save log</button>
+      <button onclick="clearOut()">Clear</button>
+    </span>
+  </div>
+  <div id="out"></div>
+  <div class="kv" style="margin-top:0.3em">
+    The device error log holds only 8 entries in RAM — this console buffer
+    (<span id="bufCount">0</span> lines) is the durable record; save it before closing.
+  </div>
+</div>
+
+<!-- ======================= commissioning ======================= -->
 <details class="commission">
   <summary>Commissioning sequence</summary>
   <ol>
@@ -76,86 +266,107 @@
     </li>
     <li>
       <span class="desc"><b>Sanity.</b> Stay in manual; confirm sensors/OLED/Artisan behave. After a
-      few minutes read control-cadence jitter (expect single-digit ms).</span>
+      few minutes read the load counters (jitter and worst loop pass, µs).</span>
       <button onclick="send('STAT')">STAT</button>
     </li>
     <li>
       <span class="desc"><b>Characterize.</b> Set fan, set a moderate heat, let it settle, then step-test.</span>
-      Fan <input id="cFan" value="57" /> <button onclick="sendWith('OT2','cFan')">OT2</button>
-      Heat <input id="cHeat" value="40" /> <button onclick="sendWith('OT1','cHeat')">OT1</button>
+      Fan <input class="num" id="cFan" value="57" /> <button onclick="sendWith('OT2','cFan')">OT2</button>
+      Heat <input class="num" id="cHeat" value="40" /> <button onclick="sendWith('OT1','cHeat')">OT1</button>
       <button onclick="send('TUNE')">TUNE</button>
-      <span class="desc">Read the result; eyeball dT/Kp/tau/theta for sanity.</span>
+      <span class="desc">Read the result; eyeball dT/Kp/tau/theta for sanity, and check it settled.</span>
     </li>
     <li>
-      <span class="desc"><b>Apply gains.</b> Use the tight suggestion, or set the conservative set by hand if tight looks twitchy.</span>
+      <span class="desc"><b>Apply gains.</b> Tight suggestion, or the conservative set if tight looks twitchy.</span>
       <button onclick="send('TUNE APPLY')">TUNE APPLY</button>
-      &nbsp;or&nbsp; kp <input id="cKp" /> ki <input id="cKi" /> kd <input id="cKd" value="0" />
-      <button onclick="sendPid()">PID</button>
     </li>
     <li>
-      <span class="desc"><b>Calibrate feedforward.</b> Still steady: set ambient, then auto-calibrate.</span>
-      Amb &deg;C <input id="cAmb" /> <button onclick="sendWith('FF AMB','cAmb')">FF AMB</button>
+      <span class="desc"><b>Calibrate feedforward.</b> Still steady: set ambient (blank = cold junction), then calibrate.</span>
+      Amb °C <input class="num" id="cAmb" /> <button onclick="sendAmbFrom('cAmb')">FF AMB</button>
       <button onclick="send('FF CAL')">FF CAL</button>
     </li>
     <li>
       <span class="desc"><b>Close the loop.</b> Set the inlet setpoint near the current inlet temp (bumpless),
-      then nudge it and watch tracking.</span>
-      &deg;C <input id="cInlet" /> <button onclick="sendWith('INLET','cInlet')">INLET</button>
+      then nudge it and watch tracking on the chart above.</span>
+      °C <input class="num" id="cInlet" /> <button onclick="sendWith('INLET','cInlet')">INLET</button>
     </li>
     <li>
       <span class="desc"><b>The real test.</b> With the loop holding, deliberately change fan speed and confirm
       inlet temp barely moves — feedforward earning its keep. Tune from there.</span>
-      Fan <input id="cFan2" value="70" /> <button onclick="sendWith('OT2','cFan2')">OT2</button>
+      Fan <input class="num" id="cFan2" value="70" /> <button onclick="sendWith('OT2','cFan2')">OT2</button>
     </li>
   </ol>
 </details>
 
-<div id="out"></div>
-
 <script>
-let ws;
+"use strict";
+
+// ============================ connection ============================
+let ws = null;
+let wantConnect = false;     // user intent: keep retrying while true
+let retryMs = 1000;          // reconnect backoff, doubles to 15 s max
+let retryTimer = null;
+
+function toggleConnect() {
+  if (wantConnect) { wantConnect = false; if (ws) ws.close(); setConnUI(false); return; }
+  wantConnect = true;
+  connect();
+}
 
 function connect() {
   const ip = document.getElementById("ip").value.trim();
-  if (!ip) return;
-  if (ws) ws.close();
+  if (!ip) { wantConnect = false; return; }
+  clearTimeout(retryTimer);
+  if (ws) { ws.onclose = null; ws.close(); }
 
+  setStatus("connecting…", false);
   ws = new WebSocket("ws://" + ip + ":81");
 
   ws.onopen = () => {
+    retryMs = 1000;
     setStatus("connected", true);
-    log("-- connected to " + ip + " --", "other");
-    ws.send("LOG");
+    setConnUI(true);
+    logLine("-- connected to " + ip + " --", "other");
+    ws.send("LOG");   // pull the device's RAM log into the durable buffer
+    ws.send("PID");   // prefill the gain fields
+    ws.send("FF");
   };
 
   ws.onclose = () => {
     setStatus("disconnected", false);
-    log("-- disconnected --", "other");
+    logLine("-- disconnected --", "other");
+    scheduleRetry();
   };
 
-  ws.onerror = () => {
-    setStatus("error", false);
-    log("-- connection error --", "error");
-  };
+  ws.onerror = () => { setStatus("error", false); };
 
-  ws.onmessage = e => {
-    let cls = "other";
-    try {
-      const obj = JSON.parse(e.data);
-      if (obj.pushMessage === "error") cls = "error";
-      else if (obj.pushMessage === "log")    cls = "log";
-      else if (obj.pushMessage === "status") cls = "status";
-    } catch (_) {}
-    log(e.data, cls);
-  };
+  ws.onmessage = e => handleMessage(e.data);
+}
+
+function scheduleRetry() {
+  setConnUI(false);
+  if (!wantConnect || !document.getElementById("autoRe").checked) { wantConnect = false; return; }
+  setStatus("retrying in " + Math.round(retryMs / 1000) + " s", false);
+  retryTimer = setTimeout(connect, retryMs);
+  retryMs = Math.min(retryMs * 2, 15000);
+}
+
+function setConnUI(open) {
+  document.getElementById("btnConnect").textContent =
+    (open || wantConnect) ? "Disconnect" : "Connect";
+}
+
+function setStatus(text, open) {
+  document.getElementById("status-text").textContent = text;
+  document.getElementById("indicator").className = open ? "open" : "closed";
 }
 
 function send(cmd) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(cmd);
-    log("> " + cmd, "sent");
+    logLine("> " + cmd, "sent");
   } else {
-    log("not connected", "error");
+    logLine("not connected", "error");
   }
 }
 
@@ -167,57 +378,352 @@ function sendInput() {
   input.value = "";
 }
 
-// Send "<prefix> <value>" using the value from the given input field.
 function sendWith(prefix, inputId) {
   const v = document.getElementById(inputId).value.trim();
-  if (v === "") { log("(enter a value first)", "error"); return; }
+  if (v === "") { logLine("(enter a value first)", "error"); return; }
   send(prefix + " " + v);
 }
 
-// Send "PID kp ki kd" from the three gain fields.
 function sendPid() {
-  const kp = document.getElementById("cKp").value.trim();
-  const ki = document.getElementById("cKi").value.trim();
-  const kd = document.getElementById("cKd").value.trim();
-  if (kp === "" || ki === "" || kd === "") { log("(enter kp, ki, kd)", "error"); return; }
+  const kp = document.getElementById("pKp").value.trim();
+  const ki = document.getElementById("pKi").value.trim();
+  const kd = document.getElementById("pKd").value.trim();
+  if (kp === "" || ki === "" || kd === "") { logLine("(enter kp, ki, kd)", "error"); return; }
   send("PID " + kp + " " + ki + " " + kd);
 }
 
-function log(text, cls) {
+function sendAmb()          { sendAmbFrom("fAmb"); }
+function sendAmbFrom(id) {
+  const v = document.getElementById(id).value.trim();
+  send(v === "" ? "FF AMB" : "FF AMB " + v);   // blank = firmware uses cold junction
+}
+
+function applyCons() {
+  if (!lastTune || !lastTune.cons) return;
+  send("PID " + lastTune.cons.kp + " " + lastTune.cons.ki + " 0");
+}
+
+// ============================ message routing ============================
+let lastTune = null;
+let lastTelemAt = 0;
+
+function handleMessage(raw) {
+  let obj = null;
+  try { obj = JSON.parse(raw); } catch (_) {}
+
+  let cls = "other";
+  if (obj && obj.pushMessage) {
+    switch (obj.pushMessage) {
+      case "error":  cls = "error";  break;
+      case "log":    cls = "log";    break;
+      case "status": cls = "status"; applyStatus(obj.data); break;
+      case "telem":  cls = "telem";  applyTelem(obj.data);  break;
+      case "tune": case "pid": case "ff": case "stat":
+        cls = "report";
+        if (obj.pushMessage === "tune") applyTune(obj.data);
+        if (obj.pushMessage === "pid")  applyPid(obj.data);
+        if (obj.pushMessage === "ff")   applyFF(obj.data);
+        break;
+    }
+  }
+  logLine(raw, cls);
+}
+
+function applyStatus(d) {
+  if (!d) return;
+  setMode(d.mode, d.inSV);
+  setLevels(d.heat, d.heatReq, d.fan, d.ilCap, d.ilSoft);
+}
+
+function applyTelem(d) {
+  if (!d) return;
+  if (d.periodMs !== undefined) return;   // TELEM period report, not a sample
+  lastTelemAt = Date.now();
+  document.getElementById("tIN").textContent = d.IN.toFixed(1);
+  document.getElementById("tBT").textContent = d.BT.toFixed(1);
+  document.getElementById("tET").textContent = d.ET.toFixed(1);
+  document.getElementById("tSV").textContent =
+    d.mode === "inlet" ? d.sv.toFixed(1) : "–";
+  document.getElementById("fltIN").className = "flt" + (d.fltIN ? " on" : "");
+  document.getElementById("fltBT").className = "flt" + (d.fltBT ? " on" : "");
+  setMode(d.mode, d.sv);
+  setLevels(d.heat, d.heatReq, d.fan, d.ilCap, null);
+  const inCtl = d.mode === "inlet";
+  document.getElementById("termP").textContent  = inCtl ? d.p.toFixed(1)  : "–";
+  document.getElementById("termI").textContent  = inCtl ? d.i.toFixed(1)  : "–";
+  document.getElementById("termD").textContent  = inCtl ? d.d.toFixed(1)  : "–";
+  document.getElementById("termFF").textContent = inCtl ? d.ff.toFixed(1) : "–";
+
+  if (!document.getElementById("chartPause").checked) {
+    chartData.push({ t: Date.now(), IN: d.IN, BT: d.BT, sv: d.mode === "inlet" ? d.sv : null,
+                     heat: d.heat, fan: d.fan, p: d.p, i: d.i, dd: d.d, ff: d.ff, mode: d.mode });
+    if (chartData.length > 14400) chartData.splice(0, chartData.length - 14400);
+    drawChart();
+  }
+}
+
+function applyTune(d) {
+  if (!d) return;
+  const box = document.getElementById("tuneResult");
+  if (d.applied) { box.textContent = "applied: kp=" + d.kp + " ki=" + d.ki; return; }
+  if (d.ok === false) {
+    box.textContent = "FAILED: " + (d.reason || "?") +
+      (d.dT !== undefined ? "  (dT=" + d.dT + ")" : "");
+    return;
+  }
+  if (d.ok === true) {
+    lastTune = d;
+    box.textContent =
+      "model: Kp=" + d.Kp + " °C/%  tau=" + d.tau + " s  theta=" + d.theta + " s\n" +
+      "dT=" + d.dT + " °C over step " + d.step + "% at fan " + d.fan +
+      (d.settled === false ? "  ⚠ NOT SETTLED (gains likely too hot)" : "  (settled)") + "\n" +
+      "tight: kp=" + d.tight.kp + " ki=" + d.tight.ki + "\n" +
+      "cons:  kp=" + d.cons.kp + " ki=" + d.cons.ki;
+    document.getElementById("applyTight").disabled = false;
+    document.getElementById("applyCons").disabled = false;
+  }
+}
+
+function applyPid(d) {
+  if (!d || d.kp === undefined) return;
+  document.getElementById("pKp").value = d.kp;
+  document.getElementById("pKi").value = d.ki;
+  document.getElementById("pKd").value = d.kd;
+}
+
+function applyFF(d) {
+  if (!d || d.ffK === undefined) return;
+  document.getElementById("fK").value = d.ffK;
+  document.getElementById("fAmb").value = d.amb;
+}
+
+function setMode(mode, sv) {
+  const badge = document.getElementById("modeBadge");
+  badge.textContent = mode || "—";
+  badge.className = "mode-badge " + (mode || "");
+  document.getElementById("svText").textContent =
+    mode === "inlet" && sv ? " SV " + Number(sv).toFixed(1) + " °C" : "";
+}
+
+function setLevels(heat, heatReq, fan, ilCap, ilSoft) {
+  if (heat === undefined) return;
+  document.getElementById("heatText").textContent = heat;
+  document.getElementById("heatReqText").textContent = heatReq;
+  document.getElementById("fanText").textContent = fan;
+  document.getElementById("heatFill").style.width = heat + "%";
+  document.getElementById("heatReqMark").style.left = heatReq + "%";
+  document.getElementById("fanFill").style.width = fan + "%";
+  let il = "";
+  if (ilCap === 0) il = "BLOCKED (fan too low)";
+  else if (ilCap < 100) il = "capped at " + ilCap + "%";
+  else il = "ok";
+  if (ilSoft !== null && ilSoft !== undefined) il += ilSoft ? " · soft" : " · hard";
+  document.getElementById("ilText").textContent = il;
+}
+
+// ============================ console ============================
+const capture = [];          // { ts, cls, text } — the durable record
+const MAX_LINES = 8000;
+
+function logLine(text, cls) {
+  const entry = { ts: new Date(), cls: cls, text: text };
+  capture.push(entry);
+  if (capture.length > MAX_LINES) capture.splice(0, capture.length - MAX_LINES);
+  document.getElementById("bufCount").textContent = capture.length;
+  if (passesFilter(entry)) appendLine(entry);
+}
+
+function passesFilter(entry) {
+  const boxes = document.querySelectorAll(".fcls");
+  let clsOk = false;
+  boxes.forEach(b => { if (b.value === entry.cls && b.checked) clsOk = true; });
+  if (!clsOk) return false;
+  const t = document.getElementById("ftext").value.trim().toLowerCase();
+  if (t && entry.text.toLowerCase().indexOf(t) < 0) return false;
+  return true;
+}
+
+function appendLine(entry) {
   const out = document.getElementById("out");
+  const atBottom = out.scrollTop + out.clientHeight >= out.scrollHeight - 4;
   const line = document.createElement("span");
-  line.className = cls;
-  line.textContent = text + "\n";
+  line.className = entry.cls;
+  const ts = document.createElement("span");
+  ts.className = "ts";
+  ts.textContent = entry.ts.toLocaleTimeString("en-GB") + " ";
+  line.appendChild(ts);
+  line.appendChild(document.createTextNode(entry.text + "\n"));
   out.appendChild(line);
+  while (out.childNodes.length > 2000) out.removeChild(out.firstChild);
+  if (atBottom) out.scrollTop = out.scrollHeight;
+}
+
+function refilterOut() {
+  const out = document.getElementById("out");
+  out.innerHTML = "";
+  capture.forEach(e => { if (passesFilter(e)) appendLine(e); });
   out.scrollTop = out.scrollHeight;
 }
 
 function clearOut() {
+  capture.length = 0;
+  document.getElementById("bufCount").textContent = 0;
   document.getElementById("out").innerHTML = "";
 }
 
-function setStatus(text, open) {
-  document.getElementById("status-text").textContent = text;
-  const ind = document.getElementById("indicator");
-  ind.className = open ? "open" : "closed";
+function saveLog() {
+  const lines = capture.map(e =>
+    e.ts.toISOString() + " [" + e.cls + "] " + e.text);
+  download("airRoaster_log_" + fileStamp() + ".txt",
+           lines.join("\n"), "text/plain");
 }
 
-// Restore last-used IP
+function exportCSV() {
+  const rows = ["time,IN,BT,SV,heat,fan,mode,P,I,D,FF"];
+  chartData.forEach(p => rows.push(
+    new Date(p.t).toISOString() + "," + p.IN + "," + p.BT + "," +
+    (p.sv === null ? "" : p.sv) + "," + p.heat + "," + p.fan + "," + p.mode + "," +
+    p.p + "," + p.i + "," + p.dd + "," + p.ff));
+  download("airRoaster_data_" + fileStamp() + ".csv",
+           rows.join("\n"), "text/csv");
+}
+
+function download(name, content, mime) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([content], { type: mime }));
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function fileStamp() {
+  return new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19);
+}
+
+// ============================ chart ============================
+const chartData = [];   // { t, IN, BT, sv, heat, fan, p, i, dd, ff, mode }
+
+function drawChart() {
+  const cv = document.getElementById("chart");
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight || 300;
+  if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  const padL = 38, padR = 34, padT = 8, padB = 18;
+  const winS = parseInt(document.getElementById("chartWin").value, 10);
+  const now = Date.now();
+  const t0 = now - winS * 1000;
+  const pts = chartData.filter(p => p.t >= t0);
+
+  // temperature scale over visible temp series
+  let tMin = Infinity, tMax = -Infinity;
+  const showBT = document.getElementById("chartBT").checked;
+  pts.forEach(p => {
+    tMin = Math.min(tMin, p.IN); tMax = Math.max(tMax, p.IN);
+    if (p.sv !== null) { tMin = Math.min(tMin, p.sv); tMax = Math.max(tMax, p.sv); }
+    if (showBT) { tMin = Math.min(tMin, p.BT); tMax = Math.max(tMax, p.BT); }
+  });
+  if (!isFinite(tMin)) { tMin = 0; tMax = 100; }
+  const span = Math.max(tMax - tMin, 10);
+  tMin -= span * 0.08; tMax += span * 0.08;
+
+  const x = t => padL + (W - padL - padR) * (t - t0) / (winS * 1000);
+  const yT = v => padT + (H - padT - padB) * (1 - (v - tMin) / (tMax - tMin));
+  const yP = v => padT + (H - padT - padB) * (1 - v / 100);
+
+  // grid + axes
+  ctx.font = "10px system-ui";
+  ctx.strokeStyle = "#e7e5e4"; ctx.fillStyle = "#a8a29e";
+  ctx.lineWidth = 1;
+  const tStep = niceStep(tMax - tMin, 5);
+  for (let v = Math.ceil(tMin / tStep) * tStep; v <= tMax; v += tStep) {
+    ctx.beginPath(); ctx.moveTo(padL, yT(v)); ctx.lineTo(W - padR, yT(v)); ctx.stroke();
+    ctx.textAlign = "right"; ctx.fillText(v.toFixed(0), padL - 3, yT(v) + 3);
+  }
+  for (let v = 0; v <= 100; v += 25) {
+    ctx.textAlign = "left"; ctx.fillText(v + "%", W - padR + 3, yP(v) + 3);
+  }
+  // time ticks
+  const tTick = winS > 1800 ? 600 : winS > 600 ? 300 : 60;   // s
+  for (let ts = Math.ceil(t0 / (tTick * 1000)) * tTick * 1000; ts <= now; ts += tTick * 1000) {
+    ctx.textAlign = "center";
+    ctx.fillText(new Date(ts).toLocaleTimeString("en-GB").slice(0, 5), x(ts), H - 4);
+  }
+
+  if (pts.length < 2) return;
+
+  function series(get, color, axis, dash) {
+    ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+    ctx.setLineDash(dash || []);
+    ctx.beginPath();
+    let pen = false;
+    pts.forEach(p => {
+      const v = get(p);
+      if (v === null || v === undefined) { pen = false; return; }
+      const px = x(p.t), py = axis(v);
+      if (pen) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+      pen = true;
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  series(p => p.heat, "#f59e0b", yP);
+  series(p => p.fan, "#2563eb", yP);
+  if (showBT) series(p => p.BT, "#84532f", yT);
+  series(p => p.sv, "#dc2626", yT, [4, 4]);
+  series(p => p.IN, "#dc2626", yT);
+}
+
+function niceStep(range, target) {
+  const raw = range / target;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  for (const m of [1, 2, 5, 10]) if (raw <= m * mag) return m * mag;
+  return 10 * mag;
+}
+
+// telemetry freshness readout
+setInterval(() => {
+  const el = document.getElementById("telemAge");
+  if (!lastTelemAt) { el.textContent = "–"; return; }
+  const s = (Date.now() - lastTelemAt) / 1000;
+  el.textContent = s < 2 ? "live" : s.toFixed(0) + " s ago";
+  el.style.color = s > 5 ? "var(--bad)" : "";
+}, 1000);
+
+window.addEventListener("resize", drawChart);
+
+// ============================ persistence + keys ============================
 window.onload = () => {
   const saved = localStorage.getItem("airRoaster_ip");
   if (saved) document.getElementById("ip").value = saved;
+  const f = localStorage.getItem("airRoaster_filters");
+  if (f) {
+    const on = JSON.parse(f);
+    document.querySelectorAll(".fcls").forEach(b => { b.checked = on.indexOf(b.value) >= 0; });
+  }
+  drawChart();
 };
 
-document.getElementById("ip").addEventListener("change", e => {
-  localStorage.setItem("airRoaster_ip", e.target.value);
-});
+document.getElementById("ip").addEventListener("change", e =>
+  localStorage.setItem("airRoaster_ip", e.target.value));
 
-// Enter in the command box sends; in the IP box connects.
+document.querySelectorAll(".fcls").forEach(b => b.addEventListener("change", () => {
+  const on = [];
+  document.querySelectorAll(".fcls").forEach(x => { if (x.checked) on.push(x.value); });
+  localStorage.setItem("airRoaster_filters", JSON.stringify(on));
+  refilterOut();
+}));
+document.getElementById("ftext").addEventListener("input", refilterOut);
+
 document.getElementById("cmd").addEventListener("keydown", e => {
   if (e.key === "Enter") sendInput();
 });
 document.getElementById("ip").addEventListener("keydown", e => {
-  if (e.key === "Enter") connect();
+  if (e.key === "Enter") { wantConnect = true; connect(); }
 });
 </script>
 </body>
