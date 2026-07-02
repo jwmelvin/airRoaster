@@ -680,7 +680,14 @@ function drawChart() {
   const padL = 38, padR = 34, padT = 8, padB = 18;
   const winS = parseInt(document.getElementById("chartWin").value, 10);
   const now = Date.now();
-  const t0 = now - winS * 1000;
+  // Time axis autoscales to the data actually collected, up to the selected
+  // window: a young session fills the full width instead of huddling at the
+  // right edge. Floor of 60 s so the first samples don't stretch absurdly.
+  let t0 = now - winS * 1000;
+  if (chartData.length && chartData[0].t > t0) {
+    t0 = Math.min(chartData[0].t, now - 60 * 1000);
+  }
+  const spanMs = now - t0;
   const pts = chartData.filter(p => p.t >= t0);
 
   // temperature scale over visible temp series
@@ -695,7 +702,7 @@ function drawChart() {
   const span = Math.max(tMax - tMin, 10);
   tMin -= span * 0.08; tMax += span * 0.08;
 
-  const x = t => padL + (W - padL - padR) * (t - t0) / (winS * 1000);
+  const x = t => padL + (W - padL - padR) * (t - t0) / spanMs;
   const yT = v => padT + (H - padT - padB) * (1 - (v - tMin) / (tMax - tMin));
   const yP = v => padT + (H - padT - padB) * (1 - v / 100);
 
@@ -711,11 +718,13 @@ function drawChart() {
   for (let v = 0; v <= 100; v += 25) {
     ctx.textAlign = "left"; ctx.fillText(v + "%", W - padR + 3, yP(v) + 3);
   }
-  // time ticks
-  const tTick = winS > 1800 ? 600 : winS > 600 ? 300 : 60;   // s
+  // time ticks — step chosen from the *displayed* span, not the max window
+  const spanS = spanMs / 1000;
+  const tTick = spanS > 1800 ? 600 : spanS > 600 ? 300 : spanS > 180 ? 60 : 30;   // s
   for (let ts = Math.ceil(t0 / (tTick * 1000)) * tTick * 1000; ts <= now; ts += tTick * 1000) {
     ctx.textAlign = "center";
-    ctx.fillText(new Date(ts).toLocaleTimeString("en-GB").slice(0, 5), x(ts), H - 4);
+    const hhmmss = new Date(ts).toLocaleTimeString("en-GB");
+    ctx.fillText(tTick < 60 ? hhmmss : hhmmss.slice(0, 5), x(ts), H - 4);
   }
 
   if (pts.length < 2) return;
