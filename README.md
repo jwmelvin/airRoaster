@@ -142,6 +142,15 @@ feedforward's heat ∝ power assumption holds. The map is active only while the
 heat curve is RMS (`CURVE` reports `heatPowerMap`). Gains/`ffK` identified
 before v0.11.0 are in raw dimmer units — **re-run `TUNE` and `FF CAL`**.
 
+> **Quantization note.** The map's slope falls below 1 above ~25% power, so
+> some adjacent heat commands collapse to the same dimmer level (~2:1 near full
+> scale: `OT1 96` and `OT1 97` both drive level 98). This is the hardware's
+> true power resolution made visible, not a loss from the map — the DimmerLink
+> has 101 discrete V<sub>rms</sub> steps, and P ∝ V² means one step near full
+> scale spans ~2% of max power however it is commanded. In closed loop
+> (`INLET`, the normal mode) it is immaterial: the integrator dithers between
+> adjacent levels, so *average* power resolves finer than one step.
+
 Sending `OT1 <value>` (manual heat) at any time is an **instant override**: it
 drops the controller out of closed-loop mode and applies the manual level.
 

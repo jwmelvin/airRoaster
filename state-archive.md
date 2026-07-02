@@ -36,6 +36,15 @@ What landed in v0.11.0:
   *first function definition* in the sketch — defining helper functions up in
   the state section broke the build (prototypes landed above struct
   definitions). Keep function bodies below the type definitions.
+- **Quantization (user-raised, assessed benign):** the √ map's slope drops
+  below 1 above 25% power, so adjacent heat commands can collapse to one dimmer
+  level (~2:1 near full scale, intermittent pairs mid-range). This exposes the
+  hardware's real power resolution — 101 Vrms steps, P ∝ V² ⇒ ~2% of max power
+  per step near the top — rather than losing anything (pre-map, adjacent
+  commands were uniform in Vrms but spanned 0.2–4% of max power depending on
+  operating point). Immaterial in INLET mode: the integrator dithers between
+  adjacent levels, so average power resolves finer than one step. Documented in
+  README § plain-text commands.
 
 ## 2026-07-02 — Runtime-configurable interlock (v0.10.0)
 
