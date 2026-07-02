@@ -1,3 +1,7 @@
+# future work
+
+test dimmerlink curves(https://www.rbdimmer.com/docs/dimmerlink-I2CCommunication)
+
 # utilities
 
 ## Inlet-SV background generator (`artisan/make_inlet_background.py`)
