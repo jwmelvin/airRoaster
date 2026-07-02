@@ -39,7 +39,7 @@ If `secrets.h.example` does not exist yet, create `secrets.h` manually:
 
 | Constant | Default | Description |
 |----------|---------|-------------|
-| `DUTY_STEP` | `5` | Increment/decrement step for UP/DOWN commands (%) |
+| `DUTY_STEP` | `1` | Increment/decrement step for UP/DOWN commands (%) — single percent; the fan responds over a narrow band |
 | `WS_PORT` | `81` | WebSocket server port |
 | `DL_INIT_RETRY_DELAY_MS` | `500` | Delay between DimmerLink ready-check retries at startup (ms) |
 | `IL_FAN_MIN_DFLT` | `48` | Default fan level below which heat is always 0 (runtime-set via `IL`, NVS-persisted) |

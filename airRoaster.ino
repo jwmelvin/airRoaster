@@ -20,7 +20,7 @@
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.10.0"
+#define FW_VERSION  "0.10.1"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -78,7 +78,8 @@
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
-#define DUTY_STEP               5
+#define DUTY_STEP               1    // UP/DOWN step (%): the fan responds over a
+                                     // narrow band, so nudges must be fine-grained
 #define WS_PORT                 81
 #define DL_INIT_RETRY_DELAY_MS  500   // ms between initDL ready-check retries
 
@@ -1804,6 +1805,9 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.10.1 2026-07-02  DUTY_STEP 5 -> 1: OT1/OT2 UP/DOWN now nudge by a single
+//                     percent. The fan operates over a narrow, sensitive band,
+//                     so 5%-steps overshoot; absolute set commands unchanged.
 // v0.10.0 2026-07-02  Runtime-configurable interlock. IL_FAN_MIN/IL_FAN_FULL/
 //                     IL_HEAT_AT_MIN become runtime globals (compile-time
 //                     values remain as power-on defaults), persisted in NVS
