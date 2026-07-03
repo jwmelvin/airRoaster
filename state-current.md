@@ -51,8 +51,9 @@ Compile after every meaningful edit; the script surfaces sketch-local warnings.
   no sensors, and no WiFi present (log, hold safe defaults, keep serving serial).
 
 **Git.** Development happens on feature branches; `main` holds roast-tested
-firmware. Current branch: `feature/ota-updates` (branched from
-`feature/robustness-dashboard`). Commit per phase with
+firmware. `feature/ota-updates` (OTA + dimmer rework + closed-loop/FF fixes,
+v0.14.1, validated in live operation) is merged into `main`; start the next
+effort on a fresh branch off `main`. Commit per phase with
 a message naming the phase. The user's Artisan config churn (`artisan/*.aset`,
 `*.alog`) may be present in the working tree — never sweep it into a firmware
 commit; stage files explicitly.
