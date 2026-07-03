@@ -70,6 +70,20 @@ back up) — the device now runs OTA-delivered firmware. Still to check: the
 idle gate (an OTA push with heat > 0 should time out on the host, then
 succeed again at heat 0).
 
+**Validation finding → v0.13.0 (same branch).** The first hardware run of the
+v0.7 dimmer robustness code (fan 50, heat 0) exposed two DimmerLink hardware
+behaviors — register reads lie while a module is firing, and a soft reset
+drives the output FULL ON for ~3-4 s (fan visibly surged to 100%, no UI
+indication). The v0.7 reset escalation was therefore resetting a healthy
+module every 15 s; on the heat channel it would have been an uncommanded
+full-power burst, possibly with no airflow. v0.13.0 removes autonomous resets
+entirely (operator-only `DLRESET`, heat refused below interlock fan min),
+re-asserts curve+level unconditionally every 5 s (writes are the reliable
+direction), and demotes all dimmer reads to rate-limited diagnostics; level
+readback checked only at commanded-off. Full write-up:
+[hardware/emi.md](hardware/emi.md) § DimmerLink addendum. Needs on-roaster
+re-validation: fan at 50 must now run error-free and surge-free.
+
 **Robustness + dashboard development** (from the July 2026 code review) is
 **implemented through all five phases** on `feature/robustness-dashboard` —
 firmware v0.9.0, one commit per phase. Full findings and what landed:

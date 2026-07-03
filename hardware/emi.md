@@ -338,6 +338,55 @@ with the remaining supply-decoupling (item 8) and SPI-wiring (item 9) work.
 
 ---
 
+## Addendum (2026-07-02): DimmerLink — reads lie while firing; soft reset goes full-on
+
+First on-roaster run of the v0.7 dimmer robustness code (fan at 50, heat 0,
+~1 minute) exposed two hardware behaviors of the RBDimmer DimmerLink modules
+that firmware must be designed around. Observed on the fan module (0x52),
+firmware v0.12.0:
+
+**1. I2C register reads are unreliable while the module is firing (level
+1–99).** With the fan running at 50, the level register read back `0` on every
+5 s poll and the error register returned garbage (`0x31` — no such code in the
+protocol; also `0xFF` when the module didn't answer at all). The same module
+read cleanly at level 0 (before the run and immediately after `OT2 0`), and
+the heat module at level 0 stayed clean throughout. **Writes are unaffected**
+— every level/curve write ACKed and took effect. Presumably the module's
+firing ISR starves its I2C slave handling mid-cycle.
+
+**2. A soft reset (`COMMAND` = RESET) drives the output FULL ON for ~3–4 s**,
+regardless of the previously commanded level, and the module NACKs writes
+while it reboots (so a re-assert sent 20 ms after the reset is silently
+lost). Observed directly: the fan surged to what was audibly/visibly 100%
+for 3–4 s after each reset, with no indication in the firmware state or UI,
+then returned when a later re-assert landed.
+
+Combined, these made the v0.7 "safety net" a hazard: garbage reads fed the
+error streak → the escalation soft-reset a *healthy* module every 15 s → each
+reset surged the fan to full. On the **heat** channel the same sequence would
+have been an uncommanded full-power heater burst — possibly with the fan off,
+since a channel commanded to 0 is a legal state for escalation to fire in.
+
+Design consequences (firmware v0.13.0):
+
+- **No read may ever trigger an autonomous reset.** Soft reset is
+  operator-only (`DLRESET`), refuses the heat module without interlock-level
+  airflow, and waits for the module to answer before re-asserting state.
+- **Convergence comes from writes, not read-verify:** curve + level are
+  unconditionally re-asserted every 5 s. Idempotent when healthy; recovers a
+  self-reset module within one poll without ever trusting a read.
+- Error-register polling is diagnostics only (rate-limited logging, with
+  "not responding" kept distinct from module error codes), and the level
+  readback is checked only while a channel is commanded off — the one region
+  where reads proved trustworthy and the one divergence that matters most.
+
+Open questions for a future bench session: whether reads are reliable at
+level 100 (triac latched, no mid-cycle firing), and whether the read
+corruption is the slave ISR or bus-level EMI (scope SDA/SCL near a firing
+module).
+
+---
+
 ## Diagnostic workflow
 
 1. Open [`../dashboard.html`](../dashboard.html) in a browser, connect to the

@@ -21,7 +21,7 @@
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.12.0"
+#define FW_VERSION  "0.13.0"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -83,9 +83,6 @@
 #define DL_CURVE_LINEAR  0  // linear in firing angle (Vrms S-shaped, steepest mid-scale)
 #define DL_CURVE_RMS     1  // linear in output Vrms (the power-on default here)
 #define DL_CURVE_LOG     2  // perceptual (LED) curve
-
-// Consecutive 5 s error polls with a fault before commanding a module reset
-#define DL_ERR_STREAK_RESET  3
 
 // ---------------------------------------------------------------------------
 // Config
@@ -973,7 +970,9 @@ int getFrequency(uint8_t addr) {
     return -1;
 }
 
-uint8_t getError(uint8_t addr) {
+// Module error register; -1 when the module doesn't answer (absent, or busy
+// rebooting). Callers must never treat a non-answer as an error *code*.
+int getError(uint8_t addr) {
     Wire.beginTransmission(addr);
     Wire.write(REG_ERROR);
     Wire.endTransmission(false);
@@ -982,7 +981,7 @@ uint8_t getError(uint8_t addr) {
     if (Wire.available()) {
         return Wire.read();
     }
-    return 0xFF;
+    return -1;
 }
 
 int getVersion(uint8_t addr) {
@@ -997,20 +996,32 @@ int getVersion(uint8_t addr) {
     return -1;
 }
 
-// Last-resort recovery for a module stuck in an error state: command a soft
-// reset, then re-assert curve and level. If the module needs longer than the
-// brief settle to come back, the 5 s readback audit re-asserts state anyway.
+// Operator-commanded recovery (DLRESET) for a module stuck in an error state.
+// NEVER call this autonomously: on this hardware (observed 2026-07-02, see
+// hardware/emi.md § DimmerLink) a soft reset drives the module's output FULL
+// ON for ~3-4 s regardless of the commanded level, and the module NACKs
+// writes while it reboots. So: command the reset, poll until the module
+// answers again (bounded — every second at full output counts), then
+// re-assert curve and level with the results checked. The 5 s re-assert in
+// loop() converges anything this misses.
 void resetDL(uint8_t addr, uint8_t level) {
     char msg[48];
-    snprintf(msg, sizeof(msg), "DimmerLink 0x%02X persistent errors: reset", addr);
+    snprintf(msg, sizeof(msg), "DimmerLink 0x%02X: operator reset", addr);
     logError(msg);
     Wire.beginTransmission(addr);
     Wire.write(REG_COMMAND);
     Wire.write(DL_CMD_RESET);
     Wire.endTransmission();
-    delay(20);
-    setCurve(addr, curveFor(addr));
-    setLevel(addr, level);
+    uint32_t t0 = millis();
+    while (millis() - t0 < 3000) {
+        esp_task_wdt_reset();   // deliberate blocking wait, not a hung loop
+        delay(50);
+        if (isReady(addr)) break;
+    }
+    if (!setCurve(addr, curveFor(addr)) || !setLevel(addr, level)) {
+        snprintf(msg, sizeof(msg), "DimmerLink 0x%02X post-reset re-assert failed", addr);
+        logError(msg);
+    }
 }
 
 // Commanded heat % -> dimmer level. On the RMS curve, level maps linearly to
@@ -1042,26 +1053,34 @@ const char* dlErrorName(uint8_t code) {
 }
 
 // Read + decode the module error register. Returns true if an error is
-// present. Logging is per-address rate-limited: a new code logs immediately,
-// the same code repeating logs once a minute — an absent module (0xFF every
-// poll) must not flood the 8-entry log.
+// present. Diagnostics only — nothing may act on this: register reads lie
+// while the module is firing (see assertDLState). A non-answer is a comms
+// fault ("not responding" — absent module, or one busy rebooting), never
+// conflated with a module error code. Logging is per-address rate-limited:
+// a new state logs immediately, the same state repeating logs once a minute
+// — an absent module must not flood the 8-entry log.
 bool checkDLError(uint8_t addr) {
-    static uint8_t  lastCode[2] = {0, 0};
+    static uint16_t lastCode[2] = {0, 0};   // 0x100 = not-responding sentinel
     static uint32_t lastMs[2]   = {0, 0};
     uint8_t idx = (addr == FAN_ADDR) ? 1 : 0;
 
-    uint8_t code = getError(addr);
-    const char* name = dlErrorName(code);
-    if (name == nullptr) {
+    int r = getError(addr);
+    uint16_t state = (r < 0) ? 0x100 : (uint16_t)r;
+    if (r >= 0 && dlErrorName((uint8_t)r) == nullptr) {
         lastCode[idx] = 0;      // cleared: the next occurrence logs immediately
         return false;
     }
     uint32_t now = millis();
-    if (code != lastCode[idx] || now - lastMs[idx] >= 60000) {
-        lastCode[idx] = code;
+    if (state != lastCode[idx] || now - lastMs[idx] >= 60000) {
+        lastCode[idx] = state;
         lastMs[idx]   = now;
         char msg[48];
-        snprintf(msg, sizeof(msg), "DimmerLink 0x%02X %s (0x%02X)", addr, name, code);
+        if (r < 0) {
+            snprintf(msg, sizeof(msg), "DimmerLink 0x%02X not responding", addr);
+        } else {
+            snprintf(msg, sizeof(msg), "DimmerLink 0x%02X %s (0x%02X)",
+                     addr, dlErrorName((uint8_t)r), (uint8_t)r);
+        }
         logError(msg);
     }
     return true;
@@ -1080,17 +1099,36 @@ void logDimmerWriteFail(uint8_t addr) {
     logError(msg);
 }
 
-// Readback audit (called from the 5 s poll): the level the module actually
-// holds must match what we believe we set. A mismatch means a missed write or
-// a module that reset itself (losing curve config too) — log, re-assert both.
-void auditDLLevel(uint8_t addr, uint8_t expected) {
-    int actual = getLevel(addr);
-    if (actual < 0 || actual == expected) return;
-    char msg[56];
-    snprintf(msg, sizeof(msg), "DimmerLink 0x%02X level %d != expected %u", addr, actual, expected);
-    logError(msg);
-    setCurve(addr, curveFor(addr));   // a self-reset also reverts the curve
-    setLevel(addr, expected);
+// 5 s dimmer state service — replaces the v0.7 readback audit + reset
+// escalation, which on real hardware reset a healthy module every 15 s and
+// surged the output to full each time. The hardware facts this design rests
+// on (observed 2026-07-02, hardware/emi.md § DimmerLink): register WRITES are
+// reliable at any level, but READS lie while the module is firing (level
+// 1..99: the level reads back 0, the error register returns garbage), and a
+// soft reset drives the output full on for seconds — so no read may ever
+// trigger a reset. Convergence therefore comes from the reliable direction:
+// unconditionally re-assert the curve and level the channel should have.
+// Idempotent on a healthy module; pulls back a self-reset one within 5 s.
+// The readback check runs only when the channel is commanded OFF — the one
+// region where reads are trustworthy, and the one divergence that matters
+// most (output on when it must be off).
+void assertDLState(uint8_t addr, uint8_t level) {
+    if (level == 0) {
+        int actual = getLevel(addr);
+        if (actual > 0) {
+            static uint32_t lastMs[2] = {0, 0};
+            uint8_t idx = (addr == FAN_ADDR) ? 1 : 0;
+            uint32_t nowMs = millis();
+            if (lastMs[idx] == 0 || nowMs - lastMs[idx] >= 60000) {
+                lastMs[idx] = nowMs;
+                char msg[56];
+                snprintf(msg, sizeof(msg), "DimmerLink 0x%02X reads %d while commanded off", addr, actual);
+                logError(msg);
+            }
+        }
+    }
+    if (!setCurve(addr, curveFor(addr)) || !setLevel(addr, level))
+        logDimmerWriteFail(addr);
 }
 
 // ===========================================================================
@@ -1513,6 +1551,30 @@ void processCommand(String cmd, int8_t clientNum) {
             heatCurve == DL_CURVE_RMS ? "true" : "false");
         if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
         Serial.println(b);
+
+    } else if (kw == "DLRESET") {
+        // DLRESET HEAT|FAN — operator-commanded DimmerLink soft reset, the
+        // only path to resetDL(). Hardware-observed (2026-07-02, emi.md): the
+        // module drives its output FULL ON for ~3-4 s after a soft reset —
+        // which is why this never happens autonomously, and why resetting the
+        // heat module is refused without interlock-level airflow.
+        if (n < 2) { replyBadArg(clientNum, "DLRESET"); return; }
+        String ch = tokens[1];
+        ch.toUpperCase();
+        bool isHeat = (ch == "HEAT");
+        if (!isHeat && ch != "FAN") { replyBadArg(clientNum, "DLRESET"); return; }
+        if (isHeat && fanLevel < ilFanMin) {
+            char b[112];
+            snprintf(b, sizeof(b),
+                "{\"pushMessage\":\"error\",\"data\":\"DLRESET HEAT refused: fan %u < interlock min %u\"}",
+                fanLevel, ilFanMin);
+            if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
+            Serial.println(b);
+            return;
+        }
+        if (isHeat) resetDL(HEAT_ADDR, heatDimmerLevel(heatLevel));
+        else        resetDL(FAN_ADDR, fanLevel);
+        broadcastStatus();
     }
 }
 
@@ -1897,21 +1959,19 @@ void loop() {
         controlStep(ctrlDt);
     }
 
-    // Periodic DimmerLink error poll + level readback audit (every 5 s), with
-    // reset escalation: a module erroring through DL_ERR_STREAK_RESET straight
-    // polls gets a soft reset and its curve/level re-asserted.
-    static uint32_t lastErrorPoll = 0;
-    static uint8_t  heatErrStreak = 0, fanErrStreak = 0;
-    if (now - lastErrorPoll >= 5000) {
-        lastErrorPoll = now;
-        heatErrStreak = checkDLError(HEAT_ADDR) ? heatErrStreak + 1 : 0;
-        fanErrStreak  = checkDLError(FAN_ADDR)  ? fanErrStreak  + 1 : 0;
-        // Heat crosses the power-linearization map at the wire, so reset/audit
-        // must compare and re-assert in dimmer units, not command units.
-        if (heatErrStreak >= DL_ERR_STREAK_RESET) { resetDL(HEAT_ADDR, heatDimmerLevel(heatLevel)); heatErrStreak = 0; }
-        if (fanErrStreak  >= DL_ERR_STREAK_RESET) { resetDL(FAN_ADDR,  fanLevel);  fanErrStreak  = 0; }
-        auditDLLevel(HEAT_ADDR, heatDimmerLevel(heatLevel));
-        auditDLLevel(FAN_ADDR, fanLevel);
+    // Periodic DimmerLink service (every 5 s): error-register poll (diagnostic
+    // logging only) + unconditional curve/level re-assert — see assertDLState
+    // for the hardware facts behind this shape. No autonomous reset, ever: a
+    // soft reset drives the module's output FULL ON for ~3-4 s (emi.md);
+    // reset is operator-only via DLRESET. Heat crosses the power-linearization
+    // map at the wire, so its re-assert is in dimmer units, not command units.
+    static uint32_t lastDLService = 0;
+    if (now - lastDLService >= 5000) {
+        lastDLService = now;
+        checkDLError(HEAT_ADDR);
+        checkDLError(FAN_ADDR);
+        assertDLState(HEAT_ADDR, heatDimmerLevel(heatLevel));
+        assertDLState(FAN_ADDR, fanLevel);
     }
 
     // WiFi link watch: autoReconnect covers most drops; if the link is down for
@@ -1963,6 +2023,23 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.13.0 2026-07-02  Remove the DimmerLink auto-reset escalation; rework the
+//                     5 s poll around hardware facts found in first on-roaster
+//                     validation (fan at 50 for ~1 min): module register READS
+//                     lie while the triac is firing (level reads back 0, error
+//                     register returns garbage), which fed the error streak
+//                     and soft-reset a healthy module every 15 s — and a soft
+//                     reset drives the output FULL ON for ~3-4 s (fan surged
+//                     to 100% with no UI indication). New shape: reads are
+//                     diagnostics only (rate-limited logs; "not responding"
+//                     distinguished from error codes); convergence comes from
+//                     unconditionally re-asserting curve+level every 5 s
+//                     (writes are reliable at any level); readback checked
+//                     only when a channel is commanded off. Soft reset is now
+//                     operator-only (new DLRESET HEAT|FAN command; HEAT
+//                     refused below interlock fan minimum), waits for the
+//                     module to answer before re-asserting state. Details:
+//                     hardware/emi.md § DimmerLink.
 // v0.12.0 2026-07-02  Over-the-air firmware updates (ArduinoOTA, port 3232,
 //                     mDNS "airroaster.local", password OTA_PASS from
 //                     secrets.h, falling back to WIFI_PASS). Serviced only

@@ -167,6 +167,7 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 | `IL <fanMin> <fanFull> <heatAtMin>` | `IL 48 55 30` | Set the interlock limits; validated (`1 ≤ fanMin ≤ fanFull ≤ 100`, `heatAtMin ≤ 100`), applied immediately, NVS-persisted |
 | `CURVE` | `CURVE` | Report both dimmer curve modes (`curve` push message) |
 | `CURVE HEAT\|FAN <0-2>` | `CURVE FAN 0` | Set a channel's dimmer curve: 0=linear, 1=rms, 2=log. Runtime-only — reboot restores RMS |
+| `DLRESET HEAT\|FAN` | `DLRESET FAN` | Soft-reset a stuck dimmer module. **The module output goes to full for ~3–4 s during the reset** — `DLRESET HEAT` is refused unless the fan is at or above the interlock minimum |
 | `LOG` | `LOG` | Retrieve the error log (sent only to requesting client) |
 
 > **Changed in v0.10.0:** bare `IL` used to *toggle* the mode; it now reports.
@@ -512,8 +513,8 @@ Errors are stored in a RAM-only circular buffer (8 entries × 64 chars). No flas
 Errors are generated for:
 - DimmerLink not ready at startup (after 3 retries)
 - DimmerLink error register non-zero after a write (`ERR_SYNTAX`, `ERR_NOT_READY`, `ERR_INDEX`, `ERR_PARAM`, or unknown code)
-- DimmerLink error register polled every 5 seconds during operation — logging is rate-limited per module (a repeating identical code logs once a minute), and a module erroring through 3 consecutive polls is soft-reset (`COMMAND` register) with its curve and level re-asserted
-- DimmerLink level write failures and level-readback mismatches (the 5 s audit re-asserts level + curve)
+- DimmerLink error register polled every 5 seconds during operation — **diagnostic logging only**, rate-limited per module (a repeating identical state logs once a minute), with "not responding" distinguished from module error codes. Register reads are unreliable while a module is firing (see [hardware/emi.md](hardware/emi.md)), so nothing acts on them; instead each module's curve + level are unconditionally re-asserted every 5 s (writes are reliable), and the level readback is checked only when a channel is commanded off. A module is **never soft-reset automatically** — a DimmerLink soft reset drives its output to full for ~3–4 s; use `DLRESET` deliberately if a module is truly stuck
+- DimmerLink level write failures (rate-limited), and a channel reading back non-zero while commanded off
 - Sensor faults (MAX31865 fault codes, MAX31855 fault bits), debounced and rate-limited; the channel holds its last good value during a fault
 - Inlet-control failsafe events (stale PV / over-temp)
 
