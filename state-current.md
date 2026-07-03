@@ -94,8 +94,11 @@ dashboard gained a client-side **FF step cal** panel that measures ffK as the
 fan-step slope Δheat/(Δfan·ΔT) in closed loop — immune to the standing-loss
 intercept that makes the through-origin FF CAL over-predict when calibrated
 at warmup temperatures (measured plant: 25% heat @ ΔT 25, ~50% @ ΔT 115).
-Needs on-roaster validation: closed loop should now settle *on* SV, and the
-FF step routine needs a live run.
+**Validated on hardware 2026-07-03** (v0.14.1): closed loop settles on SV,
+and after an FF step calibration the feedforward "almost perfectly
+compensates" fan changes (user's assessment). The trouble-free session also
+implicitly validates the v0.13 dimmer rework (no error flood, no fan surges
+with the fan running). Over-temp failsafe raised to 350 °C (SV max 300).
 
 **Known open issue (fan stop after reboot).** Boot fan-level adoption reads
 `getLevel()` while the fan is firing → the read lies (returns 0) → adoption
