@@ -50,7 +50,7 @@ If `secrets.h.example` does not exist yet, create `secrets.h` manually:
 | `IL_HEAT_AT_MIN_DFLT` | `30` | Default heat cap (%) when fan is exactly at the fan minimum (soft mode) |
 | `WDT_TIMEOUT_MS` | `8000` | Task watchdog: panic→reset if the loop hangs this long |
 | `INLET_PV_STALE_MS` | `3000` | Closed loop / tune failsafe if the inlet reading is older than this |
-| `INLET_OVERTEMP_C` | `280` | Closed loop failsafe above this inlet temperature (°C) |
+| `INLET_OVERTEMP_C` | `350` | Closed loop failsafe above this inlet temperature (°C) — overshoot margin above the 300 °C setpoint max |
 | `WIFI_CONNECT_TIMEOUT_MS` | `15000` | Boot-time WiFi wait; the roaster starts without network after this |
 | `TELEM_PERIOD_MS` | `1000` | Telemetry push cadence (runtime-adjustable via `TELEM`) |
 | `OTA_HOSTNAME` | `airroaster` | mDNS name the OTA updater answers to (`airroaster.local`) |
@@ -299,7 +299,7 @@ switchable mode layered on top of manual heat control.
 
 **Failsafe.** The loop lets go — drops to `manual` at **heat 0** and logs/
 broadcasts an error — if the inlet reading goes stale (no accepted sample for
-`INLET_PV_STALE_MS`, 3 s) or exceeds `INLET_OVERTEMP_C` (280 °C). Stale matters
+`INLET_PV_STALE_MS`, 3 s) or exceeds `INLET_OVERTEMP_C` (350 °C). Stale matters
 because a faulted sensor *holds* its last good value: without the freshness
 check the integrator would wind against a frozen reading indefinitely. The fan
 keeps running (airflow only cools once the heater is off).

@@ -21,7 +21,7 @@
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.14.0"
+#define FW_VERSION  "0.14.1"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -103,7 +103,7 @@
 // Safety guards
 #define WDT_TIMEOUT_MS      8000    // task watchdog: panic->reset if loop() hangs this long
 #define INLET_PV_STALE_MS   3000    // closed loop / tune abort if the inlet PV is older than this
-#define INLET_OVERTEMP_C    280.0f  // closed loop aborts above this inlet temp (matches tune abort)
+#define INLET_OVERTEMP_C    350.0f  // closed loop aborts above this inlet temp (SV max is 300; tune abort is separate and tighter)
 
 // WiFi: bounded connect wait at boot; reconnection is watched from loop().
 // The roaster must be fully operable over serial with no network present.
@@ -2029,6 +2029,10 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.14.1 2026-07-03  Inlet over-temp failsafe 280 -> 350 °C: the setpoint
+//                     clamp already allowed INLET 300, but the failsafe
+//                     tripped at 280, killing the loop mid-seek. 350 leaves
+//                     overshoot margin over the SV max. Tune abort stays 280.
 // v0.14.0 2026-07-03  Integral trim can go negative under feedforward. On
 //                     hardware, an over-predicting FF (stale NVS ffK) plus the
 //                     integrator's [0,100] floor produced a permanent +10 °C
