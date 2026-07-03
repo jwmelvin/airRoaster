@@ -11,6 +11,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SH110X.h>
 #include <WiFi.h>
+#include <ArduinoOTA.h>    // OTA firmware updates (espota protocol; verify.sh "ota" mode)
 #include <WebSocketsServer.h>
 #include <Adafruit_MAX31855.h>
 #include "max31865_direct.h"   // register-level MAX31865 driver, continuous mode
@@ -20,12 +21,18 @@
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.11.0"
+#define FW_VERSION  "0.12.0"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
 // ---------------------------------------------------------------------------
 #include "secrets.h"
+
+// OTA is never unauthenticated: define OTA_PASS in secrets.h for a dedicated
+// credential, otherwise the WiFi password is reused.
+#ifndef OTA_PASS
+#define OTA_PASS WIFI_PASS
+#endif
 
 // ---------------------------------------------------------------------------
 // Sensor SPI chip-select pins  (assign free GPIOs to suit your wiring)
@@ -87,6 +94,7 @@
                                      // narrow band, so nudges must be fine-grained
 #define WS_PORT                 81
 #define DL_INIT_RETRY_DELAY_MS  500   // ms between initDL ready-check retries
+#define OTA_HOSTNAME  "airroaster"    // mDNS name for espota (airroaster.local)
 
 // Interlock config — power-on defaults only. The live values are runtime
 // globals (ilFanMin / ilFanFull / ilHeatAtMin), settable over the IL command
@@ -558,6 +566,68 @@ void saveInterlock() {
 }
 
 // ===========================================================================
+// OTA firmware updates
+// ===========================================================================
+// ArduinoOTA (espota protocol; push with `./verify.sh ota [host]`). Serviced
+// from loop() only while the roaster is idle — manual mode with heat commanded
+// and confirmed at 0 — because the flash write blocks the cooperative loop
+// (and with it the interlock, failsafes, and sensor reads) for its whole
+// duration. An upload attempted mid-roast simply times out on the host.
+// onStart still re-zeros the heater at the wire as defense in depth. The fan
+// keeps its level so a hot roaster keeps cooling air moving during the write.
+bool otaBegun = false;   // ArduinoOTA.begin() done (deferred until WiFi is up)
+
+void setupOTA() {
+    ArduinoOTA.setHostname(OTA_HOSTNAME);
+    ArduinoOTA.setPassword(OTA_PASS);
+
+    ArduinoOTA.onStart([]() {
+        // Heater off at the wire and every path that could re-drive it closed:
+        // loop() goes dark until the update finishes or fails.
+        ctrlMode  = MODE_MANUAL;
+        tunePhase = TUNE_IDLE;
+        requestedHeatLevel = 0;
+        if (setLevel(HEAT_ADDR, 0)) heatLevel = 0;
+        else logError("OTA: heat zero write failed");
+        // The flash write stalls loop() far past WDT_TIMEOUT_MS; stop watching
+        // this task for the duration. onError re-arms; success reboots.
+        esp_task_wdt_delete(NULL);
+        display.clearDisplay();
+        display.setCursor(COL1A, ROW1 * ROWHEIGHT);
+        display.print("OTA update");
+        display.display();
+        Serial.println("OTA: start");
+    });
+
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        static uint8_t lastPct = 255;
+        uint8_t pct = (uint8_t)((uint64_t)progress * 100 / total);
+        if (pct == lastPct) return;   // the OLED push is ~30 ms — repaint on change only
+        lastPct = pct;
+        display.setCursor(COL1A, ROW3 * ROWHEIGHT);
+        display.printf("%3u%%", pct);
+        display.display();
+    });
+
+    ArduinoOTA.onEnd([]() {
+        // The core reboots into the new image; boot re-zeros heat as always.
+        Serial.println("OTA: complete, rebooting");
+    });
+
+    ArduinoOTA.onError([](ota_error_t error) {
+        esp_task_wdt_add(NULL);   // resume watching the loop task
+        char msg[40];
+        snprintf(msg, sizeof(msg), "OTA failed: error %u", (unsigned)error);
+        logError(msg);
+        flagDisplayUpdate = true; // repaint the normal screen over the OTA one
+    });
+
+    ArduinoOTA.begin();
+    otaBegun = true;
+    Serial.printf("OTA: listening as %s.local\n", OTA_HOSTNAME);
+}
+
+// ===========================================================================
 // Setup
 // ===========================================================================
 void setup() {
@@ -635,8 +705,10 @@ void setup() {
     if (WiFi.status() == WL_CONNECTED) {
         Serial.print("WiFi connected. IP: ");
         Serial.println(WiFi.localIP());
+        setupOTA();
     } else {
         Serial.println("WiFi not connected — continuing; retrying in background");
+        // OTA init is deferred to the loop() link watch when WiFi comes up.
     }
 
     // WebSocket server
@@ -1852,7 +1924,15 @@ void loop() {
         bool up = (WiFi.status() == WL_CONNECTED);
         if (up != wifiWasUp) flagDisplayUpdate = true;
         if (!up && !wifiWasUp) WiFi.reconnect();
+        if (up && !otaBegun) setupOTA();   // boot happened without WiFi
         wifiWasUp = up;
+    }
+
+    // OTA: serviced only while idle — manual mode, heat commanded and
+    // confirmed at 0 (see the OTA section header for why). The fan may run.
+    if (otaBegun && ctrlMode == MODE_MANUAL &&
+        requestedHeatLevel == 0 && heatLevel == 0) {
+        ArduinoOTA.handle();
     }
 
     // Telemetry push (faster cadence during a tune so the step response is
@@ -1883,6 +1963,16 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.12.0 2026-07-02  Over-the-air firmware updates (ArduinoOTA, port 3232,
+//                     mDNS "airroaster.local", password OTA_PASS from
+//                     secrets.h, falling back to WIFI_PASS). Serviced only
+//                     while idle (manual mode, heat 0); onStart re-zeros the
+//                     heater at the wire and detaches the task WDT for the
+//                     flash-write stall; a failed update re-arms the WDT and
+//                     logs. Requires the TinyUF2 OTA partition scheme
+//                     (2×1408K app slots) — verify.sh now selects it; the
+//                     first flash after this change must be over USB.
+//                     `./verify.sh ota [host]` pushes updates thereafter.
 // v0.11.0 2026-07-02  Heat power linearization + CURVE command. On the RMS
 //                     curve the dimmer level maps linearly to Vrms, so heater
 //                     power went as level² — commanded heat % now passes

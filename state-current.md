@@ -51,12 +51,22 @@ Compile after every meaningful edit; the script surfaces sketch-local warnings.
   no sensors, and no WiFi present (log, hold safe defaults, keep serving serial).
 
 **Git.** Development happens on feature branches; `main` holds roast-tested
-firmware. Current branch: `feature/robustness-dashboard`. Commit per phase with
+firmware. Current branch: `feature/ota-updates` (branched from
+`feature/robustness-dashboard`). Commit per phase with
 a message naming the phase. The user's Artisan config churn (`artisan/*.aset`,
 `*.alog`) may be present in the working tree — never sweep it into a firmware
 commit; stage files explicitly.
 
 ## Active effort (2026-07-02)
+
+**OTA firmware updates** (`feature/ota-updates`, v0.12.0): ArduinoOTA over
+WiFi, serviced from loop() only while idle (manual mode, heat 0); onStart
+re-zeros the heater at the wire and detaches the task WDT for the flash-write
+stall. verify.sh now pins the TinyUF2 OTA partition scheme (2×1408K app slots;
+NVS offset unchanged, tunings survive) and gained `./verify.sh ota [host]`.
+**The first flash after this change must be over USB** (partition table
+change). Compile-verified only — needs on-roaster validation: USB reflash,
+then an OTA push, then confirm OTA times out while heat is on.
 
 **Robustness + dashboard development** (from the July 2026 code review) is
 **implemented through all five phases** on `feature/robustness-dashboard` —

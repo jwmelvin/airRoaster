@@ -33,6 +33,9 @@ If `secrets.h.example` does not exist yet, create `secrets.h` manually:
 #pragma once
 #define WIFI_SSID   "your_ssid"
 #define WIFI_PASS   "your_password"
+// Optional: dedicated password for over-the-air updates.
+// If omitted, OTA authentication falls back to WIFI_PASS (never unauthenticated).
+#define OTA_PASS    "your_ota_password"
 ```
 
 ### Compile-time constants
@@ -50,6 +53,43 @@ If `secrets.h.example` does not exist yet, create `secrets.h` manually:
 | `INLET_OVERTEMP_C` | `280` | Closed loop failsafe above this inlet temperature (°C) |
 | `WIFI_CONNECT_TIMEOUT_MS` | `15000` | Boot-time WiFi wait; the roaster starts without network after this |
 | `TELEM_PERIOD_MS` | `1000` | Telemetry push cadence (runtime-adjustable via `TELEM`) |
+| `OTA_HOSTNAME` | `airroaster` | mDNS name the OTA updater answers to (`airroaster.local`) |
+
+---
+
+## Over-the-air firmware updates
+
+After the first USB flash, updates can be pushed over WiFi:
+
+```
+./verify.sh ota              # push to airroaster.local
+./verify.sh ota 192.168.1.42 # or by IP (shown on the OLED)
+```
+
+Uses [ArduinoOTA](https://docs.espressif.com/projects/arduino-esp32/en/latest/ota_web_update.html)
+(part of the ESP32 core — no new dependencies), authenticated with `OTA_PASS`
+(falling back to `WIFI_PASS`). The build uses the TinyUF2 **OTA** partition
+scheme: two 1408 KB app slots — the update writes to the inactive slot and the
+device reboots into it. NVS (persisted tunings and interlock config) is
+untouched by updates.
+
+**The updater is only serviced while the roaster is idle** — manual mode with
+heat at 0 (the fan may run). A push attempted mid-roast times out on the host
+and the roast is unaffected. This is deliberate: the flash write blocks the
+main loop, and with it the interlock and sensor failsafes, for its ~15 s
+duration, which must never happen with the heater energized. When an update
+starts, the heater is additionally forced to 0 at the dimmer and the task
+watchdog is detached for the write (re-armed if the update fails). Progress is
+shown on the OLED.
+
+Caveats:
+
+- **The first flash after adopting this partition scheme must be over USB**
+  (`./verify.sh upload`) — the partition table itself cannot be rewritten over
+  the air.
+- A bad-but-bootable image sticks (the core has no automatic rollback); USB
+  reflash is the recovery path. This is an inconvenience, not a hazard — boot
+  always forces heat to 0 before anything else runs.
 
 ---
 
@@ -61,8 +101,9 @@ If `secrets.h.example` does not exist yet, create `secrets.h` manually:
 4. **Boot dimmer sync**: heat is forced to `0` and the fan's *actual* level is read back and adopted — after an MCU-only reset (crash / watchdog / brownout) the dimmers may still hold their last levels, so a hot roaster keeps its cooling airflow while the heater is killed
 5. Sensors initialize (MAX31865s enter continuous conversion with on-chip fault thresholds armed)
 6. ESP32 connects to WiFi — bounded wait (15 s), then boot proceeds regardless; the link is watched and reconnected from the main loop. The roaster is fully operable over serial with no network.
-7. WebSocket server starts on port `81`
-8. IP address is shown on the display
+7. OTA updater starts (deferred until the link is up if WiFi was down at boot)
+8. WebSocket server starts on port `81`
+9. IP address is shown on the display
 
 ---
 
