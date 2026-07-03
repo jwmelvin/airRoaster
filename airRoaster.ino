@@ -21,7 +21,7 @@
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.14.1"
+#define FW_VERSION  "0.15.0"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -149,6 +149,21 @@
 uint8_t requestedHeatLevel = 0;  // commanded heat level
 uint8_t heatLevel = 0;           // actual heat level sent to device
 uint8_t fanLevel = 0;
+
+// Fan-level shadow in RTC no-init RAM: survives every MCU-only reset
+// (crash / WDT / panic / OTA reboot) — exactly the cases where the dimmer
+// module keeps running and boot must re-adopt its level — and is garbage
+// after a true power-on, when the module has lost power too. Validated by
+// magic + inverted-copy checksum; never touches flash (no NVS wear, no
+// write latency in the command path). Deliberately NOT read back from the
+// module: getLevel() lies while the module is firing (emi.md § DimmerLink).
+#define FAN_RTC_MAGIC  0x464E4C56UL   // "FNLV"
+RTC_NOINIT_ATTR uint32_t rtcFanMagic;
+RTC_NOINIT_ATTR uint8_t  rtcFanLevel;
+RTC_NOINIT_ATTR uint8_t  rtcFanCheck;  // ~rtcFanLevel
+// (rtcSaveFan() / rtcFanValid() defined with the DimmerLink helpers below —
+// function bodies this early would move the Arduino auto-prototype insertion
+// point above the struct definitions.)
 bool    interlockSoft = false;   // false = hard (binary), true = soft (linear ramp)
 
 // Interlock limits (see the IL command; persisted in NVS, defaults above).
@@ -667,18 +682,27 @@ void setup() {
     initDL(HEAT_ADDR);
     initDL(FAN_ADDR);
 
-    // Boot dimmer sync. After an MCU-only reset (crash / WDT / brownout) the
-    // dimmers may still hold their last levels while firmware state restarts at
-    // zero — and applyInterlock() only writes on change, so the mismatch would
-    // persist silently. Kill the heat unconditionally; adopt the fan's actual
-    // level so a hot roaster keeps its cooling airflow after a mid-roast reset.
+    // Boot dimmer sync. After an MCU-only reset (crash / WDT / panic / OTA)
+    // the dimmer modules keep running at their last levels while firmware
+    // state restarts at zero. Kill the heat unconditionally; restore the fan
+    // from the RTC no-init copy so a hot roaster keeps its cooling airflow
+    // after a mid-roast reset. Reading the module instead is not an option:
+    // getLevel() lies while the module is firing (emi.md § DimmerLink) — the
+    // v0.13 read-adoption returned 0 and the 5 s re-assert then physically
+    // stopped a running fan. The RTC copy survives exactly the resets that
+    // matter; after a true power-on it is invalid garbage, and the fan module
+    // has lost power too, so falling back to 0 matches reality.
     if (!setLevel(HEAT_ADDR, 0)) logError("boot: heat zero write failed");
-    {
-        int fl = getLevel(FAN_ADDR);
-        if (fl > 0 && fl <= 100) {
-            fanLevel = (uint8_t)fl;
-            Serial.printf("boot: adopted running fan level %u\n", fanLevel);
+    if (rtcFanValid()) {
+        fanLevel = rtcFanLevel;
+        if (fanLevel > 0) {
+            if (setLevel(FAN_ADDR, fanLevel))
+                Serial.printf("boot: restored fan level %u (RTC)\n", fanLevel);
+            else
+                logError("boot: fan restore write failed");
         }
+    } else {
+        rtcSaveFan(0);   // true power-on: initialize the RTC copy
     }
 
     // Sensor init
@@ -1041,6 +1065,19 @@ uint8_t curveFor(uint8_t addr) {
     return (addr == FAN_ADDR) ? fanCurve : heatCurve;
 }
 
+// RTC fan-shadow helpers (variables + rationale up in the state section).
+void rtcSaveFan(uint8_t level) {
+    rtcFanLevel = level;
+    rtcFanCheck = (uint8_t)~level;
+    rtcFanMagic = FAN_RTC_MAGIC;
+}
+
+bool rtcFanValid() {
+    return rtcFanMagic == FAN_RTC_MAGIC &&
+           rtcFanCheck == (uint8_t)~rtcFanLevel &&
+           rtcFanLevel <= 100;
+}
+
 const char* dlErrorName(uint8_t code) {
     switch (code) {
         case 0x00: return nullptr;          // OK — no error
@@ -1292,6 +1329,7 @@ void processCommand(String cmd, int8_t clientNum) {
         // fanLevel, so it must track what the fan hardware actually received.
         if (setLevel(FAN_ADDR, newFan)) {
             fanLevel = newFan;
+            rtcSaveFan(newFan);   // shadow for boot restore after MCU-only reset
             checkDLError(FAN_ADDR);
         } else {
             logDimmerWriteFail(FAN_ADDR);
@@ -2029,6 +2067,18 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.15.0 2026-07-05  Fan level survives MCU-only resets via RTC no-init RAM.
+//                     Boot fan adoption previously read getLevel(), which lies
+//                     while the module is firing — so after any reboot with
+//                     the fan running (observed post-OTA), adoption read 0 and
+//                     the 5 s re-assert physically stopped the fan, breaking
+//                     the mid-roast crash-recovery airflow guarantee. The
+//                     commanded fan level is now shadowed in RTC_NOINIT_ATTR
+//                     RAM (magic + inverted-copy checksum, zero flash wear):
+//                     valid across crash/WDT/panic/OTA reboots -> restored and
+//                     asserted at boot; garbage after a true power-on -> falls
+//                     back to 0, matching the also-unpowered fan module. Fan
+//                     now also keeps spinning seamlessly across OTA updates.
 // v0.14.1 2026-07-03  Inlet over-temp failsafe 280 -> 350 °C: the setpoint
 //                     clamp already allowed INLET 300, but the failsafe
 //                     tripped at 280, killing the loop mid-seek. 350 leaves

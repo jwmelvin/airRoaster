@@ -101,13 +101,18 @@ compensates" fan changes (user's assessment). The trouble-free session also
 implicitly validates the v0.13 dimmer rework (no error flood, no fan surges
 with the fan running). Over-temp failsafe raised to 350 °C (SV max 300).
 
-**Known open issue (fan stop after reboot).** Boot fan-level adoption reads
-`getLevel()` while the fan is firing → the read lies (returns 0) → adoption
-fails → the v0.13 unconditional re-assert then writes the believed 0 and
-physically stops the fan ~5 s after any reboot with the fan running (observed
-after an OTA update; also breaks the mid-roast crash-recovery airflow
-guarantee). Proposed fix (not yet implemented): persist commanded fan level
-to NVS on change and restore+assert it at boot instead of trusting a read.
+**Fan stop after reboot → fixed in v0.15.0** (`feature/fan-restore`). Boot
+fan-level adoption read `getLevel()` while the fan was firing → the read lied
+(returned 0) → the v0.13 unconditional re-assert wrote the believed 0 and
+physically stopped the fan ~5 s after any reboot with the fan running
+(observed post-OTA; also broke the mid-roast crash-recovery airflow
+guarantee). Fix: the commanded fan level is shadowed in `RTC_NOINIT_ATTR` RAM
+(magic + inverted-copy checksum; zero flash wear — chosen over NVS for wear
+concerns, though the math showed NVS had ~60M-write headroom). The shadow
+survives exactly MCU-only resets (crash/WDT/panic/OTA) and is invalid after a
+true power-on, when the fan module is also unpowered and 0 is correct. Needs
+on-roaster validation: fan running → OTA update → fan should keep spinning
+through the reboot with the UI still in sync.
 
 **Robustness + dashboard development** (from the July 2026 code review) is
 **implemented through all five phases** on `feature/robustness-dashboard` —

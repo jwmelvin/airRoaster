@@ -98,7 +98,7 @@ Caveats:
 1. Task watchdog armed (8 s, panic→reset — safe because of step 4)
 2. Display and I2C bus initialize
 3. Both DimmerLink devices initialize — retried up to 3 times each (`DL_INIT_RETRY_DELAY_MS` apart); failures are logged. Dimmer init happens before WiFi to avoid missing the ready window at power-on.
-4. **Boot dimmer sync**: heat is forced to `0` and the fan's *actual* level is read back and adopted — after an MCU-only reset (crash / watchdog / brownout) the dimmers may still hold their last levels, so a hot roaster keeps its cooling airflow while the heater is killed
+4. **Boot dimmer sync**: heat is forced to `0`, and the fan level is restored from an RTC no-init RAM shadow (magic + checksum validated) — after an MCU-only reset (crash / watchdog / OTA reboot) the dimmers keep running at their last levels, so a hot roaster keeps its cooling airflow while the heater is killed. After a true power-on the shadow is invalid and the fan defaults to 0, matching the also-unpowered fan module. (The fan is deliberately *not* read back from the module: DimmerLink register reads are unreliable while a module is firing — see [hardware/emi.md](hardware/emi.md).)
 5. Sensors initialize (MAX31865s enter continuous conversion with on-chip fault thresholds armed)
 6. ESP32 connects to WiFi — bounded wait (15 s), then boot proceeds regardless; the link is watched and reconnected from the main loop. The roaster is fully operable over serial with no network.
 7. OTA updater starts (deferred until the link is up if WiFi was down at boot)
