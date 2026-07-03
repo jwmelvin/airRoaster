@@ -437,19 +437,37 @@ payoff is **airflow rejection**: when the fan changes mid-roast, `heat_ff` moves
 *immediately* in proportion, instead of waiting for the inlet temperature to
 drift and the integrator to catch up. One coefficient covers the narrow fan band.
 
-Feedforward is **off by default** (`ffK = 0`). To set it up:
+Feedforward is **off by default** (`ffK = 0`), and `ffK` persists in NVS with
+the tuning set — check `FF` before trusting an old value.
 
-1. Stabilize the roaster in closed loop (or manual) at a representative fan and
-   inlet temperature.
-2. Send `FF AMB <degC>` with your ambient temperature (once), then `FF CAL`. This
-   derives `ffK` from the current operating point:
-   `ffK = heat / (fan · (inlet − ambient))`.
-3. `FF` reports the result; `FF <k>` sets the coefficient by hand; `FF OFF`
-   disables it.
+**Preferred calibration — fan-step slope (dashboard "FF step cal" panel).**
+FF's job is fan rejection, so calibrate the fan *sensitivity* directly: with
+the inlet loop holding a roast-representative setpoint, the routine measures
+steady heat, steps the fan (default +7), waits for re-settle, restores the
+fan, and computes
 
-With feedforward calibrated, the integrator settles near zero and the loop
-rejects fan-speed changes largely through the feedforward path. Reported as an
-`ff` push message: `{"ffK":0.00451,"amb":24.0,"ff":38.7}`.
+```
+ffK = Δheat / (Δfan · (SV − ambient))
+```
+
+then offers the result for one-click apply (`FF <k>`). Run it from the
+dashboard's **FF step cal** panel — the logic is entirely client-side (the
+firmware only sees ordinary `OT2`/`FF` commands). Requires `amb` to be set
+(`FF AMB`) and a setpoint comfortably above ambient.
+
+**Why not `FF CAL` at low temperature:** `FF CAL` fits a line *through the
+origin* from a single operating point (`ffK = heat / (fan·(inlet−ambient))`).
+This plant has a significant standing-loss intercept (measured: 25% heat at
+ΔT≈25 °C but only ~50% at ΔT≈115 °C), so a through-origin fit calibrated
+during warmup over-predicts badly at roast temperature — observed as `FF=80`
+when the plant needed 50. The slope method is immune to the intercept. If you
+do use `FF CAL`, run it at a steady roast-representative temperature.
+
+The integral term absorbs whatever the feedforward gets wrong — including
+negative trim against an over-prediction (its bounds are `I ∈ [−ff, 100−ff]`,
+keeping the steady command `I+FF` within 0..100). `FF` reports as an `ff`
+push message: `{"ffK":0.00451,"amb":24.0,"ff":38.7}`; `FF <k>` sets the
+coefficient by hand; `FF OFF` disables.
 
 ---
 

@@ -84,6 +84,27 @@ readback checked only at commanded-off. Full write-up:
 [hardware/emi.md](hardware/emi.md) § DimmerLink addendum. Needs on-roaster
 re-validation: fan at 50 must now run error-free and surge-free.
 
+**Closed-loop finding → v0.14.0.** First closed-loop test (2026-07-03 log)
+held a rock-steady +10 °C offset at SV 150: a stale NVS-persisted ffK made
+FF=80 where the plant needed ~50, and the integrator's [0,100] floor could
+not go negative to cancel it (P carried −28 via standing error — arithmetic
+matches exactly). v0.14.0 bounds the integral as I ∈ [−ff, 100−ff] (steady
+command I+FF stays in 0..100; identical to before when FF is off). The
+dashboard gained a client-side **FF step cal** panel that measures ffK as the
+fan-step slope Δheat/(Δfan·ΔT) in closed loop — immune to the standing-loss
+intercept that makes the through-origin FF CAL over-predict when calibrated
+at warmup temperatures (measured plant: 25% heat @ ΔT 25, ~50% @ ΔT 115).
+Needs on-roaster validation: closed loop should now settle *on* SV, and the
+FF step routine needs a live run.
+
+**Known open issue (fan stop after reboot).** Boot fan-level adoption reads
+`getLevel()` while the fan is firing → the read lies (returns 0) → adoption
+fails → the v0.13 unconditional re-assert then writes the believed 0 and
+physically stops the fan ~5 s after any reboot with the fan running (observed
+after an OTA update; also breaks the mid-roast crash-recovery airflow
+guarantee). Proposed fix (not yet implemented): persist commanded fan level
+to NVS on change and restore+assert it at boot instead of trusting a read.
+
 **Robustness + dashboard development** (from the July 2026 code review) is
 **implemented through all five phases** on `feature/robustness-dashboard` —
 firmware v0.9.0, one commit per phase. Full findings and what landed:

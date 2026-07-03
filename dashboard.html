@@ -258,6 +258,17 @@
       <div class="kv" style="margin-top:0.3em">runtime only — reboot restores RMS.
         heat&nbsp;%→power map <span id="pwrMap">?</span> (active only on RMS)</div>
     </div>
+    <div>
+      <h3>FF step cal</h3>
+      fan step <input class="num" id="ffStepSize" value="7">
+      <button id="ffStepBtn" onclick="ffStepStart()">Start</button>
+      <button onclick="ffStepAbort()">Abort</button>
+      <div id="ffStepStatus" class="kv" style="margin-top:0.3em">measures ffK as the
+        fan-step slope Δheat/(Δfan·ΔT), in closed loop at a steady setpoint</div>
+      <div style="margin-top:0.3em">
+        <button id="ffStepApply" onclick="ffStepApplyK()" disabled>Apply ffK</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -502,6 +513,111 @@ function applyTelem(d) {
     if (chartData.length > 14400) chartData.splice(0, chartData.length - 14400);
     drawChart();
   }
+
+  ffStepOnTelem(d);
+}
+
+// ========================= FF step calibration =========================
+// Client-side routine (deliberately not firmware): with the inlet loop
+// holding a setpoint, measure steady heat, step the fan, wait for
+// re-settle, and compute ffK as the fan-sensitivity slope
+//   ffK = Δheat / (Δfan · (SV − amb)).
+// Slope calibration is immune to the plant's standing-loss intercept,
+// which makes the firmware's through-origin FF CAL over-predict whenever
+// it is calibrated below roast temperature. Total steady heat is total
+// steady heat regardless of how P/I/FF split it, so the routine works the
+// same with FF on or off during the test.
+let ffStep = { phase: "idle" };
+
+const FFS_WINDOW    = 20;      // samples (~20 s) the steady check looks at
+const FFS_MIN_DWELL = 30;      // min samples after the step before checking
+const FFS_SV_BAND   = 1.0;     // max |IN − SV| over the window (°C)
+const FFS_HEAT_BAND = 4;       // max heat spread over the window (% points)
+const FFS_TIMEOUT_MS = 300000; // per-phase cap before giving up
+
+function ffStepMsg(msg) { document.getElementById("ffStepStatus").textContent = msg; }
+
+function ffStepStart() {
+  const step = parseInt(document.getElementById("ffStepSize").value, 10);
+  if (!Number.isFinite(step) || step === 0 || Math.abs(step) > 20) {
+    ffStepMsg("enter a fan step between ±1 and ±20"); return;
+  }
+  ffStep = { phase: "baseline", stepSize: step, buf: [],
+             f0: 0, h0: 0, f1: 0, sv: 0, t0: Date.now(), result: null };
+  document.getElementById("ffStepApply").disabled = true;
+  send("FF");   // refresh amb into the FF panel; read back at compute time
+  ffStepMsg("waiting for a steady closed loop…");
+}
+
+function ffStepAbort(msg) {
+  if (ffStep.phase === "idle") return;
+  if (ffStep.phase === "settle") send("OT2 " + ffStep.f0);   // fan was moved
+  ffStep.phase = "idle";
+  ffStepMsg(msg || "aborted (fan restored)");
+}
+
+function ffStepSteady() {
+  const b = ffStep.buf;
+  if (b.length < FFS_WINDOW) return false;
+  const w = b.slice(-FFS_WINDOW);
+  let hMin = Infinity, hMax = -Infinity, dev = 0;
+  for (const s of w) {
+    hMin = Math.min(hMin, s.heat);
+    hMax = Math.max(hMax, s.heat);
+    dev  = Math.max(dev, Math.abs(s.IN - s.sv));
+  }
+  return dev <= FFS_SV_BAND && hMax - hMin <= FFS_HEAT_BAND;
+}
+
+function ffStepMeanHeat() {
+  const w = ffStep.buf.slice(-FFS_WINDOW);
+  return w.reduce((a, s) => a + s.heat, 0) / w.length;
+}
+
+function ffStepOnTelem(d) {
+  if (ffStep.phase === "idle") return;
+  if (d.mode !== "inlet") { ffStepAbort("aborted: loop left inlet mode"); return; }
+  if (Date.now() - ffStep.t0 > FFS_TIMEOUT_MS) { ffStepAbort("aborted: phase timed out"); return; }
+  ffStep.buf.push({ IN: d.IN, heat: d.heat, sv: d.sv });
+
+  if (ffStep.phase === "baseline") {
+    if (!ffStepSteady()) { ffStepMsg("baseline: waiting steady (" + ffStep.buf.length + " s)"); return; }
+    ffStep.f0 = d.fan;
+    ffStep.h0 = ffStepMeanHeat();
+    ffStep.sv = d.sv;
+    const f1 = ffStep.f0 + ffStep.stepSize;
+    const fanMin = parseInt(document.getElementById("iFanMin").value, 10) || 1;
+    if (f1 < fanMin || f1 > 100) { ffStepAbort("aborted: fan " + f1 + " outside " + fanMin + "..100"); return; }
+    ffStep.f1 = f1;
+    ffStep.buf = [];
+    ffStep.t0 = Date.now();
+    send("OT2 " + f1);
+    ffStep.phase = "settle";
+    ffStepMsg("fan " + ffStep.f0 + "→" + f1 + " (baseline heat " +
+              ffStep.h0.toFixed(1) + "); waiting re-settle…");
+
+  } else if (ffStep.phase === "settle") {
+    if (ffStep.buf.length < FFS_MIN_DWELL) return;   // let the transient pass
+    if (!ffStepSteady()) { ffStepMsg("settling after step (" + ffStep.buf.length + " s)"); return; }
+    const h1 = ffStepMeanHeat();
+    send("OT2 " + ffStep.f0);   // restore the baseline fan
+    ffStep.phase = "idle";
+    const amb = parseFloat(document.getElementById("fAmb").value);
+    if (!Number.isFinite(amb)) { ffStepMsg("no ambient — press FF Read (or FF AMB), then rerun"); return; }
+    const dT = ffStep.sv - amb;
+    if (dT < 30) { ffStepMsg("SV−amb only " + dT.toFixed(0) + " °C — too small for a good slope"); return; }
+    const k = (h1 - ffStep.h0) / ((ffStep.f1 - ffStep.f0) * dT);
+    ffStep.result = k;
+    ffStepMsg("ffK = " + k.toFixed(5) + "  (Δheat " + (h1 - ffStep.h0).toFixed(1) +
+              " / Δfan " + (ffStep.f1 - ffStep.f0) + " at ΔT " + dT.toFixed(0) + " °C)");
+    if (k > 0) document.getElementById("ffStepApply").disabled = false;
+    else ffStepMsg("ffK came out ≤ 0 (Δheat " + (h1 - ffStep.h0).toFixed(1) + ") — not applying");
+  }
+}
+
+function ffStepApplyK() {
+  if (!(ffStep.result > 0)) return;
+  send("FF " + ffStep.result.toFixed(5));
 }
 
 function applyTune(d) {

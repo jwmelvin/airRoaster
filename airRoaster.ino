@@ -21,7 +21,7 @@
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.13.0"
+#define FW_VERSION  "0.14.0"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -1687,8 +1687,14 @@ void controlStep(uint32_t dtMs) {
     // Back-calculation anti-windup against the *applied* value, so saturation —
     // including the fan interlock capping heat — doesn't wind the integrator up.
     pidITerm += PID_KAW * (applied - u) * dt;
-    if (pidITerm < 0.0f)   pidITerm = 0.0f;
-    if (pidITerm > 100.0f) pidITerm = 100.0f;
+    // Integral bounds: with feedforward active the integral is a *trim* term
+    // and must be able to go negative to cancel an over-predicting FF — the
+    // old [0, 100] floor held a permanent +10 °C offset on hardware
+    // (2026-07-03 log: FF=80 vs ~50 true, I pinned at 0, P carrying −28).
+    // Bound the steady command I+FF to the actuator range instead:
+    // I ∈ [−ff, 100−ff], which reduces to the original [0, 100] when FF is off.
+    if (pidITerm < -ff)          pidITerm = -ff;
+    if (pidITerm > 100.0f - ff)  pidITerm = 100.0f - ff;
 
     pidPvPrev = pv;
 
@@ -2023,6 +2029,19 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.14.0 2026-07-03  Integral trim can go negative under feedforward. On
+//                     hardware, an over-predicting FF (stale NVS ffK) plus the
+//                     integrator's [0,100] floor produced a permanent +10 °C
+//                     steady-state offset: I needed to sit at −30 to cancel
+//                     the FF excess and couldn't, leaving the P term to carry
+//                     it via standing error. New bounds keep the steady
+//                     command I+FF within 0..100 (I ∈ [−ff, 100−ff]) —
+//                     identical to the old behavior with FF off. Companion
+//                     dashboard change (no firmware cost): an automated FF
+//                     step calibration that measures ffK as the fan-step
+//                     slope Δheat/(Δfan·ΔT) in closed loop — immune to the
+//                     standing-loss intercept that makes the through-origin
+//                     FF CAL over-predict when calibrated at low temperature.
 // v0.13.0 2026-07-02  Remove the DimmerLink auto-reset escalation; rework the
 //                     5 s poll around hardware facts found in first on-roaster
 //                     validation (fan at 50 for ~1 min): module register READS
