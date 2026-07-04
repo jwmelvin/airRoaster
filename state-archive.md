@@ -5,6 +5,74 @@
 > their F-numbers here even after the fixes land, so plan/commit references
 > stay resolvable.
 
+## 2026-07-04 — v0.15.0 validated on roaster; merged to main
+
+`feature/fan-restore` fast-forwarded into `main` (8e31624) after on-roaster
+validation: fan running → OTA update → the fan kept spinning through the
+reboot with the UI in sync. `main` now holds v0.15.0 with the entire v0.12 →
+v0.15 line (OTA, DimmerLink rework, closed-loop/FF fixes, fan-level shadow)
+validated in live operation. Left unchecked: the OTA idle gate drill (moved
+to state-plan.md § NEXT).
+
+## 2026-07-02 — Fan level survives MCU-only resets (v0.15.0)
+
+Post-OTA observation: the fan physically stopped ~5 s after any reboot with
+the fan running — which also broke the mid-roast crash-recovery airflow
+guarantee. Cause: boot fan-level adoption read `getLevel()` while the fan was
+firing → the read lied (returned 0, the v0.13 finding) → the v0.13
+unconditional re-assert wrote the believed 0 to the hardware. Fix
+(`feature/fan-restore`): the commanded fan level is shadowed in
+`RTC_NOINIT_ATTR` RAM (magic + inverted-copy checksum; zero flash wear —
+chosen over NVS for wear concerns, though the math showed NVS had ~60M-write
+headroom). The shadow survives exactly MCU-only resets (crash/WDT/panic/OTA)
+and is invalid after a true power-on, when the fan module is also unpowered
+and 0 is correct.
+
+## 2026-07-03 — Closed-loop standing offset → integral bound + FF step cal (v0.14.0/.1)
+
+First closed-loop test held a rock-steady +10 °C offset at SV 150: a stale
+NVS-persisted ffK made FF=80 where the plant needed ~50, and the integrator's
+[0,100] floor could not go negative to cancel it (P carried −28 via standing
+error — arithmetic matches exactly). v0.14.0 bounds the integral as
+I ∈ [−ff, 100−ff] (steady command I+FF stays in 0..100; identical to before
+when FF is off). The dashboard gained a client-side **FF step cal** panel that
+measures ffK as the fan-step slope Δheat/(Δfan·ΔT) in closed loop — immune to
+the standing-loss intercept that makes the through-origin FF CAL over-predict
+when calibrated at warmup temperatures (measured plant: 25% heat @ ΔT 25,
+~50% @ ΔT 115). **Validated on hardware 2026-07-03** (v0.14.1): closed loop
+settles on SV, and after an FF step calibration the feedforward "almost
+perfectly compensates" fan changes (user's assessment). The trouble-free
+session also implicitly validated the v0.13 dimmer rework (no error flood, no
+fan surges). v0.14.1 raised the inlet over-temp failsafe to 350 °C (SV max
+300).
+
+## 2026-07-02 — DimmerLink reset rework: writes trusted, reads demoted (v0.13.0)
+
+The first hardware run of the v0.7 dimmer robustness code (fan 50, heat 0)
+exposed two DimmerLink hardware behaviors: **register reads lie while a
+module is firing**, and **a soft reset drives the output FULL ON for
+~3–4 s** (fan visibly surged to 100%, no UI indication). The v0.7 reset
+escalation was therefore resetting a healthy module every 15 s; on the heat
+channel it would have been an uncommanded full-power burst, possibly with no
+airflow. v0.13.0 removes autonomous resets entirely (operator-only `DLRESET`,
+heat refused below interlock fan min), re-asserts curve+level unconditionally
+every 5 s (writes are the reliable direction), and demotes all dimmer reads
+to rate-limited diagnostics; level readback checked only at commanded-off.
+Full write-up: [hardware/emi.md](hardware/emi.md) § DimmerLink addendum.
+Validated implicitly by the trouble-free 2026-07-03 session (above).
+
+## 2026-07-02 — OTA firmware updates (v0.12.0)
+
+ArduinoOTA over WiFi, serviced from loop() only while idle (manual mode,
+heat 0); onStart re-zeros the heater at the wire and detaches the task WDT
+for the flash-write stall. verify.sh pins the TinyUF2 OTA partition scheme
+(2×1408K app slots; NVS offset unchanged, tunings survive) and gained
+`./verify.sh ota [host]`. **Validated on hardware 2026-07-02**: USB reflash
+with the new partition table, then a full OTA push (mDNS resolve, auth,
+upload, reboot, WebSocket back up). The idle gate (an OTA push with heat > 0
+should time out on the host, then succeed again at heat 0) remains a
+validation item in state-plan.md § NEXT.
+
 ## 2026-07-02 — Heat power linearization + CURVE command (v0.11.0)
 
 Follow-on from the fan-sensitivity discussion. Two findings first: the firmware

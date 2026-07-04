@@ -4,40 +4,45 @@
 > [state-archive.md](state-archive.md) (what is done, and the review findings
 > these phases answer). Findings are referenced as F-numbers from the archive.
 
-## NEXT — on-roaster validation (nothing below has run on hardware)
+## NEXT — remaining on-roaster validation
 
-All five phases are implemented and compile-verified only. Validation pass,
-roughly in commissioning order (`./verify.sh upload`, then the dashboard):
+The live sessions of 2026-07-02/03/04 (see the archive's v0.12–v0.15 entries)
+validated much of the original checklist; items are marked accordingly.
+Remaining drills, roughly in commissioning order:
 
-1. **Boot sync sanity**: power up with dimmers attached; confirm heat reads 0
-   and a running fan level is adopted (serial prints it). Deliberately reset
-   the MCU mid-fan-run to confirm.
-2. **Sensor path**: BT reads sane and *updates* (continuous mode is new);
-   `STAT` after a few minutes — `loopMaxUs` should now be dominated by the
-   ~30 ms display push, not sensor reads. Compare RTD fault frequency in the
-   log against pre-v0.8.0 roasts (emi.md addendum says what to expect).
+1. ~~**Boot sync sanity**~~ — **done/superseded.** Heat-zero at boot stands;
+   fan-level adoption via `getLevel()` was replaced by the RTC no-init shadow
+   (v0.15.0, reads lie while firing). Fan-through-reboot validated 2026-07-04
+   via a live OTA update with the fan running.
+2. **Sensor path**: BT read sane in live sessions, but the specific checks are
+   unrecorded — `STAT` after a few minutes (`loopMaxUs` should be dominated by
+   the ~30 ms display push, not sensor reads); compare RTD fault frequency in
+   the log against pre-v0.8.0 roasts (emi.md addendum says what to expect).
 3. **Failsafe drills** (roaster cold, heat low): engage `INLET`, unplug the
    inlet TC → expect `inlet failsafe: inlet PV stale` within ~3 s, heat 0,
    mode manual. Confirm a TUNE aborts the same way.
-4. **Telemetry + dashboard**: connect, watch the chart; run the commissioning
-   sequence end-to-end (TUNE → APPLY → FF AMB/CAL → INLET); save a log and a
-   CSV; kill/restore WiFi to see auto-reconnect on both sides.
+4. **Telemetry + dashboard** — **mostly done**: the commissioning sequence
+   (TUNE → APPLY → FF cal → INLET) ran end-to-end in the 2026-07-03 session.
+   Still unchecked: kill/restore WiFi to see auto-reconnect on both sides.
 5. **WDT confidence**: none of the normal paths (tune, big display repaints,
    WS bursts) should approach 8 s — `loopMaxUs` gives the margin number.
-6. **DimmerLink reset escalation** is best left untested unless a module
-   actually errors; verify the fw-version line appears at boot.
+6. ~~**DimmerLink reset escalation**~~ — **superseded.** v0.13.0 removed
+   autonomous resets entirely (soft reset drives the output full-on for
+   ~3–4 s); resets are operator-only via `DLRESET`. The fw-version line at
+   boot is still worth a glance.
 7. **Interlock config (v0.10.0)**: from the dashboard panel set soft mode and
    custom limits, confirm the heat cap follows the fan slider accordingly, then
    power-cycle and confirm the values and mode survive (NVS). Try an invalid
    set (`IL 0 55 30`) and confirm it is rejected.
-8. **Power linearization (v0.11.0)**: `OT1 50` should now produce ~half max
-   heater power (dimmer level ~71 — check with the DimmerLink readback or the
-   audit staying quiet). **Re-run `TUNE` and `FF CAL`** — stored gains/ffK are
-   in old dimmer units. Then verify closed-loop tracking at both low and high
-   heat; the point of the map is that the same gains hold across the range.
-9. **Curve experiments** (`CURVE FAN 0|2`, optional): compare fan response per
-   level step on the dashboard chart; expectation is RMS (1) remains best.
-   Reboot restores RMS automatically.
+8. ~~**Power linearization (v0.11.0)**~~ — **done.** TUNE and FF calibration
+   were re-run post-map; closed loop settles on SV and FF compensates fan
+   steps (validated 2026-07-03, v0.14.1).
+9. **OTA idle gate (v0.12.0)**: an OTA push with heat > 0 should time out on
+   the host, then succeed again at heat 0. The happy path (idle OTA push,
+   reboot, fan preserved) is validated.
+10. **Curve experiments** (`CURVE FAN 0|2`, optional): compare fan response per
+    level step on the dashboard chart; expectation is RMS (1) remains best.
+    Reboot restores RMS automatically.
 
 ## Completed phases (specs kept for reference; details in the archive)
 
@@ -180,7 +185,7 @@ Single file, zero dependencies, works from `file://`. Grouped panels:
 - ET RTD probe installation → set `RTD_ET_ENABLED 1` (sensor code is ready).
 - BME688 ambient sensor on STEMMA QT (`0x76/0x77`) — would give a true room
   ambient for feedforward instead of the cold-junction estimate.
-- DimmerLink curve-mode experiments (work.md): curve is set to RMS (mode 1) at
+- DimmerLink curve-mode experiments: curve is set to RMS (mode 1) at
   startup; LINEAR/LOG untested.
 - Move `controlStep()` to a pinned FreeRTOS task if `STAT` evidence (post
   Phase 2, when the metric is honest) ever shows the cooperative loop failing

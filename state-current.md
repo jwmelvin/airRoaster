@@ -51,84 +51,30 @@ Compile after every meaningful edit; the script surfaces sketch-local warnings.
   no sensors, and no WiFi present (log, hold safe defaults, keep serving serial).
 
 **Git.** Development happens on feature branches; `main` holds roast-tested
-firmware. `feature/ota-updates` (OTA + dimmer rework + closed-loop/FF fixes,
-v0.14.1, validated in live operation) is merged into `main`; start the next
-effort on a fresh branch off `main`. Commit per phase with
+firmware. `main` is at **v0.15.0** (2026-07-04): `feature/robustness-dashboard`,
+`feature/ota-updates` (OTA + dimmer rework + closed-loop/FF fixes, v0.14.1),
+and `feature/fan-restore` (v0.15.0) are all merged and validated in live
+operation; start the next effort on a fresh branch off `main`. Commit per
+phase with
 a message naming the phase. The user's Artisan config churn (`artisan/*.aset`,
 `*.alog`) may be present in the working tree — never sweep it into a firmware
 commit; stage files explicitly.
 
-## Active effort (2026-07-02)
+## Active effort (2026-07-04)
 
-**OTA firmware updates** (`feature/ota-updates`, v0.12.0): ArduinoOTA over
-WiFi, serviced from loop() only while idle (manual mode, heat 0); onStart
-re-zeros the heater at the wire and detaches the task WDT for the flash-write
-stall. verify.sh now pins the TinyUF2 OTA partition scheme (2×1408K app slots;
-NVS offset unchanged, tunings survive) and gained `./verify.sh ota [host]`.
-**Validated on hardware 2026-07-02**: USB reflash with the new partition
-table, then a full OTA push (mDNS resolve, auth, upload, reboot, WebSocket
-back up) — the device now runs OTA-delivered firmware. Still to check: the
-idle gate (an OTA push with heat > 0 should time out on the host, then
-succeed again at heat 0).
+**None — between efforts.** `feature/fan-restore` (v0.15.0, RTC no-init fan
+shadow) was **validated on the roaster 2026-07-04** — fan running → OTA
+update → fan kept spinning through the reboot with the UI in sync — and
+fast-forwarded into `main`, which now holds v0.15.0. The full v0.12 → v0.15
+development record (OTA updates, the v0.13 DimmerLink rework, the v0.14
+closed-loop/feedforward fixes, the v0.15 fan-level shadow) is in
+[state-archive.md](state-archive.md). Start the next effort on a fresh branch
+off `main`.
 
-**Validation finding → v0.13.0 (same branch).** The first hardware run of the
-v0.7 dimmer robustness code (fan 50, heat 0) exposed two DimmerLink hardware
-behaviors — register reads lie while a module is firing, and a soft reset
-drives the output FULL ON for ~3-4 s (fan visibly surged to 100%, no UI
-indication). The v0.7 reset escalation was therefore resetting a healthy
-module every 15 s; on the heat channel it would have been an uncommanded
-full-power burst, possibly with no airflow. v0.13.0 removes autonomous resets
-entirely (operator-only `DLRESET`, heat refused below interlock fan min),
-re-asserts curve+level unconditionally every 5 s (writes are the reliable
-direction), and demotes all dimmer reads to rate-limited diagnostics; level
-readback checked only at commanded-off. Full write-up:
-[hardware/emi.md](hardware/emi.md) § DimmerLink addendum. Needs on-roaster
-re-validation: fan at 50 must now run error-free and surge-free.
-
-**Closed-loop finding → v0.14.0.** First closed-loop test (2026-07-03 log)
-held a rock-steady +10 °C offset at SV 150: a stale NVS-persisted ffK made
-FF=80 where the plant needed ~50, and the integrator's [0,100] floor could
-not go negative to cancel it (P carried −28 via standing error — arithmetic
-matches exactly). v0.14.0 bounds the integral as I ∈ [−ff, 100−ff] (steady
-command I+FF stays in 0..100; identical to before when FF is off). The
-dashboard gained a client-side **FF step cal** panel that measures ffK as the
-fan-step slope Δheat/(Δfan·ΔT) in closed loop — immune to the standing-loss
-intercept that makes the through-origin FF CAL over-predict when calibrated
-at warmup temperatures (measured plant: 25% heat @ ΔT 25, ~50% @ ΔT 115).
-**Validated on hardware 2026-07-03** (v0.14.1): closed loop settles on SV,
-and after an FF step calibration the feedforward "almost perfectly
-compensates" fan changes (user's assessment). The trouble-free session also
-implicitly validates the v0.13 dimmer rework (no error flood, no fan surges
-with the fan running). Over-temp failsafe raised to 350 °C (SV max 300).
-
-**Fan stop after reboot → fixed in v0.15.0** (`feature/fan-restore`). Boot
-fan-level adoption read `getLevel()` while the fan was firing → the read lied
-(returned 0) → the v0.13 unconditional re-assert wrote the believed 0 and
-physically stopped the fan ~5 s after any reboot with the fan running
-(observed post-OTA; also broke the mid-roast crash-recovery airflow
-guarantee). Fix: the commanded fan level is shadowed in `RTC_NOINIT_ATTR` RAM
-(magic + inverted-copy checksum; zero flash wear — chosen over NVS for wear
-concerns, though the math showed NVS had ~60M-write headroom). The shadow
-survives exactly MCU-only resets (crash/WDT/panic/OTA) and is invalid after a
-true power-on, when the fan module is also unpowered and 0 is correct. Needs
-on-roaster validation: fan running → OTA update → fan should keep spinning
-through the reboot with the UI still in sync.
-
-**Robustness + dashboard development** (from the July 2026 code review) is
-**implemented through all five phases** on `feature/robustness-dashboard` —
-firmware v0.9.0, one commit per phase. Full findings and what landed:
-[state-archive.md](state-archive.md). Remaining planned work (chiefly
-**on-roaster validation** — nothing has run on hardware yet, only
-compile-verify): [state-plan.md](state-plan.md).
-
-| Phase | Scope | Status |
-|-------|-------|--------|
-| 0 | Review, datasheet verification, state docs | done |
-| 1 | Firmware safety: boot dimmer sync, inlet failsafe, checked dimmer writes, watchdog (v0.7.0) | done |
-| 2 | MAX31865 direct-register continuous-mode driver (v0.8.0) | done |
-| 3 | Protocol hardening + telemetry push (v0.9.0) | done |
-| 4 | Dashboard rebuild: grouped panels, tuning chart, log capture/filter/export | done |
-| 5 | Docs sync: README, emi.md addendum | done |
+Remaining known work: the unchecked on-roaster validation items in
+[state-plan.md](state-plan.md) § NEXT (failsafe drills, WDT margin, RTD
+fault-rate comparison, interlock persistence, OTA idle gate, WiFi
+kill/restore) and the unscheduled ideas in § Later / not scheduled.
 
 **Key verified facts the work rests on** (traceable to datasheets, see archive):
 - Adafruit_MAX31865 v1.6.2 `temperature()` is a blocking one-shot (~75 ms) that
@@ -145,4 +91,6 @@ compile-verify): [state-plan.md](state-plan.md).
   (cold junction, 0.0625 °C) is available as an ambient estimate.
 - After an MCU-only reset the DimmerLink modules are assumed to hold their last
   levels (power-on default is undocumented) — boot must force heat to 0 and
-  adopt the fan's actual level via `getLevel()`.
+  restore the fan level. DimmerLink register reads (incl. `getLevel()`) lie
+  while a module is firing (v0.13 finding), so the fan level is recovered from
+  the RTC no-init shadow (v0.15), never from readback.
