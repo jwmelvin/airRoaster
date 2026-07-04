@@ -111,6 +111,46 @@ Caveats:
 
 ## Interfaces
 
+### Dashboard ([dashboard.html](dashboard.html))
+
+A single self-contained HTML file at the repo root — no build step, no
+dependencies, works opened straight from `file://`. It is the commissioning
+and tuning console: it connects to the device's WebSocket (below) and every
+button simply sends one of the plain-text commands documented in the next
+section, so anything the dashboard does can also be typed by hand.
+
+- **Connection bar** — device IP (remembered in the browser), connect/
+  disconnect with optional auto-reconnect, link indicator, and always-visible
+  safety actions: `HEAT 0`, `INLET OFF`, `TUNE ABORT`.
+- **Status** — mode badge (manual / inlet / tune), heat bar showing the
+  applied level against the requested level (so an interlock cap is visible at
+  a glance), fan bar, interlock state.
+- **Temperatures** — large IN / BT / ET readouts with per-channel fault
+  badges, current setpoint, and the age of the last telemetry frame.
+- **Inlet control chart** — rolling strip chart of IN, SV, and BT against
+  heat/fan % , fed by the telemetry push; selectable window (1–60 min), pause,
+  BT toggle, CSV export of the buffer.
+- **Setpoint / Manual** — engage or release the closed loop; direct heat and
+  fan entry with fan presets and ±1 % nudges.
+- **Tuning panels** — PID editor (prefilled from device reports); feedforward
+  (set/read `ffK`, seed ambient, through-origin CAL, off); step test (start
+  `TUNE`, then apply the tight or conservative gain suggestion); and **FF step
+  cal**, a client-side calibration that measures `ffK` from a fan step while
+  the loop holds (the preferred method — see
+  [Feedforward](#feedforward-airflow-compensation)).
+- **Interlock** — hard/soft mode and the three limits, read/set live
+  (NVS-persisted on the device).
+- **Curves** — runtime dimmer-curve selection per channel, with an indicator
+  for whether the heat power map is active.
+- **Console + log** — free-form command line, every message timestamped into
+  a capped capture buffer with per-class show/hide (telemetry hidden by
+  default) and free-text filtering, **Save log** to a file. The device keeps
+  only 8 error-log entries in RAM, so this buffer is the durable record; the
+  dashboard requests `LOG` on connect.
+- **Commissioning sequence** — a collapsible guided checklist from first
+  flash through step-test, gain apply, feedforward calibration, and
+  closed-loop verification (see [Commissioning](#commissioning)).
+
 ### WebSocket (`ws://<device-ip>:81`)
 
 The controller speaks two protocols on the same connection:
