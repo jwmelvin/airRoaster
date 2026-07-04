@@ -1,6 +1,6 @@
 # future work
 
-test dimmerlink curves(https://www.rbdimmer.com/docs/dimmerlink-I2CCommunication)
+
 
 # utilities
 
@@ -9,7 +9,11 @@ test dimmerlink curves(https://www.rbdimmer.com/docs/dimmerlink-I2CCommunication
 Builds an Artisan background `.alog` whose inlet setpoint curve drives the
 firmware's `INLET` closed-loop control. Two output modes share the same curve
 parameters (`ror_endpoint` / `anchor` / `ror`); pick shape once, choose how it's
-written.
+written. The title and output filename are derived from the curve parameters
+unless overridden (`--title`, `--out`): in events mode the file is named
+`bkgd_inlet_<T_start>+<ror_start>-<T_drop>@<t_drop>.alog` (e.g.
+`bkgd_inlet_150+40-280@330.alog`; `..` for ror mode's end rate, `-T@t` pairs
+for anchor mode), otherwise `inlet_background.alog`.
 
 ### Discrete events + ramped playback (preferred)
 
@@ -21,16 +25,18 @@ the points reproduce as a smooth setpoint ramp. Requires the Artisan playback
 config in `artisan/airRoaster.aset` (Playback Events on, by time, T_inlet
 playback+ramp).
 
+Typical invocation (writes `artisan/bkgd_inlet_150+40-280@330.alog`):
+
 ```
-python3 artisan/make_inlet_background.py --mode ror_endpoint \
-  --T_start 175 --T_drop 245 --t_drop 330 --ror_start 22 \
-  --unit C --events 8 --out inlet_events.alog
+cd artisan && \
+python3 make_inlet_background.py --mode ror_endpoint --unit C --events 8 --tail-bias 3 \
+  --T_start 150 --ror_start 40 --T_drop 280 --t_drop 330
 ```
 
 Point clustering: `--tail-width` (final fraction of the roast over which points
 concentrate, finest at the drop; default 0.4) and `--tail-bias` (strength; 0 =
-even spacing). Events are charge-aligned (schedule starts at CHARGE). See
-`--help` for the anchor/RoR modes.
+even spacing; default 2). Events are charge-aligned (schedule starts at CHARGE).
+See `--help` for the anchor/RoR modes.
 
 ### Continuous channel (legacy, PID Follow-Background)
 

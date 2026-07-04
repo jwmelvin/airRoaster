@@ -332,6 +332,29 @@ def build_curve_ror_endpoint(args):
     return timex, values, fc_time, ror_end, avg
 
 
+def default_outname(args):
+    """Derive an output filename from the curve parameters (events mode only).
+
+    ror_endpoint: bkgd_inlet_<T_start>+<ror_start>-<T_drop>@<t_drop>.alog
+    ror:          bkgd_inlet_<T_start>+<ror_start>..<ror_end>@<t_drop>.alog
+    anchor:       bkgd_inlet_<T_start>-<T_dry>@<t_dry>-<T_fc>@<t_fc>-<T_drop>@<t_drop>.alog
+    """
+    def n(v):
+        return '{:g}'.format(v)
+
+    if args.mode == "ror_endpoint":
+        core = "{}+{}-{}@{}".format(n(args.T_start), n(args.ror_start),
+                                    n(args.T_drop), n(args.t_drop))
+    elif args.mode == "ror":
+        core = "{}+{}..{}@{}".format(n(args.T_start), n(args.ror_start),
+                                     n(args.ror_end), n(args.t_drop))
+    else:  # anchor
+        core = "{}-{}@{}-{}@{}-{}@{}".format(
+            n(args.T_start), n(args.T_dry), n(args.t_dry),
+            n(args.T_fc), n(args.t_fc), n(args.T_drop), n(args.t_drop))
+    return "bkgd_inlet_{}.alog".format(core)
+
+
 def default_title(args):
     """Generate a title like '350 F, +60/min to 550 F @ 5:30' from curve params.
 
@@ -663,7 +686,10 @@ artisan usage
     p.add_argument("--no-mirror", action="store_true",
                    help="blank the BT slot; only B3 carries the inlet SV curve "
                         "(events mode: don't draw the SV polyline as background BT)")
-    p.add_argument("--out", default="inlet_background.alog")
+    p.add_argument("--out", default=None,
+                   help="output filename (default: derived from curve params "
+                        "in events mode, e.g. bkgd_inlet_350+60-550@330.alog; "
+                        "otherwise inlet_background.alog)")
 
     # Discrete-event (ramped playback) output
     p.add_argument("--events", nargs="?", type=int, const=8, default=None,
@@ -728,6 +754,10 @@ artisan usage
         profile, pts = build_events_alog(timex, inlet_values, args)
     else:
         profile, bvar = build_alog(timex, inlet_values, args, anchors)
+
+    if args.out is None:
+        args.out = (default_outname(args) if args.events is not None
+                    else "inlet_background.alog")
 
     # Artisan reads .alog via ast.literal_eval (Python repr, not JSON).
     with open(args.out, "w") as f:
