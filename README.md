@@ -12,6 +12,8 @@ ESP32-based controller for a hot-air coffee roaster. Controls a heating element 
 | Display | FeatherWing OLED - 128x64 OLED, https://www.adafruit.com/product/4650 (SH1107 64×128 OLED), I2C address `0x3C` |
 | Dimmer interface | RBDimmer DimmerLink ([overview](https://www.rbdimmer.com/docs/dimmerlink-overview), [I2C protocol](https://www.rbdimmer.com/docs/dimmerlink-I2CCommunication)), I2C address heat: `0x51`; fan: `0x52`. Curve is set to RMS (mode `1`) at startup; switchable at runtime with the `CURVE` command. |
 | Dimmers |Dimmers purchased from RobotDyn Official Store on AliExpress. "Dimmer AC module High Power for 40A 600V High Load, 1 Channel, 3.3V/5V logic"; "Dimmer AC module for 16A/24A 600V High Load, 1 Channel, 3.3V/5V logic with current load control" |
+| RTD amplifiers (BT/ET) | 2× MAX31865, https://www.adafruit.com/product/3648 (PT1000 version, 4.3 kΩ reference), on the shared SPI bus. BT (bean) probe on CS `GPIO 10`, 4-wire PT1000; ET board on CS `GPIO 9` has no probe yet (`RTD_ET_ENABLED 0`, channel reads 0.0). Driven register-direct in continuous auto-convert mode via `max31865_direct.h`, not the Adafruit library — see [Dependencies](#dependencies) for why, and `hardware/emi.md` for the RTD noise/fault history. |
+| Thermocouple amplifier (IN) | MAX31855, https://www.adafruit.com/product/269, K-type inlet probe, on the shared SPI bus (CS `GPIO 8`). Read via the Adafruit library (non-blocking, free-running conversions). Its cold-junction temperature doubles as the board-ambient estimate for `FF AMB`. |
 | Heater | from sdm2020_tools on eBay and listed as "1 set 230V 3600W 132.387 Heating Element & mica casing for hot air blower guns". Its power in my use is a little higher because I use 240V.|
 | Blower | Ametek 116392-00 |
 
