@@ -170,11 +170,14 @@
       <option value="900" selected>15 min</option>
       <option value="1800">30 min</option>
       <option value="3600">60 min</option>
+      <option value="0">all</option>
     </select>
     <label class="chk"><input type="checkbox" id="chartPause"> pause</label>
     <label class="chk"><input type="checkbox" id="chartBT" checked> BT</label>
     <button onclick="exportCSV()">Export CSV</button>
-    <button onclick="chartData.length=0; drawChart()">Clear</button>
+    <button onclick="document.getElementById('csvFile').click()">Load CSV</button>
+    <input type="file" id="csvFile" accept=".csv,text/csv" style="display:none">
+    <button onclick="chartData.length=0; chartLoaded=false; drawChart()">Clear</button>
   </div>
 
   <div class="tune-grid" style="margin-top:0.8em">
@@ -508,6 +511,11 @@ function applyTelem(d) {
   document.getElementById("termFF").textContent = inCtl ? d.ff.toFixed(1) : "–";
 
   if (!document.getElementById("chartPause").checked) {
+    if (chartLoaded) {   // resuming live capture: drop the file data first
+      chartData.length = 0;
+      chartLoaded = false;
+      logLine("-- live telemetry resumed; loaded CSV cleared from chart --", "other");
+    }
     chartData.push({ t: Date.now(), IN: d.IN, BT: d.BT, sv: d.mode === "inlet" ? d.sv : null,
                      heat: d.heat, fan: d.fan, p: d.p, i: d.i, dd: d.d, ff: d.ff, mode: d.mode });
     if (chartData.length > 14400) chartData.splice(0, chartData.length - 14400);
@@ -770,6 +778,47 @@ function exportCSV() {
            rows.join("\n"), "text/csv");
 }
 
+// Load a previously exported CSV back into the chart buffer. Columns are
+// matched by header name, so order doesn't matter; blank SV means "no
+// setpoint" (manual mode), same as the export writes it.
+function loadCSVFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const lines = reader.result.split(/\r?\n/).filter(l => l.trim() !== "");
+    if (lines.length < 2) { logLine("CSV load: no data rows in " + file.name, "error"); return; }
+    const idx = {};
+    lines[0].split(",").forEach((c, i) => { idx[c.trim().toLowerCase()] = i; });
+    if (idx.time === undefined || idx.in === undefined) {
+      logLine("CSV load: missing time/IN columns — expected a dashboard export", "error");
+      return;
+    }
+    const num = (f, i) => { const v = parseFloat(f[i]); return Number.isFinite(v) ? v : 0; };
+    const pts = [];
+    for (let n = 1; n < lines.length; n++) {
+      const f = lines[n].split(",");
+      const t = Date.parse(f[idx.time]);
+      if (!Number.isFinite(t)) continue;
+      const svRaw = idx.sv === undefined ? "" : (f[idx.sv] || "").trim();
+      pts.push({ t: t, IN: num(f, idx.in), BT: num(f, idx.bt),
+                 sv: svRaw === "" ? null : parseFloat(svRaw),
+                 heat: num(f, idx.heat), fan: num(f, idx.fan),
+                 p: num(f, idx.p), i: num(f, idx.i), dd: num(f, idx.d), ff: num(f, idx.ff),
+                 mode: idx.mode === undefined ? "" : (f[idx.mode] || "").trim() });
+    }
+    if (!pts.length) { logLine("CSV load: no parsable rows in " + file.name, "error"); return; }
+    pts.sort((a, b) => a.t - b.t);
+    chartData.length = 0;
+    for (const p of pts) chartData.push(p);
+    chartLoaded = true;
+    document.getElementById("chartPause").checked = true;   // don't mix in live samples
+    logLine("-- loaded " + pts.length + " points from " + file.name +
+            " (chart paused; unpause or Clear to resume live) --", "other");
+    drawChart();
+  };
+  reader.onerror = () => logLine("CSV load: could not read " + file.name, "error");
+  reader.readAsText(file);
+}
+
 function download(name, content, mime) {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([content], { type: mime }));
@@ -784,6 +833,7 @@ function fileStamp() {
 
 // ============================ chart ============================
 const chartData = [];   // { t, IN, BT, sv, heat, fan, p, i, dd, ff, mode }
+let chartLoaded = false; // buffer came from a CSV file: axis follows the data
 
 function drawChart() {
   const cv = document.getElementById("chart");
@@ -796,15 +846,20 @@ function drawChart() {
 
   const padL = 38, padR = 34, padT = 8, padB = 18;
   const winS = parseInt(document.getElementById("chartWin").value, 10);
-  const now = Date.now();
+  // Loaded-from-file data is historical, so the right edge sits at the last
+  // sample rather than the wall clock; live data keeps tracking "now".
+  const now = chartLoaded && chartData.length
+    ? chartData[chartData.length - 1].t : Date.now();
   // Time axis autoscales to the data actually collected, up to the selected
-  // window: a young session fills the full width instead of huddling at the
-  // right edge. Floor of 60 s so the first samples don't stretch absurdly.
-  let t0 = now - winS * 1000;
+  // window ("all" = 0 spans the whole buffer): a young session fills the full
+  // width instead of huddling at the right edge. Floor of 60 s so the first
+  // samples don't stretch absurdly.
+  let t0 = winS ? now - winS * 1000
+                : (chartData.length ? chartData[0].t : now - 60 * 1000);
   if (chartData.length && chartData[0].t > t0) {
     t0 = Math.min(chartData[0].t, now - 60 * 1000);
   }
-  const spanMs = now - t0;
+  const spanMs = Math.max(now - t0, 1000);
   const pts = chartData.filter(p => p.t >= t0);
 
   // temperature scale over visible temp series
@@ -909,6 +964,15 @@ document.querySelectorAll(".fcls").forEach(b => b.addEventListener("change", () 
   refilterOut();
 }));
 document.getElementById("ftext").addEventListener("input", refilterOut);
+
+document.getElementById("csvFile").addEventListener("change", e => {
+  if (e.target.files.length) loadCSVFile(e.target.files[0]);
+  e.target.value = "";   // allow re-loading the same file
+});
+// redraw on view changes — matters when paused/loaded, where no telemetry
+// tick will trigger it
+["chartWin", "chartBT", "chartPause"].forEach(id =>
+  document.getElementById(id).addEventListener("change", drawChart));
 
 document.getElementById("cmd").addEventListener("keydown", e => {
   if (e.key === "Enter") sendInput();
