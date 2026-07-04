@@ -62,7 +62,18 @@ commit; stage files explicitly.
 
 ## Active effort (2026-07-04)
 
-**None — between efforts.** `feature/fan-restore` (v0.15.0, RTC no-init fan
+**INLET 0 semantics → v0.15.1** (on `main`). A follow-background test (2026-07-04 dashboard CSV)
+ended with Artisan's SV slider at 0; the firmware clamped it to
+`INLET_SV_MIN_C` (0 °C) and kept the loop "engaged" on an unreachable target —
+P railed at about −280 with heat pinned at 0 for the whole cooldown.
+`INLET <sv ≤ 0>` now means "no setpoint": drop to manual, heat 0 (cooldown
+intent). `INLET OFF` unchanged (disengage, hold heat). New tool
+`downsample_logs.py` (repo root) condenses .alog / dashboard-CSV / dashboard
+txt logs into a compact summary for review, and mirrors the semantics (SV ≤ 0
+blanked from series and tracking stats). Compile-verified; on-roaster check is
+trivial: SV slider to 0 → mode `manual`, heat 0.
+
+Otherwise **between efforts.** `feature/fan-restore` (v0.15.0, RTC no-init fan
 shadow) was **validated on the roaster 2026-07-04** — fan running → OTA
 update → fan kept spinning through the reboot with the UI in sync — and
 fast-forwarded into `main`, which now holds v0.15.0. The full v0.12 → v0.15

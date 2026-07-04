@@ -21,7 +21,7 @@
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.15.0"
+#define FW_VERSION  "0.15.1"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -1382,6 +1382,7 @@ void processCommand(String cmd, int8_t clientNum) {
 
     } else if (kw == "INLET") {
         // INLET <degC> — set inlet setpoint and engage closed-loop control.
+        // INLET 0        — no setpoint: disengage and drop heat to 0.
         // INLET OFF      — disengage; heat holds at its current level.
         if (n < 2) return;
         String upper = tokens[1];
@@ -1396,7 +1397,16 @@ void processCommand(String cmd, int8_t clientNum) {
                 return;   // garbage must not engage the loop (or abort a tune)
             }
             if (tunePhase != TUNE_IDLE) abortTune("inlet override");
-            engageInlet(sv);
+            if (sv <= 0.0f) {
+                // A heater can't track 0 °C, and Artisan's SV slider parks at
+                // 0 — the loop would otherwise rail P negative and pin heat
+                // at 0 while still "engaged". Operator intent is cooldown.
+                ctrlMode = MODE_MANUAL;
+                requestedHeatLevel = 0;
+                applyInterlock();
+            } else {
+                engageInlet(sv);
+            }
         }
         flagDisplayUpdate = true;
         broadcastStatus();
@@ -2067,6 +2077,13 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.15.1 2026-07-04  INLET 0 (or any sv <= 0) now means "no setpoint": drop
+//                     to manual with heat 0 instead of engaging the loop on an
+//                     unreachable target. Previously a follow-background run
+//                     ending with Artisan's SV slider at 0 left the loop
+//                     "engaged" railing P at about -280 with heat pinned at 0
+//                     (2026-07-04 log). INLET OFF is unchanged (disengage,
+//                     hold heat) — 0 is the cooldown intent, OFF the handoff.
 // v0.15.0 2026-07-05  Fan level survives MCU-only resets via RTC no-init RAM.
 //                     Boot fan adoption previously read getLevel(), which lies
 //                     while the module is firing — so after any reboot with

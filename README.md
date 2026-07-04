@@ -189,6 +189,7 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 | `OT2 UP` | `OT2 UP` | Increase fan by `DUTY_STEP` |
 | `OT2 DOWN` | `OT2 DOWN` | Decrease fan by `DUTY_STEP` |
 | `INLET <degC>` | `INLET 165` | Set inlet setpoint and engage closed-loop control (see [Inlet temperature control](#inlet-temperature-control)) |
+| `INLET 0` | `INLET 0` | No setpoint: disengage closed-loop control and set heat to 0 (cooldown) |
 | `INLET OFF` | `INLET OFF` | Disengage closed-loop control; heat holds at its current level |
 | `PID` | `PID` | Report current PID gains, setpoint, and mode |
 | `PID <kp ki kd>` | `PID 1.5 0.05 0` | Set PID gains live (for manual tuning) |
@@ -336,6 +337,10 @@ switchable mode layered on top of manual heat control.
   sets the setpoint. Sending `INLET` again just retargets the setpoint and keeps
   the integrator, so a gradually-changing setpoint during a roast (e.g. driven
   from an Artisan background profile) does not reset the loop.
+- `INLET 0` (or any setpoint ≤ 0) means "no setpoint": returns to `manual`
+  with heat 0. A heater cannot track 0 °C, and Artisan's SV slider parks at 0
+  at the end of a background playback — treating that as a target would leave
+  the loop railed with heat pinned at 0.
 - `INLET OFF` returns to `manual`, holding heat at its current level.
 - `OT1 <value>` is an instant manual override (drops back to `manual`).
 
