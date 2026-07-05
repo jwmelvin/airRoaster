@@ -43,6 +43,13 @@ Remaining drills, roughly in commissioning order:
 10. **Curve experiments** (`CURVE FAN 0|2`, optional): compare fan response per
     level step on the dashboard chart; expectation is RMS (1) remains best.
     Reboot restores RMS automatically.
+11. **Cooldown guard (v0.16.0)** — *mostly validated 2026-07-05*: deferral,
+    hold, auto-release, and soak-back re-enforcement all observed working on
+    the roaster. The 30 s dwell released early into soak-back (two re-enforce
+    cycles), so the dwell is now adjustable (`COOL DWELL <s>`, NVS): find the
+    dwell that makes one release stick (start ~90–120 s) and set it. Still
+    unchecked: `COOL MIN`/`COOL DWELL` surviving a power cycle (NVS), and
+    `COOL OFF` releasing a held fan immediately.
 
 ## Completed phases (specs kept for reference; details in the archive)
 

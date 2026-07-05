@@ -62,7 +62,28 @@ commit; stage files explicitly.
 
 ## Active effort (2026-07-04)
 
-**INLET 0 semantics → v0.15.1** (on `main`). A follow-background test (2026-07-04 dashboard CSV)
+**Cooldown guard → v0.16.0** (on `main`). Minimum fan-shutdown
+criteria, per operator request: the fan may stop only once the inlet has
+stayed below `COOL_FAN_OFF_C` (70 °C) for the release dwell (`coolDwellS`,
+default 30 s, live-set via `COOL DWELL <1-3600>`, NVS) on fresh
+readings with heat off. **First on-roaster run 2026-07-05**: deferral, hold,
+and auto-release all worked, but the 30 s dwell released into soak-back and
+the guard re-enforced twice (fan pulsed twice at ~17:36–17:38 on the log) —
+which is why the dwell became adjustable; raise it until one release sticks. An `OT2` below `coolFanMin` (default 50, live-set via
+`COOL MIN`, NVS namespace "cool") while hot is *deferred* (fan
+held at `coolFanMin`, requested level auto-applies when the criteria are met);
+a hot roaster with the fan below minimum gets airflow forced back on
+autonomously (manual-mode requested heat zeroed so the raised fan can't
+un-block interlock-capped heat). Stale-hot sensor keeps the fan running;
+`COOL OFF` is the runtime-only operator escape (re-armed every boot). New
+`COOL` command, `cool` push, status `cool` field, OLED row 7; OT2 refactored
+through commit-on-ack `setFanLevel()`. Dashboard gains a Cooldown panel
+(arm/disarm, fan-min read/set, hold-state line; prefilled from `COOL` on
+connect) and a cooldown line in the Status panel. Compile-verified; dashboard
+checked in browser preview with simulated pushes; on-roaster drill is
+state-plan.md § NEXT item 11. README + state docs updated.
+
+**Prior: INLET 0 semantics → v0.15.1** (on `main`). A follow-background test (2026-07-04 dashboard CSV)
 ended with Artisan's SV slider at 0; the firmware clamped it to
 `INLET_SV_MIN_C` (0 °C) and kept the loop "engaged" on an unreachable target —
 P railed at about −280 with heat pinned at 0 for the whole cooldown.

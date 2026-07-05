@@ -53,6 +53,9 @@ If `secrets.h.example` does not exist yet, create `secrets.h` manually:
 | `WDT_TIMEOUT_MS` | `8000` | Task watchdog: panic→reset if the loop hangs this long |
 | `INLET_PV_STALE_MS` | `3000` | Closed loop / tune failsafe if the inlet reading is older than this |
 | `INLET_OVERTEMP_C` | `350` | Closed loop failsafe above this inlet temperature (°C) — overshoot margin above the 300 °C setpoint max |
+| `COOL_FAN_OFF_C` | `70` | Cooldown guard: the fan may stop only after the inlet stays below this (°C) — see [Cooldown guard](#cooldown-guard) |
+| `COOL_DWELL_S_DFLT` | `30` | Default dwell (s) the inlet must stay below `COOL_FAN_OFF_C` before a deferred fan level is applied (runtime-set via `COOL DWELL`, NVS-persisted) |
+| `COOL_FAN_MIN_DFLT` | `50` | Default fan level enforced while cooling down (runtime-set via `COOL MIN`, NVS-persisted) |
 | `WIFI_CONNECT_TIMEOUT_MS` | `15000` | Boot-time WiFi wait; the roaster starts without network after this |
 | `TELEM_PERIOD_MS` | `1000` | Telemetry push cadence (runtime-adjustable via `TELEM`) |
 | `OTA_HOSTNAME` | `airroaster` | mDNS name the OTA updater answers to (`airroaster.local`) |
@@ -124,7 +127,8 @@ section, so anything the dashboard does can also be typed by hand.
   safety actions: `HEAT 0`, `INLET OFF`, `TUNE ABORT`.
 - **Status** — mode badge (manual / inlet / tune), heat bar showing the
   applied level against the requested level (so an interlock cap is visible at
-  a glance), fan bar, interlock state.
+  a glance), fan bar, interlock state, and cooldown-guard state (whether the
+  fan is being held with a release pending).
 - **Temperatures** — large IN / BT / ET readouts with per-channel fault
   badges, current setpoint, and the age of the last telemetry frame.
 - **Inlet control chart** — rolling strip chart of IN, SV, and BT against
@@ -140,6 +144,10 @@ section, so anything the dashboard does can also be typed by hand.
   [Feedforward](#feedforward-airflow-compensation)).
 - **Interlock** — hard/soft mode and the three limits, read/set live
   (NVS-persisted on the device).
+- **Cooldown** — arm/disarm the [cooldown guard](#cooldown-guard) and read/set
+  the enforced cooldown fan minimum and release dwell (NVS-persisted on the
+  device); shows the hold state and release criteria, prefilled from the
+  `cool` report on connect.
 - **Curves** — runtime dimmer-curve selection per channel, with an indicator
   for whether the heat power map is active.
 - **Console + log** — free-form command line, every message timestamped into
@@ -185,7 +193,7 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 | `OT1 <value>` | `OT1 60` | Set heat level, 0–100% **of max power** (power-linearized — see below) |
 | `OT1 UP` | `OT1 UP` | Increase heat by `DUTY_STEP` |
 | `OT1 DOWN` | `OT1 DOWN` | Decrease heat by `DUTY_STEP` |
-| `OT2 <value>` | `OT2 50` | Set fan level (0–100%) |
+| `OT2 <value>` | `OT2 50` | Set fan level (0–100%). A level below the cooldown fan minimum while the inlet is ≥ 70 °C is **deferred**, not obeyed — see [Cooldown guard](#cooldown-guard) |
 | `OT2 UP` | `OT2 UP` | Increase fan by `DUTY_STEP` |
 | `OT2 DOWN` | `OT2 DOWN` | Decrease fan by `DUTY_STEP` |
 | `INLET <degC>` | `INLET 165` | Set inlet setpoint and engage closed-loop control (see [Inlet temperature control](#inlet-temperature-control)) |
@@ -208,6 +216,10 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 | `IL` | `IL` | Report interlock mode, limits, and current heat cap (`il` push message) |
 | `IL HARD` / `IL SOFT` | `IL SOFT` | Set the interlock mode explicitly (see [Fan interlock](#fan-interlock)) |
 | `IL <fanMin> <fanFull> <heatAtMin>` | `IL 48 55 30` | Set the interlock limits; validated (`1 ≤ fanMin ≤ fanFull ≤ 100`, `heatAtMin ≤ 100`), applied immediately, NVS-persisted |
+| `COOL` | `COOL` | Report the cooldown guard state (`cool` push message) |
+| `COOL MIN <level>` | `COOL MIN 50` | Set the fan level enforced while cooling down (1–100; 0 is rejected — it would defeat the guard). Applied immediately to a held fan, NVS-persisted |
+| `COOL DWELL <s>` | `COOL DWELL 90` | Set the release dwell (1–3600 s, NVS-persisted): how long the inlet must stay below 70 °C before the fan releases. Size it to outlast soak-back or the guard will cycle the fan |
+| `COOL ON` / `COOL OFF` | `COOL OFF` | Arm / disarm the cooldown guard. `OFF` releases any deferred fan level immediately (operator escape hatch, e.g. an inlet sensor stuck hot). Runtime-only — every reboot re-arms |
 | `CURVE` | `CURVE` | Report both dimmer curve modes (`curve` push message) |
 | `CURVE HEAT\|FAN <0-2>` | `CURVE FAN 0` | Set a channel's dimmer curve: 0=linear, 1=rms, 2=log. Runtime-only — reboot restores RMS |
 | `DLRESET HEAT\|FAN` | `DLRESET FAN` | Soft-reset a stuck dimmer module. **The module output goes to full for ~3–4 s during the reset** — `DLRESET HEAT` is refused unless the fan is at or above the interlock minimum |
@@ -244,7 +256,7 @@ All unsolicited messages use Artisan's push message envelope so any client can u
 **Status broadcast** (sent to all clients on any state change, and to new clients on connect):
 
 ```json
-{"pushMessage": "status", "data": {"heat": 60, "heatReq": 60, "fan": 50, "ilCap": 100, "ilSoft": false, "mode": "manual", "inSV": 0.0}}
+{"pushMessage": "status", "data": {"heat": 60, "heatReq": 60, "fan": 50, "ilCap": 100, "ilSoft": false, "mode": "manual", "inSV": 0.0, "cool": false}}
 ```
 
 | `data` field | Description |
@@ -256,6 +268,7 @@ All unsolicited messages use Artisan's push message envelope so any client can u
 | `ilSoft` | `true` if soft (linear) interlock mode is active; `false` for hard (binary) mode |
 | `mode` | `"manual"` (heat set directly by `OT1`), `"inlet"` (heat modulated by the closed loop), or `"tune"` (a step test is running) |
 | `inSV` | Inlet setpoint (°C) in use when `mode` is `"inlet"` |
+| `cool` | `true` while the cooldown guard is holding the fan up with a deferred level pending (see [Cooldown guard](#cooldown-guard)) |
 
 **Telemetry broadcast** (periodic, default 1 Hz, 2 Hz during a tune — the
 dashboard's data feed; `TELEM <ms>|OFF` adjusts):
@@ -317,6 +330,47 @@ In both modes:
 - `heat` reflects what is actually applied after capping
 - Heat adjusts automatically whenever the fan level changes
 - The interlock is re-evaluated every loop iteration
+
+---
+
+## Cooldown guard
+
+The interlock stops heat without airflow; the cooldown guard is its mirror —
+it stops the **airflow from quitting while the roaster is still hot**. It is
+armed by default and enforces minimum fan-shutdown criteria: the fan may stop
+only once the inlet has stayed below `COOL_FAN_OFF_C` (70 °C) for the release
+dwell (`COOL DWELL`, default 30 s, NVS-persisted) on fresh sensor readings,
+with the heater off. Size the dwell to outlast the roaster's soak-back — after
+the fan stops, heat stored in the element and body re-warms the stagnant inlet
+air, and a too-short dwell releases early and cycles the fan (observed on
+hardware at 30 s: two re-enforce cycles after the first release).
+
+**Deferred fan-off.** An `OT2` command below the cooldown fan minimum
+(`COOL MIN`, default 50, NVS-persisted) while the inlet is at or above 70 °C
+is deferred, not obeyed: the fan holds at the minimum, the sender gets an
+`error` push explaining the hold, and the requested level applies itself
+automatically once the criteria are met (a `cool` push and status update
+announce the release). So the normal end-of-roast sequence is simply
+`INLET 0` (heat off) then `OT2 0` — the firmware runs the cooldown and stops
+the fan when it is actually safe to.
+
+**Autonomous enforcement.** If the roaster is hot with the fan below the
+minimum — a hot boot where the RTC fan shadow was lost, or inlet soak-back
+after the fan was released — the guard forces the fan up to the cooldown
+minimum on its own (logged), and in manual mode zeroes the requested heat so
+the raised fan cannot silently un-block a previously interlock-capped heat
+level. If the
+temperature rebounds past 70 °C after a release, enforcement kicks the fan
+back on: "below 70 °C" must genuinely *hold*.
+
+**Fail safety and the escape hatch.** Decisions use the hold-last-good inlet
+value, so a sensor that dies while hot keeps the fan running; the release
+additionally requires readings fresher than `INLET_PV_STALE_MS`. If that ever
+strands the fan on (e.g. an inlet sensor stuck at a hot reading), `COOL OFF`
+disarms the guard and applies the deferred level immediately. The disarm is
+runtime-only — every reboot re-arms the guard. `COOL` reports the guard state
+at any time; the OLED shows `Cool: fan held` while a release is pending and
+`Cool guard OFF` while disarmed.
 
 ---
 
@@ -554,7 +608,7 @@ dashboard).
 |  IL:H ok                       |  ROW4 (interlock status — see below)
 |  Inlet SV:165                  |  ROW5 ("Inlet: off" in manual mode)
 |  192.168.1.42                  |  ROW6 (IP address or "No WiFi")
-|                                |  ROW7
+|  Cool: fan held                |  ROW7 (cooldown guard; blank when idle, "Cool guard OFF" when disarmed)
 |  B:198.4 E:212.0 I:264.1       |  ROW8 (BT / ET / inlet temps, °C)
 +--------------------------------+
 ```

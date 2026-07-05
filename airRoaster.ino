@@ -21,7 +21,7 @@
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.15.1"
+#define FW_VERSION  "0.16.0"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -105,6 +105,19 @@
 #define INLET_PV_STALE_MS   3000    // closed loop / tune abort if the inlet PV is older than this
 #define INLET_OVERTEMP_C    350.0f  // closed loop aborts above this inlet temp (SV max is 300; tune abort is separate and tighter)
 
+// Cooldown guard: the fan may stop only once the roaster is provably cool —
+// inlet below COOL_FAN_OFF_C, sustained for the dwell on fresh readings, heat
+// off. Until then, fan commands below the cooldown fan minimum are deferred
+// and airflow is enforced (see serviceCooldown / COOL command). The minimum
+// and dwell are power-on defaults only: the live values are coolFanMin /
+// coolDwellS, settable via COOL MIN / COOL DWELL and persisted in NVS
+// (loadCool/saveCool). Size the dwell to outlast the post-release soak-back:
+// too short and the guard cycles the fan as stagnant heat re-warms the inlet
+// (observed 2026-07-05: 30 s released early, two re-enforce cycles followed).
+#define COOL_FAN_OFF_C     70.0f   // inlet must stay below this for fan shut-down (°C)
+#define COOL_DWELL_S_DFLT  30      // default dwell (s) "below" must hold before release
+#define COOL_FAN_MIN_DFLT  50      // fan level enforced while cooling down
+
 // WiFi: bounded connect wait at boot; reconnection is watched from loop().
 // The roaster must be fully operable over serial with no network present.
 #define WIFI_CONNECT_TIMEOUT_MS  15000
@@ -172,6 +185,16 @@ bool    interlockSoft = false;   // false = hard (binary), true = soft (linear r
 uint8_t ilFanMin    = IL_FAN_MIN_DFLT;
 uint8_t ilFanFull   = IL_FAN_FULL_DFLT;
 uint8_t ilHeatAtMin = IL_HEAT_AT_MIN_DFLT;
+
+// Cooldown guard state (see serviceCooldown / the COOL command). Runtime-only:
+// coolEnabled deliberately resets to true on every boot — a disarmed safety
+// guard must not survive into the next session.
+bool     coolEnabled   = true;   // COOL ON|OFF; OFF is the operator escape hatch
+bool     coolPending   = false;  // guard holds the fan up; coolTargetFan applies when cool
+uint8_t  coolTargetFan = 0;      // deferred fan level, applied once shutdown criteria are met
+uint32_t coolBelowMs   = 0;      // when the inlet went below COOL_FAN_OFF_C (0 = it hasn't)
+uint8_t  coolFanMin    = COOL_FAN_MIN_DFLT;  // enforced cooldown fan level (COOL MIN, NVS)
+uint16_t coolDwellS    = COOL_DWELL_S_DFLT;  // release dwell, seconds (COOL DWELL, NVS)
 
 // Active dimmer curves (CURVE command; runtime-only, never persisted — an
 // experiment must not survive a reboot into a roast). Power-on default is RMS,
@@ -368,6 +391,9 @@ static float jsonFloat(const String& json, const char* key) {
 // ---------------------------------------------------------------------------
 void processCommand(String cmd, int8_t clientNum = -1);
 void applyInterlock();
+bool setFanLevel(uint8_t level);
+void serviceCooldown(uint32_t now);
+void sendCoolState(int8_t clientNum);
 void broadcastStatus();
 void broadcastTelemetry();
 bool handleArtisanRequest(uint8_t clientNum, const String& msg);
@@ -577,6 +603,31 @@ void saveInterlock() {
     prefs.end();
 }
 
+// The cooldown fan minimum and release dwell persist the same way (own
+// namespace). Safety config again: load re-validates — fanMin 0 would let the
+// fan stop under a hot roaster, defeating the guard.
+static const char *NVS_COOL_NS = "cool";
+
+void loadCool() {
+    prefs.begin(NVS_COOL_NS, true);          // read-only
+    coolFanMin = prefs.getUChar("fanMin",  coolFanMin);
+    coolDwellS = prefs.getUShort("dwellS", coolDwellS);
+    prefs.end();
+    if (coolFanMin < 1 || coolFanMin > 100 ||
+        coolDwellS < 1 || coolDwellS > 3600) {
+        coolFanMin = COOL_FAN_MIN_DFLT;
+        coolDwellS = COOL_DWELL_S_DFLT;
+        logError("cool NVS invalid: defaults restored");
+    }
+}
+
+void saveCool() {
+    prefs.begin(NVS_COOL_NS, false);         // read-write
+    prefs.putUChar("fanMin",  coolFanMin);
+    prefs.putUShort("dwellS", coolDwellS);
+    prefs.end();
+}
+
 // ===========================================================================
 // OTA firmware updates
 // ===========================================================================
@@ -656,6 +707,7 @@ void setup() {
     // the operator's limits.
     loadTuning();
     loadInterlock();
+    loadCool();
 
     // Task watchdog on the loop task. A hang with the heater energized is the
     // worst failure mode; panic->reset is safe because the boot dimmer sync
@@ -797,16 +849,17 @@ static const char* modeName() {
 }
 
 void broadcastStatus() {
-    char buf[160];
+    char buf[176];
     snprintf(buf, sizeof(buf),
-             "{\"pushMessage\":\"status\",\"data\":{\"heat\":%u,\"heatReq\":%u,\"fan\":%u,\"ilCap\":%u,\"ilSoft\":%s,\"mode\":\"%s\",\"inSV\":%.1f}}",
+             "{\"pushMessage\":\"status\",\"data\":{\"heat\":%u,\"heatReq\":%u,\"fan\":%u,\"ilCap\":%u,\"ilSoft\":%s,\"mode\":\"%s\",\"inSV\":%.1f,\"cool\":%s}}",
              heatLevel,
              requestedHeatLevel,
              fanLevel,
              interlockCap(),
              interlockSoft ? "true" : "false",
              modeName(),
-             inletSV);
+             inletSV,
+             coolPending ? "true" : "false");
     webSocket.broadcastTXT(buf);
 }
 
@@ -898,6 +951,13 @@ void displayUpdate() {
         display.printf("%s", WiFi.localIP().toString().c_str());
     } else {
         display.printf("No WiFi");
+    }
+
+    display.setCursor(COL1A, ROW7 * ROWHEIGHT);
+    if (!coolEnabled) {
+        display.printf("Cool guard OFF");
+    } else if (coolPending) {
+        display.printf("Cool: fan held");
     }
 
     display.setCursor(COL1A, ROW8 * ROWHEIGHT);
@@ -1078,6 +1138,21 @@ bool rtcFanValid() {
            rtcFanLevel <= 100;
 }
 
+// Commit-on-ack fan write: the interlock caps heat from fanLevel, so the cache
+// must track what the fan hardware actually acknowledged. Shadows the level in
+// RTC RAM for boot restore. On failure the cache is unchanged (rate-limit
+// logged), so callers running on a cadence retry naturally.
+bool setFanLevel(uint8_t level) {
+    if (!setLevel(FAN_ADDR, level)) {
+        logDimmerWriteFail(FAN_ADDR);
+        return false;
+    }
+    fanLevel = level;
+    rtcSaveFan(level);
+    checkDLError(FAN_ADDR);
+    return true;
+}
+
 const char* dlErrorName(uint8_t code) {
     switch (code) {
         case 0x00: return nullptr;          // OK — no error
@@ -1195,6 +1270,92 @@ void applyInterlock() {
         } else {
             logDimmerWriteFail(HEAT_ADDR);
         }
+    }
+}
+
+// ===========================================================================
+// Cooldown guard
+// ===========================================================================
+// The fan may stop only once the roaster is provably cool: inlet below
+// COOL_FAN_OFF_C, sustained for the coolDwellS dwell (COOL DWELL,
+// NVS-persisted) on fresh readings, heat off.
+// Until then a fan command below coolFanMin (COOL MIN, NVS-persisted) is
+// deferred — held at coolFanMin — and the requested level applies itself when
+// the criteria are met. Enforcement also runs unprompted: a hot roaster with
+// the fan below minimum (hot boot with a lost RTC fan shadow, inlet soak-back
+// after a release) gets its airflow forced back on. Decisions use the
+// hold-last-good inTemp, so a
+// sensor that dies hot keeps the fan running (fail safe); the release
+// additionally requires a *fresh* reading. COOL OFF is the operator escape
+// hatch, runtime-only so a reboot always re-arms the guard.
+
+void sendCoolState(int8_t clientNum) {
+    uint32_t belowS = (coolPending && coolBelowMs != 0)
+                          ? (millis() - coolBelowMs) / 1000 : 0;
+    char b[192];
+    snprintf(b, sizeof(b),
+        "{\"pushMessage\":\"cool\",\"data\":{\"enabled\":%s,\"pending\":%s,\"fanMin\":%u,"
+        "\"target\":%u,\"offC\":%.0f,\"dwellS\":%u,\"belowS\":%lu,\"inC\":%.1f}}",
+        coolEnabled ? "true" : "false", coolPending ? "true" : "false",
+        coolFanMin, coolTargetFan, COOL_FAN_OFF_C,
+        (unsigned)coolDwellS, (unsigned long)belowS, inTemp);
+    if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
+    else                webSocket.broadcastTXT(b);
+    Serial.println(b);
+}
+
+void serviceCooldown(uint32_t now) {
+    if (!coolEnabled) return;
+
+    bool hot = (inTemp >= COOL_FAN_OFF_C);
+
+    // Enforcement: hot with the fan below the cooldown minimum — force it up,
+    // remembering the level to restore once cool. In manual mode the requested
+    // heat is zeroed too: a raised fan must not silently un-block a heat level
+    // the interlock had capped while the fan was low. (In closed loop the
+    // setpoint is the operator's standing intent — left alone.) A failed fan
+    // write leaves fanLevel unchanged, so this retries every pass.
+    if (hot && fanLevel < coolFanMin) {
+        if (!coolPending) {
+            coolPending   = true;
+            coolTargetFan = fanLevel;
+            char msg[56];
+            snprintf(msg, sizeof(msg), "cooldown: fan forced to %u (inlet %.0fC)",
+                     coolFanMin, inTemp);
+            logError(msg);
+        }
+        coolBelowMs = 0;
+        if (ctrlMode == MODE_MANUAL) requestedHeatLevel = 0;
+        if (setFanLevel(coolFanMin)) {
+            flagDisplayUpdate = true;
+            applyInterlock();
+            broadcastStatus();
+        }
+        return;
+    }
+
+    if (!coolPending) { coolBelowMs = 0; return; }
+
+    // Release: the deferred level applies only after the inlet has stayed
+    // below the threshold for the full dwell, on fresh (non-held) readings,
+    // with the heater off — a live heat command means someone is roasting,
+    // and dropping the fan would just trip the interlock under them.
+    bool fresh = (now - inLastGoodMs) <= INLET_PV_STALE_MS;
+    if (hot || !fresh || requestedHeatLevel > 0 || heatLevel > 0) {
+        coolBelowMs = 0;
+        return;
+    }
+    if (coolBelowMs == 0) { coolBelowMs = now; return; }
+    if (now - coolBelowMs < (uint32_t)coolDwellS * 1000UL) return;
+
+    if (setFanLevel(coolTargetFan)) {     // on failure: retried next pass
+        coolPending = false;
+        coolBelowMs = 0;
+        Serial.printf("cooldown complete: fan released to %u\n", coolTargetFan);
+        sendCoolState(-1);
+        flagDisplayUpdate = true;
+        applyInterlock();
+        broadcastStatus();
     }
 }
 
@@ -1325,15 +1486,27 @@ void processCommand(String cmd, int8_t clientNum) {
             }
             newFan = (uint8_t)duty;
         }
-        // Commit only on an acknowledged write: the interlock caps heat from
-        // fanLevel, so it must track what the fan hardware actually received.
-        if (setLevel(FAN_ADDR, newFan)) {
-            fanLevel = newFan;
-            rtcSaveFan(newFan);   // shadow for boot restore after MCU-only reset
-            checkDLError(FAN_ADDR);
+        // Cooldown guard: while the inlet is hot, a fan level below the
+        // cooldown minimum would strand heat in the roaster. The command is
+        // deferred, not obeyed — the fan holds at coolFanMin and the requested
+        // level applies itself once the inlet has stayed below COOL_FAN_OFF_C
+        // for the dwell (serviceCooldown). COOL OFF is the override.
+        if (coolEnabled && newFan < coolFanMin && inTemp >= COOL_FAN_OFF_C) {
+            coolPending   = true;
+            coolTargetFan = newFan;
+            coolBelowMs   = 0;
+            char b[144];
+            snprintf(b, sizeof(b),
+                "{\"pushMessage\":\"error\",\"data\":\"OT2 %u deferred: inlet %.0fC, fan held at %u until <%.0fC for %us\"}",
+                newFan, inTemp, coolFanMin, COOL_FAN_OFF_C, coolDwellS);
+            if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
+            Serial.println(b);
+            newFan = coolFanMin;
         } else {
-            logDimmerWriteFail(FAN_ADDR);
+            coolPending = false;   // an accepted fan command supersedes a deferred one
+            coolBelowMs = 0;
         }
+        setFanLevel(newFan);   // commit-on-ack; cache tracks acknowledged writes only
         flagDisplayUpdate = true;
         applyInterlock();
         broadcastStatus();
@@ -1599,6 +1772,64 @@ void processCommand(String cmd, int8_t clientNum) {
             heatCurve == DL_CURVE_RMS ? "true" : "false");
         if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
         Serial.println(b);
+
+    } else if (kw == "COOL") {
+        // COOL           — report the cooldown guard state ("cool" push).
+        // COOL ON        — arm the guard (the power-on default).
+        // COOL MIN <lvl> — set the enforced cooldown fan level (1–100, NVS).
+        // COOL DWELL <s> — set the release dwell (1–3600 s, NVS): how long the
+        //                  inlet must stay below the threshold before the fan
+        //                  releases. Size it to outlast soak-back.
+        // COOL OFF       — disarm the guard and release any deferred fan level
+        //                  NOW. Operator escape hatch (e.g. an inlet sensor
+        //                  stuck hot); runtime-only, never persisted — a
+        //                  reboot always re-arms.
+        if (n >= 2) {
+            String up = tokens[1];
+            up.toUpperCase();
+            if (up == "ON") {
+                coolEnabled = true;
+            } else if (up == "DWELL") {
+                int s;
+                if (n < 3 || !parseIntStrict(tokens[2], s) || s < 1 || s > 3600) {
+                    replyBadArg(clientNum, "COOL DWELL");
+                    return;
+                }
+                coolDwellS = (uint16_t)s;
+                saveCool();
+                coolBelowMs = 0;   // a pending release re-accumulates the new dwell
+            } else if (up == "MIN") {
+                int lvl;
+                if (n < 3 || !parseIntStrict(tokens[2], lvl) || lvl < 1 || lvl > 100) {
+                    replyBadArg(clientNum, "COOL MIN");  // 0 would defeat the guard
+                    return;
+                }
+                coolFanMin = (uint8_t)lvl;
+                saveCool();
+                // A held fan tracks the new floor immediately (while pending
+                // the guard owns the level, so it is exactly the old minimum).
+                if (coolEnabled && coolPending) {
+                    setFanLevel(coolFanMin);
+                    applyInterlock();
+                    broadcastStatus();
+                }
+            } else if (up == "OFF") {
+                coolEnabled = false;
+                if (coolPending) {
+                    logError("cooldown guard disarmed: deferred fan level applied");
+                    setFanLevel(coolTargetFan);
+                    coolPending = false;
+                    coolBelowMs = 0;
+                    applyInterlock();
+                    broadcastStatus();
+                }
+            } else {
+                replyBadArg(clientNum, "COOL");
+                return;
+            }
+            flagDisplayUpdate = true;
+        }
+        sendCoolState(clientNum);
 
     } else if (kw == "DLRESET") {
         // DLRESET HEAT|FAN — operator-commanded DimmerLink soft reset, the
@@ -2013,6 +2244,10 @@ void loop() {
         controlStep(ctrlDt);
     }
 
+    // Cooldown guard: enforce airflow while the roaster is hot; apply a
+    // deferred fan level once the shutdown criteria are met.
+    serviceCooldown(now);
+
     // Periodic DimmerLink service (every 5 s): error-register poll (diagnostic
     // logging only) + unconditional curve/level re-assert — see assertDLState
     // for the hardware facts behind this shape. No autonomous reset, ever: a
@@ -2077,6 +2312,29 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.16.0 2026-07-04  Cooldown guard: minimum fan-shutdown criteria enforced.
+//                     The fan may stop only once the inlet has stayed below
+//                     COOL_FAN_OFF_C (70 C) for coolDwellS (default 30 s,
+//                     live-set via COOL DWELL <1-3600>, NVS — size it to
+//                     outlast soak-back; the 2026-07-05 drill saw two
+//                     re-enforce cycles at 30 s) on
+//                     fresh readings, with heat off. A fan command below the
+//                     cooldown fan minimum while hot is deferred, not obeyed:
+//                     the fan holds at coolFanMin (default 50, live-set via
+//                     COOL MIN <1-100>, persisted in NVS namespace "cool",
+//                     re-validated on load) and the requested level
+//                     applies itself when the criteria are met (new "cool"
+//                     push; status gains "cool"; OLED row 7). The guard also
+//                     enforces unprompted — a hot roaster with the fan below
+//                     minimum (hot boot with a lost RTC shadow, soak-back
+//                     after release) gets airflow forced back on, with
+//                     manual-mode requested heat zeroed so the raised fan
+//                     cannot un-block a previously interlock-capped level.
+//                     A sensor that dies hot keeps the fan running (fail
+//                     safe); COOL OFF is the operator escape (runtime-only,
+//                     re-armed at every boot). New COOL / COOL ON|OFF /
+//                     COOL MIN command; OT2 refactored through commit-on-ack
+//                     setFanLevel().
 // v0.15.1 2026-07-04  INLET 0 (or any sv <= 0) now means "no setpoint": drop
 //                     to manual with heat 0 instead of engaging the loop on an
 //                     unreachable target. Previously a follow-background run
