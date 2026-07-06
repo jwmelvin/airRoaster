@@ -28,6 +28,11 @@ SKETCH="airRoaster.ino"
 extra=()
 [[ "${1:-}" == "ota" ]] && extra+=(--export-binaries)
 
+# Pull FW_VERSION straight out of the sketch so we can confirm which build
+# we're about to compile (and, for ota/upload, flash).
+version="$(sed -n 's/^#define FW_VERSION[[:space:]]*"\(.*\)".*/\1/p' "$SKETCH")"
+echo "==> airRoaster firmware v${version:-unknown}"
+
 echo "==> Compiling $SKETCH for $FQBN"
 # --warnings all surfaces sketch issues; we grep our own file out of the noise.
 out="$(arduino-cli compile --fqbn "$FQBN" --warnings all ${extra[@]+"${extra[@]}"} "$SKETCH" 2>&1)" || {
