@@ -50,6 +50,15 @@ Remaining drills, roughly in commissioning order:
     dwell that makes one release stick (start ~90–120 s) and set it. Still
     unchecked: `COOL MIN`/`COOL DWELL` surviving a power cycle (NVS), and
     `COOL OFF` releasing a held fan immediately.
+12. **Ambient reporting (v0.17.0)** — on a cold roaster, power up and check the
+    serial log for `ambient: cold-start capture` with a sane room temp (BT vs
+    CJ within 8 °C); dashboard Ambient panel should show it. Then run the
+    roaster hot, power-cycle, and confirm the log says `warm boot … keeping`
+    and the stored capture is unchanged. Check `AMB SRC`/`AMB <degC>` survive
+    a power cycle (NVS). In Artisan: map the `AT` node to an extra WebSocket
+    channel, select it on Config › Device › Ambient, and confirm Roast
+    Properties picks up the ambient temperature at CHARGE (README § Ambient
+    temperature has the click-path).
 
 ## Completed phases (specs kept for reference; details in the archive)
 

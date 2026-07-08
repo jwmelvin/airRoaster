@@ -51,18 +51,35 @@ Compile after every meaningful edit; the script surfaces sketch-local warnings.
   no sensors, and no WiFi present (log, hold safe defaults, keep serving serial).
 
 **Git.** Development happens on feature branches; `main` holds roast-tested
-firmware. `main` is at **v0.15.0** (2026-07-04): `feature/robustness-dashboard`,
-`feature/ota-updates` (OTA + dimmer rework + closed-loop/FF fixes, v0.14.1),
-and `feature/fan-restore` (v0.15.0) are all merged and validated in live
-operation; start the next effort on a fresh branch off `main`. Commit per
+firmware. `main` is at **v0.16.0** (2026-07-04, cooldown guard — mostly
+validated on-roaster 2026-07-05); the current effort is on
+`feature/ambient` (v0.17.0). Commit per
 phase with
 a message naming the phase. The user's Artisan config churn (`artisan/*.aset`,
 `*.alog`) may be present in the working tree — never sweep it into a firmware
 commit; stage files explicitly.
 
-## Active effort (2026-07-04)
+## Active effort (2026-07-07)
 
-**Cooldown guard → v0.16.0** (on `main`). Minimum fan-shutdown
+**Ambient reporting → v0.17.0** (on `feature/ambient`). The Artisan `getData`
+response gains an `AT` node (°C): Artisan maps it to an extra WebSocket
+channel and selects that channel in **Config › Device › Ambient** (tab), then
+samples it at CHARGE into Roast Properties (README § Ambient temperature has
+the click-path). Three sources via the new `AMB` command (`amb` push, NVS
+namespace "amb", re-validated on load): **cold-start memory** (default) — a
+once-per-boot capture that saves the BT RTD as ambient only when it agrees
+with the MAX31855 cold junction within 8 °C, so a power cycle on a hot roaster
+keeps the capture from the last genuinely cold boot; **cold junction** — live
+`readInternal()`, now read every sensor poll (hold-last-good `cjTemp`) and
+surfaced in telemetry (`cj`, plus `amb` = the reported value); **manual** —
+`AMB <degC>` (also switches the source to manual). Dashboard: cold-junction
+readout in Temperatures, new Ambient panel (source selector; manual entry
+defaults to °F, converts to °C before sending — firmware and Artisan stay
+°C-only). Deliberately separate from `FF AMB` (control-law parameter).
+Compile-verified; dashboard checked in browser preview with simulated pushes;
+on-roaster drill is state-plan.md § NEXT item 12.
+
+**Prior: Cooldown guard → v0.16.0** (on `main`). Minimum fan-shutdown
 criteria, per operator request: the fan may stop only once the inlet has
 stayed below `COOL_FAN_OFF_C` (70 °C) for the release dwell (`coolDwellS`,
 default 30 s, live-set via `COOL DWELL <1-3600>`, NVS) on fresh

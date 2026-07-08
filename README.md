@@ -13,7 +13,7 @@ ESP32-based controller for a hot-air coffee roaster. Controls a heating element 
 | Dimmer interface | RBDimmer DimmerLink ([overview](https://www.rbdimmer.com/docs/dimmerlink-overview), [I2C protocol](https://www.rbdimmer.com/docs/dimmerlink-I2CCommunication)), I2C address heat: `0x51`; fan: `0x52`. Curve is set to RMS (mode `1`) at startup; switchable at runtime with the `CURVE` command. |
 | Dimmers |Dimmers purchased from RobotDyn Official Store on AliExpress. "Dimmer AC module High Power for 40A 600V High Load, 1 Channel, 3.3V/5V logic"; "Dimmer AC module for 16A/24A 600V High Load, 1 Channel, 3.3V/5V logic with current load control" |
 | RTD amplifiers (BT/ET) | 2× MAX31865, https://www.adafruit.com/product/3648 (PT1000 version, 4.3 kΩ reference), on the shared SPI bus. BT (bean) probe on CS `GPIO 10`, 4-wire PT1000; ET board on CS `GPIO 9` has no probe yet (`RTD_ET_ENABLED 0`, channel reads 0.0). Driven register-direct in continuous auto-convert mode via `max31865_direct.h`, not the Adafruit library — see [Dependencies](#dependencies) for why, and `hardware/emi.md` for the RTD noise/fault history. |
-| Thermocouple amplifier (IN) | MAX31855, https://www.adafruit.com/product/269, K-type inlet probe, on the shared SPI bus (CS `GPIO 8`). Read via the Adafruit library (non-blocking, free-running conversions). Its cold-junction temperature doubles as the board-ambient estimate for `FF AMB`. |
+| Thermocouple amplifier (IN) | MAX31855, https://www.adafruit.com/product/269, K-type inlet probe, on the shared SPI bus (CS `GPIO 8`). Read via the Adafruit library (non-blocking, free-running conversions). Its cold-junction temperature doubles as the board-ambient estimate for `FF AMB` and is a selectable ambient source for Artisan's `AT` channel (`AMB SRC CJ`). |
 | Heater | from sdm2020_tools on eBay and listed as "1 set 230V 3600W 132.387 Heating Element & mica casing for hot air blower guns". Its power in my use is a little higher because I use 240V.|
 | Blower | Ametek 116392-00 |
 
@@ -130,7 +130,8 @@ section, so anything the dashboard does can also be typed by hand.
   a glance), fan bar, interlock state, and cooldown-guard state (whether the
   fan is being held with a release pending).
 - **Temperatures** — large IN / BT / ET readouts with per-channel fault
-  badges, current setpoint, and the age of the last telemetry frame.
+  badges, current setpoint, the MAX31855 cold-junction temperature, and the
+  age of the last telemetry frame.
 - **Inlet control chart** — rolling strip chart of IN, SV, and BT against
   heat/fan % , fed by the telemetry push; selectable window (1–60 min), pause,
   BT toggle, CSV export of the buffer.
@@ -150,6 +151,10 @@ section, so anything the dashboard does can also be typed by hand.
   `cool` report on connect.
 - **Curves** — runtime dimmer-curve selection per channel, with an indicator
   for whether the heat power map is active.
+- **Ambient** — select the ambient source reported to Artisan (cold-start
+  memory / cold junction / manual) and enter a manual value in °F (default) or
+  °C — converted to °C before sending; see
+  [Ambient temperature](#ambient-temperature-at).
 - **Console + log** — free-form command line, every message timestamped into
   a capped capture buffer with per-class show/hide (telemetry hidden by
   default) and free-text filtering, **Save log** to a file. The device keeps
@@ -174,7 +179,7 @@ Artisan polls the device on its sample interval. The controller responds with th
 
 **Response** (sent by controller):
 ```json
-{"id": 12345, "data": {"BT": 195.3, "ET": 210.0}}
+{"id": 12345, "data": {"BT": 195.3, "ET": 210.0, "IN": 182.4, "AT": 21.9}}
 ```
 
 `BT` is the bean RTD (MAX31865, read register-direct in continuous mode — see
@@ -182,7 +187,9 @@ Artisan polls the device on its sample interval. The controller responds with th
 `0.0` until a second RTD probe is wired and `RTD_ET_ENABLED` is set to `1`.
 During a sensor fault a channel holds its last good value rather than dropping
 to 0 (see [hardware/emi.md](hardware/emi.md)); anything closing a loop on a
-reading also checks its freshness.
+reading also checks its freshness. `AT` is the ambient temperature (°C) from
+the source selected with the `AMB` command — see
+[Ambient temperature](#ambient-temperature-at) for how Artisan consumes it.
 
 #### Plain-text commands
 
@@ -220,6 +227,9 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 | `COOL MIN <level>` | `COOL MIN 50` | Set the fan level enforced while cooling down (1–100; 0 is rejected — it would defeat the guard). Applied immediately to a held fan, NVS-persisted |
 | `COOL DWELL <s>` | `COOL DWELL 90` | Set the release dwell (1–3600 s, NVS-persisted): how long the inlet must stay below 70 °C before the fan releases. Size it to outlast soak-back or the guard will cycle the fan |
 | `COOL ON` / `COOL OFF` | `COOL OFF` | Arm / disarm the cooldown guard. `OFF` releases any deferred fan level immediately (operator escape hatch, e.g. an inlet sensor stuck hot). Runtime-only — every reboot re-arms |
+| `AMB` | `AMB` | Report the ambient state (`amb` push message): source, the value reported to Artisan, cold-start capture, cold junction, manual value |
+| `AMB SRC COLD\|CJ\|MANUAL` | `AMB SRC CJ` | Select the ambient source reported to Artisan as `AT` (NVS-persisted): the cold-start capture (default), the live MAX31855 cold junction, or the manual value — see [Ambient temperature](#ambient-temperature-at) |
+| `AMB <degC>` | `AMB 22.5` | Set the manual ambient value (−40…60 °C) and switch the source to manual, NVS-persisted. Always °C — the dashboard's °F entry converts before sending |
 | `CURVE` | `CURVE` | Report both dimmer curve modes (`curve` push message) |
 | `CURVE HEAT\|FAN <0-2>` | `CURVE FAN 0` | Set a channel's dimmer curve: 0=linear, 1=rms, 2=log. Runtime-only — reboot restores RMS |
 | `DLRESET HEAT\|FAN` | `DLRESET FAN` | Soft-reset a stuck dimmer module. **The module output goes to full for ~3–4 s during the reset** — `DLRESET HEAT` is refused unless the fan is at or above the interlock minimum |
@@ -275,11 +285,14 @@ dashboard's data feed; `TELEM <ms>|OFF` adjusts):
 
 ```json
 {"pushMessage": "telem", "data": {"t": 123456, "IN": 182.4, "BT": 165.1, "ET": 0.0,
+  "cj": 27.3, "amb": 21.9,
   "sv": 185.0, "heat": 42, "heatReq": 42, "fan": 57, "ilCap": 100, "mode": "inlet",
   "p": 3.9, "i": 35.2, "d": 0.0, "ff": 0.0, "fltIN": 0, "fltBT": 0}}
 ```
 
-`t` is device millis; `p`/`i`/`d`/`ff` are the last control-step term values
+`t` is device millis; `cj` is the MAX31855 cold-junction (board/enclosure)
+temperature and `amb` the ambient value currently reported to Artisan (see the
+`AMB` command); `p`/`i`/`d`/`ff` are the last control-step term values
 (meaningful in `inlet` mode); `fltIN`/`fltBT` flag a channel currently in the
 debounced-fault state (its value is held, not live).
 
@@ -675,6 +688,38 @@ channel-order issue.
 
 The `ET` channel returns `0.0` until a second RTD probe is wired and
 `RTD_ET_ENABLED` is set to `1` in the firmware.
+
+### Ambient temperature (AT)
+
+Every `getData` response carries an `AT` node: the ambient temperature in °C,
+from the source selected with `AMB SRC` (dashboard: Ambient panel; NVS-persisted):
+
+- **cold-start memory** (default) — once per boot, when the BT RTD (sitting in
+  the air path) agrees with the MAX31855 cold junction within 8 °C, the roaster
+  provably started cold and the RTD reading is saved as the ambient
+  measurement. A power cycle on a *hot* roaster fails that match, so the
+  capture from the last genuinely cold boot is kept, not overwritten.
+- **cold junction** — the live MAX31855 die temperature. Tracks the enclosure,
+  which runs a little warm while powered; useful as a continuous estimate.
+- **manual** — a value entered on the dashboard (°F or °C entry; sent to the
+  firmware in °C). `AMB <degC>` sets it and switches the source to manual.
+
+**Getting it into Artisan.** Artisan fills the ambient temperature in **Roast
+Properties** automatically at CHARGE from a configured source curve
+(**Config › Device › Ambient** tab). To feed it from the firmware:
+
+1. Add a WebSocket extra device (**Config › Device › Extra Devices**, device
+   "WebSocket 34") — same host/port as the main device; label a channel e.g.
+   `AT` (uncheck its Curve/LCD boxes if you don't want it plotted).
+2. Under **Config › Port › WebSocket**, set that channel's data node to `AT`.
+3. On the **Config › Device › Ambient** tab, select that channel as the
+   **Temperature** source.
+
+Artisan samples the channel at CHARGE and stores it with the roast's ambient
+conditions (it converts to the display unit itself — the wire value stays °C).
+
+This is deliberately separate from `FF AMB` (the feedforward's reference
+temperature): `AT` is roast metadata, `ffAmbient` is a control-law parameter.
 
 ### Adding more sensors
 

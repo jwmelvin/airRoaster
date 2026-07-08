@@ -21,7 +21,7 @@
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.16.0"
+#define FW_VERSION  "0.17.0"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -118,6 +118,25 @@
 #define COOL_DWELL_S_DFLT  30      // default dwell (s) "below" must hold before release
 #define COOL_FAN_MIN_DFLT  50      // fan level enforced while cooling down
 
+// Ambient temperature reporting (AMB command; the "AT" node in the Artisan
+// getData response — map it to an extra WebSocket channel and select that
+// channel in Artisan's Config > Device > Ambient tab; Artisan samples it at
+// CHARGE into Roast Properties). Three sources, selected via AMB SRC and
+// persisted in NVS: the cold-start capture (default), the live MAX31855 cold
+// junction, or a manually entered value. The cold-start capture runs once per
+// boot: if the BT RTD agrees with the cold junction the roaster provably
+// started cold, and the RTD (in the air path — the better room-temp probe)
+// is saved as ambient. A power cycle on a hot roaster fails the match and
+// keeps the capture from the last genuinely cold boot.
+#define AMB_SRC_COLDSTART        0
+#define AMB_SRC_CJ               1
+#define AMB_SRC_MANUAL           2
+#define AMB_COLDSTART_DELAY_MS   10000   // uptime before the capture decision (median primed, CJ read)
+#define AMB_COLD_MATCH_C         8.0f    // |BT − CJ| within this => cold start
+#define AMB_VALID_MIN_C          -40.0f  // sanity window for stored ambient values
+#define AMB_VALID_MAX_C          60.0f
+#define AMB_DFLT_C               20.0f   // placeholder until a capture / manual set
+
 // WiFi: bounded connect wait at boot; reconnection is watched from loop().
 // The roaster must be fully operable over serial with no network present.
 #define WIFI_CONNECT_TIMEOUT_MS  15000
@@ -210,6 +229,16 @@ uint8_t fanCurve  = DL_CURVE_RMS;
 float btTemp  = 0.0;  // bean temp  — MAX31865 PT1000 (°C)
 float etTemp  = 0.0;  // exhaust/ET — MAX31865 PT1000 (°C)
 float inTemp  = 0.0;  // inlet temp — MAX31855 thermocouple (°C)
+float cjTemp  = 0.0;  // MAX31855 cold junction — board/enclosure temp (°C, hold-last-good)
+
+// Ambient temperature state (AMB command; reported to Artisan as "AT").
+// Source + manual value + cold-start capture persist in NVS namespace "amb";
+// ambColdDone is per-boot (the capture decision runs once, when the sensors
+// are ready — see serviceAmbientColdStart).
+uint8_t ambSource  = AMB_SRC_COLDSTART;
+float   ambManualC = AMB_DFLT_C;   // AMB <degC> (dashboard converts °F before sending)
+float   ambColdC   = AMB_DFLT_C;   // BT RTD captured at the last cold boot
+bool    ambColdDone = false;
 
 // Freshness stamp of the last *accepted* inlet reading. The hold-last-good
 // policy means inTemp can be a frozen value during a fault; anything closing a
@@ -394,6 +423,9 @@ void applyInterlock();
 bool setFanLevel(uint8_t level);
 void serviceCooldown(uint32_t now);
 void sendCoolState(int8_t clientNum);
+void serviceAmbientColdStart(uint32_t now);
+void sendAmbState(int8_t clientNum);
+float ambientNowC();
 void broadcastStatus();
 void broadcastTelemetry();
 bool handleArtisanRequest(uint8_t clientNum, const String& msg);
@@ -519,6 +551,12 @@ void updateSensors() {
 #endif
 
     // --- MAX31855: inlet thermocouple (holds last good value on fault) ---
+    // The cold junction rides along: it stays valid with the probe unplugged
+    // (it is the chip's own die temperature) and feeds the dashboard readout
+    // plus the AMB_SRC_CJ ambient source.
+    double cj = tcIN.readInternal();
+    if (!isnan(cj)) cjTemp = (float)cj;
+
     double tc = tcIN.readCelsius();
     if (!isnan(tc)) {
         inTemp = (float)tc;
@@ -628,6 +666,74 @@ void saveCool() {
     prefs.end();
 }
 
+// Ambient reporting state (own namespace). Load re-validates: ambient only
+// feeds Artisan's roast metadata, but a corrupt value would silently taint
+// every roast log until noticed.
+static const char *NVS_AMB_NS = "amb";
+
+void loadAmb() {
+    prefs.begin(NVS_AMB_NS, true);           // read-only
+    ambSource  = prefs.getUChar("src", ambSource);
+    ambManualC = prefs.getFloat("man",  ambManualC);
+    ambColdC   = prefs.getFloat("cold", ambColdC);
+    prefs.end();
+    if (ambSource > AMB_SRC_MANUAL ||
+        ambManualC < AMB_VALID_MIN_C || ambManualC > AMB_VALID_MAX_C ||
+        ambColdC   < AMB_VALID_MIN_C || ambColdC   > AMB_VALID_MAX_C) {
+        ambSource  = AMB_SRC_COLDSTART;
+        ambManualC = AMB_DFLT_C;
+        ambColdC   = AMB_DFLT_C;
+        logError("amb NVS invalid: defaults restored");
+    }
+}
+
+void saveAmb() {
+    prefs.begin(NVS_AMB_NS, false);          // read-write
+    prefs.putUChar("src", ambSource);
+    prefs.putFloat("man",  ambManualC);
+    prefs.putFloat("cold", ambColdC);
+    prefs.end();
+}
+
+// The ambient temperature currently reported to Artisan (the "AT" node),
+// per the selected source. Always °C.
+float ambientNowC() {
+    switch (ambSource) {
+        case AMB_SRC_CJ:     return cjTemp;
+        case AMB_SRC_MANUAL: return ambManualC;
+        default:             return ambColdC;
+    }
+}
+
+static const char* ambSrcName() {
+    return ambSource == AMB_SRC_CJ     ? "cj"
+         : ambSource == AMB_SRC_MANUAL ? "manual" : "coldstart";
+}
+
+// One-shot cold-start ambient capture. Waits until the BT RTD median is
+// primed and the cold junction has been read, then decides once: RTD within
+// AMB_COLD_MATCH_C of the cold junction means the roaster provably started
+// cold, so the RTD (sitting in the air path — the best room-temp probe on
+// board) is saved as the ambient measurement. A hot power cycle fails the
+// match and the capture from the last genuinely cold boot stands. With a
+// sensor missing or faulted the decision never ripens and the stored value
+// likewise stands.
+void serviceAmbientColdStart(uint32_t now) {
+    if (ambColdDone || now < AMB_COLDSTART_DELAY_MS) return;
+    if (cjTemp == 0.0f) return;   // cold junction not read yet (exact 0.0 = initial)
+    if (rtdBTfault.faulted || rtdBTfault.histCount < RTD_MEDIAN_WINDOW) return;
+    ambColdDone = true;
+    if (fabsf(btTemp - cjTemp) <= AMB_COLD_MATCH_C &&
+        btTemp >= AMB_VALID_MIN_C && btTemp <= AMB_VALID_MAX_C) {
+        ambColdC = btTemp;
+        saveAmb();
+        Serial.printf("ambient: cold-start capture %.1fC (CJ %.1fC)\n", ambColdC, cjTemp);
+    } else {
+        Serial.printf("ambient: warm boot (BT %.1fC vs CJ %.1fC), keeping %.1fC\n",
+                      btTemp, cjTemp, ambColdC);
+    }
+}
+
 // ===========================================================================
 // OTA firmware updates
 // ===========================================================================
@@ -708,6 +814,7 @@ void setup() {
     loadTuning();
     loadInterlock();
     loadCool();
+    loadAmb();
 
     // Task watchdog on the loop task. A hang with the heater energized is the
     // worst failure mode; panic->reset is safe because the boot dimmer sync
@@ -868,12 +975,14 @@ void broadcastStatus() {
 // control-step term breakdown. Cadence set by telemPeriodMs (TELEM command).
 void broadcastTelemetry() {
     if (webSocket.connectedClients() == 0) return;   // don't build the string for nobody
-    char buf[288];
+    char buf[320];
     snprintf(buf, sizeof(buf),
         "{\"pushMessage\":\"telem\",\"data\":{\"t\":%lu,\"IN\":%.1f,\"BT\":%.1f,\"ET\":%.1f,"
+        "\"cj\":%.1f,\"amb\":%.1f,"
         "\"sv\":%.1f,\"heat\":%u,\"heatReq\":%u,\"fan\":%u,\"ilCap\":%u,\"mode\":\"%s\","
         "\"p\":%.1f,\"i\":%.1f,\"d\":%.1f,\"ff\":%.1f,\"fltIN\":%u,\"fltBT\":%u}}",
         (unsigned long)millis(), inTemp, btTemp, etTemp,
+        cjTemp, ambientNowC(),
         inletSV, heatLevel, requestedHeatLevel, fanLevel, interlockCap(), modeName(),
         ctlP, ctlI, ctlD, ctlFF,
         tcINfault.faulted ? 1u : 0u, rtdBTfault.faulted ? 1u : 0u);
@@ -902,10 +1011,13 @@ bool handleArtisanRequest(uint8_t clientNum, const String& msg) {
     char idStr[12];
     msg.substring(start, end).toCharArray(idStr, sizeof(idStr));
 
-    char buf[96];
+    // AT is the ambient temperature per the selected AMB source — map it to an
+    // extra WebSocket channel and pick that channel in Artisan's Config >
+    // Device > Ambient tab (sampled at CHARGE into Roast Properties).
+    char buf[128];
     snprintf(buf, sizeof(buf),
-             "{\"id\":%s,\"data\":{\"BT\":%.1f,\"ET\":%.1f,\"IN\":%.1f}}",
-             idStr, btTemp, etTemp, inTemp);
+             "{\"id\":%s,\"data\":{\"BT\":%.1f,\"ET\":%.1f,\"IN\":%.1f,\"AT\":%.1f}}",
+             idStr, btTemp, etTemp, inTemp, ambientNowC());
     webSocket.sendTXT(clientNum, buf);
     return true;
 }
@@ -1299,6 +1411,19 @@ void sendCoolState(int8_t clientNum) {
         coolEnabled ? "true" : "false", coolPending ? "true" : "false",
         coolFanMin, coolTargetFan, COOL_FAN_OFF_C,
         (unsigned)coolDwellS, (unsigned long)belowS, inTemp);
+    if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
+    else                webSocket.broadcastTXT(b);
+    Serial.println(b);
+}
+
+// Ambient report ("amb" push): source, the value currently reported to
+// Artisan, and every candidate so the dashboard can show them side by side.
+void sendAmbState(int8_t clientNum) {
+    char b[160];
+    snprintf(b, sizeof(b),
+        "{\"pushMessage\":\"amb\",\"data\":{\"src\":\"%s\",\"ambC\":%.1f,"
+        "\"cj\":%.1f,\"coldC\":%.1f,\"manC\":%.1f}}",
+        ambSrcName(), ambientNowC(), cjTemp, ambColdC, ambManualC);
     if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
     else                webSocket.broadcastTXT(b);
     Serial.println(b);
@@ -1831,6 +1956,39 @@ void processCommand(String cmd, int8_t clientNum) {
         }
         sendCoolState(clientNum);
 
+    } else if (kw == "AMB") {
+        // AMB                        — report the ambient state ("amb" push).
+        // AMB SRC COLD|CJ|MAN[UAL]   — select the source reported to Artisan
+        //                              as the "AT" node (NVS): the cold-start
+        //                              capture, the live MAX31855 cold
+        //                              junction, or the manual value.
+        // AMB <degC>                 — set the manual value and switch the
+        //                              source to manual (NVS). Always °C; the
+        //                              dashboard converts °F before sending.
+        if (n >= 2) {
+            String up = tokens[1];
+            up.toUpperCase();
+            if (up == "SRC") {
+                String s = (n >= 3) ? tokens[2] : String("");
+                s.toUpperCase();
+                if      (s == "COLD" || s == "COLDSTART") ambSource = AMB_SRC_COLDSTART;
+                else if (s == "CJ")                       ambSource = AMB_SRC_CJ;
+                else if (s == "MAN"  || s == "MANUAL")    ambSource = AMB_SRC_MANUAL;
+                else { replyBadArg(clientNum, "AMB SRC"); return; }
+            } else {
+                float v;
+                if (!parseFloatStrict(tokens[1], v) ||
+                    v < AMB_VALID_MIN_C || v > AMB_VALID_MAX_C) {
+                    replyBadArg(clientNum, "AMB");
+                    return;
+                }
+                ambManualC = v;
+                ambSource  = AMB_SRC_MANUAL;   // an explicit value is explicit intent
+            }
+            saveAmb();
+        }
+        sendAmbState(clientNum);
+
     } else if (kw == "DLRESET") {
         // DLRESET HEAT|FAN — operator-commanded DimmerLink soft reset, the
         // only path to resetDL(). Hardware-observed (2026-07-02, emi.md): the
@@ -2248,6 +2406,9 @@ void loop() {
     // deferred fan level once the shutdown criteria are met.
     serviceCooldown(now);
 
+    // One-shot cold-start ambient capture (no-op once decided).
+    serviceAmbientColdStart(now);
+
     // Periodic DimmerLink service (every 5 s): error-register poll (diagnostic
     // logging only) + unconditional curve/level re-assert — see assertDLState
     // for the hardware facts behind this shape. No autonomous reset, ever: a
@@ -2312,6 +2473,28 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.17.0 2026-07-07  Ambient temperature reporting + cold-junction surfaced.
+//                     The Artisan getData response gains an "AT" node (°C):
+//                     map it to an extra WebSocket channel and select that
+//                     channel in Artisan's Config > Device > Ambient tab, and
+//                     Artisan samples it at CHARGE into Roast Properties.
+//                     Three selectable sources (new AMB command, NVS namespace
+//                     "amb", re-validated on load): cold-start memory (the
+//                     default), the live MAX31855 cold junction, or a manual
+//                     value (AMB <degC> also switches the source to manual;
+//                     the dashboard converts °F entries to °C before sending).
+//                     Cold-start memory is a once-per-boot capture: when the
+//                     BT RTD median agrees with the cold junction within 8 °C
+//                     the roaster provably started cold and the RTD (in the
+//                     air path) is saved as ambient — a power cycle on a hot
+//                     roaster fails the match and keeps the capture from the
+//                     last genuinely cold boot. The cold junction is now read
+//                     every sensor poll (hold-last-good) and surfaced in
+//                     telemetry ("cj", plus "amb" = the reported value); the
+//                     dashboard shows CJ beside the temperatures and gains an
+//                     Ambient panel (source selector, manual entry in °F or
+//                     °C). Distinct from FF AMB, which remains the
+//                     feedforward's reference temperature.
 // v0.16.0 2026-07-04  Cooldown guard: minimum fan-shutdown criteria enforced.
 //                     The fan may stop only once the inlet has stayed below
 //                     COOL_FAN_OFF_C (70 C) for coolDwellS (default 30 s,

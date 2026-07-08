@@ -148,6 +148,7 @@
         <div class="temp-big" id="tET">–</div></div>
     </div>
     <div class="kv" style="margin-top:0.5em">SV <b id="tSV">–</b> &nbsp;·&nbsp;
+      cold junction <b id="tCJ">–</b> &nbsp;·&nbsp;
       last telem <span id="telemAge">–</span></div>
   </div>
 </div>
@@ -275,6 +276,23 @@
         inlet is hot; fan min + dwell saved to NVS. Disarm releases NOW (re-arms at reboot).</div>
     </div>
     <div>
+      <h3>Ambient</h3>
+      source <select id="amSrc" onchange="sendAmbSrc()">
+        <option value="COLDSTART">cold-start memory</option>
+        <option value="CJ">cold junction</option>
+        <option value="MANUAL">manual</option>
+      </select>
+      <button onclick="send('AMB')">Read</button><br>
+      manual <input class="num" id="amVal">
+      <select id="amUnit">
+        <option value="F" selected>°F</option>
+        <option value="C">°C</option>
+      </select>
+      <button onclick="sendAmbManual()">Set</button>
+      <div class="kv" style="margin-top:0.3em" id="amState">reported to Artisan as the
+        AT channel (map it as ambient temperature source there); saved to NVS</div>
+    </div>
+    <div>
       <h3>FF step cal</h3>
       fan step <input class="num" id="ffStepSize" value="7">
       <button id="ffStepBtn" onclick="ffStepStart()">Start</button>
@@ -398,6 +416,7 @@ function connect() {
     ws.send("IL");    // prefill the interlock panel
     ws.send("CURVE"); // prefill the curve selectors
     ws.send("COOL");  // prefill the cooldown panel
+    ws.send("AMB");   // prefill the ambient panel
   };
 
   ws.onclose = () => {
@@ -486,7 +505,7 @@ function handleMessage(raw) {
       case "log":    cls = "log";    break;
       case "status": cls = "status"; applyStatus(obj.data); break;
       case "telem":  cls = "telem";  applyTelem(obj.data);  break;
-      case "tune": case "pid": case "ff": case "stat": case "il": case "curve": case "cool":
+      case "tune": case "pid": case "ff": case "stat": case "il": case "curve": case "cool": case "amb":
         cls = "report";
         if (obj.pushMessage === "tune")  applyTune(obj.data);
         if (obj.pushMessage === "pid")   applyPid(obj.data);
@@ -494,6 +513,7 @@ function handleMessage(raw) {
         if (obj.pushMessage === "il")    applyIL(obj.data);
         if (obj.pushMessage === "curve") applyCurve(obj.data);
         if (obj.pushMessage === "cool")  applyCool(obj.data);
+        if (obj.pushMessage === "amb")   applyAmb(obj.data);
         break;
     }
   }
@@ -517,6 +537,8 @@ function applyTelem(d) {
   document.getElementById("tIN").textContent = d.IN.toFixed(1);
   document.getElementById("tBT").textContent = d.BT.toFixed(1);
   document.getElementById("tET").textContent = d.ET.toFixed(1);
+  if (d.cj !== undefined)
+    document.getElementById("tCJ").textContent = d.cj.toFixed(1);
   document.getElementById("tSV").textContent =
     d.mode === "inlet" ? d.sv.toFixed(1) : "–";
   document.getElementById("fltIN").className = "flt" + (d.fltIN ? " on" : "");
@@ -708,6 +730,35 @@ function applyCool(d) {
     st.textContent = "armed — fan-off allowed once inlet < " + d.offC +
       " °C for " + d.dwellS + " s";
   }
+}
+
+// ============================ ambient panel ============================
+// Firmware and Artisan speak °C exclusively; the °F option only converts the
+// manual-entry field in the browser (default °F, per operator preference).
+function cToF(c) { return c * 9 / 5 + 32; }
+function fToC(f) { return (f - 32) * 5 / 9; }
+function ambUnit() { return document.getElementById("amUnit").value; }
+
+function sendAmbSrc() {
+  send("AMB SRC " + document.getElementById("amSrc").value);
+}
+
+function sendAmbManual() {
+  const raw = parseFloat(document.getElementById("amVal").value);
+  if (!Number.isFinite(raw)) { logLine("(enter an ambient value first)", "error"); return; }
+  const c = ambUnit() === "F" ? fToC(raw) : raw;
+  send("AMB " + c.toFixed(1));   // also switches the source to manual
+}
+
+function applyAmb(d) {
+  if (!d || d.src === undefined) return;
+  const srcMap = { coldstart: "COLDSTART", cj: "CJ", manual: "MANUAL" };
+  document.getElementById("amSrc").value = srcMap[d.src] || "COLDSTART";
+  document.getElementById("amVal").value =
+    (ambUnit() === "F" ? cToF(d.manC) : d.manC).toFixed(1);
+  document.getElementById("amState").textContent =
+    "AT = " + d.ambC.toFixed(1) + " °C (" + cToF(d.ambC).toFixed(1) + " °F)" +
+    " · cold-start " + d.coldC.toFixed(1) + " °C · CJ " + d.cj.toFixed(1) + " °C";
 }
 
 function applyCurve(d) {
@@ -1011,6 +1062,14 @@ document.getElementById("csvFile").addEventListener("change", e => {
 // tick will trigger it
 ["chartWin", "chartBT", "chartPause"].forEach(id =>
   document.getElementById(id).addEventListener("change", drawChart));
+
+// flipping the ambient unit converts the manual field in place
+document.getElementById("amUnit").addEventListener("change", e => {
+  const el = document.getElementById("amVal");
+  const v = parseFloat(el.value);
+  if (!Number.isFinite(v)) return;
+  el.value = (e.target.value === "F" ? cToF(v) : fToC(v)).toFixed(1);
+});
 
 document.getElementById("cmd").addEventListener("keydown", e => {
   if (e.key === "Enter") sendInput();
