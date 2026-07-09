@@ -758,6 +758,26 @@ read path is a blocking one-shot that defeats continuous-mode operation (see
 
 ---
 
+## Further documentation
+
+Deeper design notes, hardware debugging history, and development state live in
+companion documents alongside this README:
+
+| Document | What's in it |
+|----------|--------------|
+| [hardware/pins.md](hardware/pins.md) | Authoritative pin / bus / I2C-address map for the ESP32-S3 Feather — the ground truth for wiring. Do not invent pins; check here first. |
+| [hardware/emi.md](hardware/emi.md) | How the AC dimmers couple noise into the temperature sensors, the RTD fault/noise history, and the mitigations. Read before touching `serviceRtd()` or the robust-read constants. |
+| [hardware/triac-protection.md](hardware/triac-protection.md) | Protecting the RBDimmer triac modules against the observed fan-channel failure (failed-closed / full output): snubber placement, MOV/TVS transient suppression, inductive-fan vs. resistive-heater differences. |
+| [max31865_direct.h](max31865_direct.h) | The register-direct MAX31865 RTD driver (continuous auto-convert mode) and the rationale for not using the Adafruit library. |
+| [artisan/artisan_config_context.md](artisan/artisan_config_context.md) | End-to-end Artisan setup context: reading BT/ET from Phidget modules and driving the roaster over WebSocket. |
+| [artisan/artisan_help_sliders.md](artisan/artisan_help_sliders.md) | Reference dump of Artisan's custom-button / event-slider configuration fields (upstream help text). |
+| [state-current.md](state-current.md) | Development state: the active effort, plus a "read this first" framework overview for anyone (human or LLM) picking the project up. |
+| [state-plan.md](state-plan.md) | Planned work, phase specifications, and the remaining on-roaster validation checklist. |
+| [state-archive.md](state-archive.md) | Completed work, code-review findings (F-numbers), and decided-and-done rationale — the durable historical record. |
+| [work.md](work.md) | Future-work scratchpad and utility notes (e.g. the `make_inlet_background.py` inlet-SV background profile generator). |
+
+---
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
