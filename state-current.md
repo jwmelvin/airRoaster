@@ -51,9 +51,10 @@ Compile after every meaningful edit; the script surfaces sketch-local warnings.
   no sensors, and no WiFi present (log, hold safe defaults, keep serving serial).
 
 **Git.** Development happens on feature branches; `main` holds roast-tested
-firmware. `main` is at **v0.16.0** (2026-07-04, cooldown guard — mostly
-validated on-roaster 2026-07-05); the current effort is on
-`feature/ambient` (v0.17.0). Commit per
+firmware. `main` is at **v0.17.0** (2026-07-07): `feature/ambient` (ambient
+reporting — the `AT` channel + cold-junction surfacing) was fast-forwarded into
+`main` and pushed; its on-roaster validation is still pending (state-plan.md
+§ NEXT item 12). Start the next effort on a fresh branch off `main`. Commit per
 phase with
 a message naming the phase. The user's Artisan config churn (`artisan/*.aset`,
 `*.alog`) may be present in the working tree — never sweep it into a firmware
