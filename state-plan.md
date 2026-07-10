@@ -208,6 +208,35 @@ Single file, zero dependencies, works from `file://`. Grouped panels:
   boot sync) but not the control law; keep the commit-on-ack + re-assert
   robustness shape (v0.13). Cross-reference the EMI history in
   [hardware/emi.md](hardware/emi.md).
+- **Auto-provision a fresh DimmerLink module in place (UART→I2C on the I2C
+  pins).** A factory module ships on UART at the default I2C address `0x50`
+  ([config.md](config.md) § 3); today that switch is a separate bench sketch.
+  Idea: do it in-firmware without rewiring by temporarily driving the I2C pins
+  (SDA `GPIO3` / SCL `GPIO4`) as a UART through the ESP32-S3 GPIO matrix. Flow:
+  on boot (or a `DLPROVISION HEAT|FAN` command), if the expected address does
+  not ACK, tear down `Wire`, bring a UART peripheral up on those pins, send
+  `SWITCH_I2C` (`0x5B`), wait for the mode to persist, tear the UART down,
+  `Wire.begin()`, write the target address to reg `0x30`, verify `VERSION`.
+  Open questions to resolve first: (a) confirm the module's UART TX/RX land on
+  the *same* two physical pins as its I2C SDA/SCL (the "two-bus" connector) —
+  this is the crux; (b) confirm the DimmerLink UART baud/framing from the UART
+  protocol docs; (c) collision — two fresh modules both answer `0x50`, so this
+  only works with a single unaddressed module on the bus (provision one at a
+  time, or before the second is wired); (d) safety — only with heat off and the
+  boot heat-zero intact. Payoff: plug in a replacement dimmer and it
+  self-provisions.
+- **Data-driven I2C device registry (add a device via a `.json` change).**
+  Make adding an *auxiliary* I2C peripheral a config edit, not a code edit: a
+  small JSON manifest of `{address, type, role, options}` the firmware reads at
+  boot to instantiate/parse the device. Candidate storage: a compiled-in JSON
+  string, an NVS blob, or a LittleFS/SPIFFS file flashed with the firmware (or
+  pushed from the dashboard). Scope guard: keep the **safety-critical core**
+  devices (both dimmers, inlet TC, the RTDs) hardcoded and interlocked — the
+  registry is for optional sensors first (the BME688 ambient below, an extra
+  RTD, environmental sensors) whose presence and address vary. A full
+  driver-plugin system is a large refactor; a lighter first cut is a table of
+  *known* optional device types keyed by address. Ties into the dimmer
+  auto-provision above (address assignment) and the BME688 item below.
 - ET RTD probe installation → set `RTD_ET_ENABLED 1` (sensor code is ready).
 - BME688 ambient sensor on STEMMA QT (`0x76/0x77`) — would give a true room
   ambient for feedforward instead of the cold-junction estimate.
