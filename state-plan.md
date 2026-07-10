@@ -266,11 +266,26 @@ Single file, zero dependencies, works from `file://`. Grouped panels:
     `localhost` qualify, but a dashboard served over `http://<lan-ip>` may not,
     which would block signing. Confirm before committing to a browser-HMAC
     design.
+  - **Parked (2026-07-10, operator decision):** mandatory auth stays off the
+    table for now because Artisan must keep sending commands or the setup
+    doesn't work. The workable shape, if/when revisited, is a **localhost
+    signing proxy**: Artisan connects to `ws://127.0.0.1:<port>` on the
+    operator's machine (unauthenticated but localhost-bound), and the proxy
+    holds the shared key and signs traffic to the roaster, which rejects
+    unsigned writes. Artisan needs no changes beyond the Host field. The
+    "laptop becomes the sole operator" concern is softer than it sounds:
+    *keyed devices* are operators (any machine with the key can run the proxy;
+    the dashboard could HMAC directly), and the Artisan machine is already the
+    operator console — the proxy co-locates with it. What's lost is ad-hoc
+    access from unkeyed devices; mitigate by leaving an unauthenticated
+    **safe subset** in firmware — reads plus safety-increasing commands only
+    (`OT1 0`, `INLET OFF`, `COOL ON`) — so anything on the network can still
+    stop the roaster, never start it. A proxy crash mid-roast is no worse than
+    Artisan crashing: the firmware failsafes are client-independent.
   - Open questions: which exact commands are "privileged" vs open; replay/nonce
     persistence across reboot; key provisioning + rotation; and whether to pair
     this with network-level isolation (roaster VLAN) as the pragmatic near-term
-    mitigation while the crypto path is built. Safety-relevant enough to
-    consider promoting out of *Later* into a scheduled phase.
+    mitigation while the crypto path is built.
 - ET RTD probe installation → set `RTD_ET_ENABLED 1` (sensor code is ready).
 - BME688 ambient sensor on STEMMA QT (`0x76/0x77`) — would give a true room
   ambient for feedforward instead of the cold-junction estimate.
