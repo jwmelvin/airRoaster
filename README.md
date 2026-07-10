@@ -668,6 +668,7 @@ A ready-to-import Artisan settings file is provided at `artisan/airRoaster.aset`
 | Input 1 → BT | `BT` node — bean RTD (the connected probe) |
 | Input 2 → ET | `ET` node — second RTD (no probe yet; reads ~0) |
 | Input 3 → IN | `IN` node — inlet thermocouple |
+| Input 4 → AT | `AT` node — ambient temperature (see [Ambient temperature](#ambient-temperature-at)) |
 | Slider 0 | Fan — sends `OT2;<value>` |
 | Slider 1 | Heat — sends `OT1;<value>` |
 
@@ -675,10 +676,16 @@ A third, temperature-scaled `T_inlet` slider sends `INLET` for closed-loop
 control and can be driven automatically from a background profile — see
 [Driving the setpoint from a roast profile](#driving-the-setpoint-from-a-roast-profile-artisan-event-playback).
 
-**Configuring the WebSocket inputs.** In Artisan, under **Config › Port ›
-WebSocket**, set the input node names to match the firmware's JSON fields:
-**Input 1: `BT`, Input 2: `ET`, Input 3: `IN`** (i.e. `channel_nodes=BT, ET, IN`
-in the `.aset`). The node names just select which JSON field feeds each curve.
+**Configuring the WebSocket inputs.** This is the key step, and it lives under
+**Config › Port › WebSocket** — in the **Nodes** row, type the firmware's JSON
+field name into each Input's **Node** box and set **Mode** to `C`:
+**Input 1: `BT`, Input 2: `ET`, Input 3: `IN`, Input 4: `AT`** (i.e.
+`channel_nodes=BT, ET, IN, AT` in the `.aset`). The node names select which JSON
+field from the flat `data` object feeds each Input — the firmware doesn't assign
+channel numbers, this row does. For Inputs 3+ to exist as channels, define the
+matching extra WebSocket device(s) under **Config › Device › Extra Devices**
+(pointed at the same `ws://<device-ip>:81`); untick their LCD/Curve boxes for
+any channel you only want logged, not plotted.
 
 If a channel reads 0 °C / 32 °F while live data appears on a *different* curve,
 the cause is almost always the **firmware** reading the wrong board for that
@@ -704,19 +711,20 @@ from the source selected with `AMB SRC` (dashboard: Ambient panel; NVS-persisted
 - **manual** — a value entered on the dashboard (°F or °C entry; sent to the
   firmware in °C). `AMB <degC>` sets it and switches the source to manual.
 
-**Getting it into Artisan.** Artisan fills the ambient temperature in **Roast
-Properties** automatically at CHARGE from a configured source curve
-(**Config › Device › Ambient** tab). To feed it from the firmware:
+**Getting it into Artisan.** The `AT` node becomes an Artisan input via the
+**Config › Port › WebSocket** Nodes row — the same place BT/ET/IN are mapped
+(above). In the reference setup `AT` is **Input 4** (Node `AT`, Mode `C`),
+right after `IN` on Input 3:
 
-1. Add a WebSocket extra device (**Config › Device › Extra Devices**, device
-   "WebSocket 34") — same host/port as the main device; label a channel e.g.
-   `AT` (uncheck its Curve/LCD boxes if you don't want it plotted).
-2. Under **Config › Port › WebSocket**, set that channel's data node to `AT`.
-3. On the **Config › Device › Ambient** tab, select that channel as the
-   **Temperature** source.
-
-Artisan samples the channel at CHARGE and stores it with the roast's ambient
-conditions (it converts to the display unit itself — the wire value stays °C).
+1. Under **Config › Device › Extra Devices**, ensure an extra WebSocket device
+   exists so Inputs 3–4 are live channels (same host/port). Untick its
+   LCD/Curve boxes if you don't want `AT` plotted.
+2. Under **Config › Port › WebSocket**, set Input 4's **Node** to `AT` and
+   **Mode** to `C`.
+3. To auto-fill **Roast Properties**, open **Config › Device › Ambient** and
+   select the `AT` channel as the **Temperature** source — Artisan samples it at
+   CHARGE and stores it with the roast's ambient conditions (it converts to the
+   display unit itself — the wire value stays °C).
 
 This is deliberately separate from `FF AMB` (the feedforward's reference
 temperature): `AT` is roast metadata, `ffAmbient` is a control-law parameter.
@@ -765,6 +773,7 @@ companion documents alongside this README:
 
 | Document | What's in it |
 |----------|--------------|
+| [config.md](config.md) | Setup steps that happen outside the runtime command surface: `secrets.h` credentials, the DimmerLink factory UART→I2C dimmer provisioning, and the full Artisan WebSocket configuration. |
 | [hardware/pins.md](hardware/pins.md) | Authoritative pin / bus / I2C-address map for the ESP32-S3 Feather — the ground truth for wiring. Do not invent pins; check here first. |
 | [hardware/emi.md](hardware/emi.md) | How the AC dimmers couple noise into the temperature sensors, the RTD fault/noise history, and the mitigations. Read before touching `serviceRtd()` or the robust-read constants. |
 | [hardware/triac-protection.md](hardware/triac-protection.md) | Protecting the RBDimmer triac modules against the observed fan-channel failure (failed-closed / full output): snubber placement, MOV/TVS transient suppression, inductive-fan vs. resistive-heater differences. |

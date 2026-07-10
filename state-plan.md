@@ -198,6 +198,16 @@ Single file, zero dependencies, works from `file://`. Grouped panels:
 
 ## Later / not scheduled
 
+- **Evaluate moving the DimmerLink link from I2C back to UART serial.** The
+  modules ship UART-by-default and were switched to I2C during provisioning
+  (see [config.md](config.md) § 3); on this project's questionable wiring the
+  serial link has looked *at least as noise-tolerant* as I2C. Worth a
+  controlled comparison — if serial holds up, it may be the more robust
+  transport here. Would touch the DimmerLink transport layer in
+  `airRoaster.ino` (register reads/writes, `initDL`/`assertDLState`,
+  boot sync) but not the control law; keep the commit-on-ack + re-assert
+  robustness shape (v0.13). Cross-reference the EMI history in
+  [hardware/emi.md](hardware/emi.md).
 - ET RTD probe installation → set `RTD_ET_ENABLED 1` (sensor code is ready).
 - BME688 ambient sensor on STEMMA QT (`0x76/0x77`) — would give a true room
   ambient for feedforward instead of the cold-junction estimate.
