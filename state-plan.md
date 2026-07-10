@@ -225,18 +225,52 @@ Single file, zero dependencies, works from `file://`. Grouped panels:
   time, or before the second is wired); (d) safety — only with heat off and the
   boot heat-zero intact. Payoff: plug in a replacement dimmer and it
   self-provisions.
-- **Data-driven I2C device registry (add a device via a `.json` change).**
-  Make adding an *auxiliary* I2C peripheral a config edit, not a code edit: a
-  small JSON manifest of `{address, type, role, options}` the firmware reads at
-  boot to instantiate/parse the device. Candidate storage: a compiled-in JSON
-  string, an NVS blob, or a LittleFS/SPIFFS file flashed with the firmware (or
-  pushed from the dashboard). Scope guard: keep the **safety-critical core**
-  devices (both dimmers, inlet TC, the RTDs) hardcoded and interlocked — the
-  registry is for optional sensors first (the BME688 ambient below, an extra
-  RTD, environmental sensors) whose presence and address vary. A full
-  driver-plugin system is a large refactor; a lighter first cut is a table of
-  *known* optional device types keyed by address. Ties into the dimmer
-  auto-provision above (address assignment) and the BME688 item below.
+- **Data-driven device registry (add a device via a `.json` change) — all
+  buses.** Make adding an *auxiliary* peripheral a config edit, not a code
+  edit: a small JSON manifest of `{bus, addressing, type, role, options}` the
+  firmware reads at boot to instantiate/parse the device. The idea is not
+  I2C-specific — it applies the same way across **all three buses**, with the
+  bus deciding the addressing field: I2C → device address, SPI → chip-select
+  pin (+ SPI mode/clock), serial/UART → port + baud/framing. Candidate
+  storage: a compiled-in JSON string, an NVS blob, or a LittleFS/SPIFFS file
+  flashed with the firmware (or pushed from the dashboard). Scope guard: keep
+  the **safety-critical core** devices (both dimmers, inlet TC, the RTDs)
+  hardcoded and interlocked — the registry is for optional sensors first (the
+  BME688 ambient below, an extra RTD, environmental sensors) whose presence and
+  wiring vary. A full driver-plugin system is a large refactor; a lighter first
+  cut is a table of *known* optional device types keyed by bus+address. Ties
+  into the dimmer auto-provision above (address assignment) and the BME688 item
+  below.
+- **Cryptographic authentication of the command interface (safety/security).**
+  Today the WebSocket server on `:81` accepts plaintext commands from anyone on
+  the network — `OT1`/`OT2`/`INLET`, and the safety config (`IL`, `COOL`,
+  `DLRESET`, `PID`, `FF`, `CURVE`, `AMB`). On a private WLAN the risk is low,
+  but this drives a **heating element**, so an unauthenticated write path is the
+  standing exposure. Goal: only authorized clients can issue state-changing
+  commands. **The hard constraint is Artisan**: its WebSocket client speaks
+  plain `ws://` with no auth header, token, or `wss` client-cert support, so
+  mandatory auth would break the primary use. Design has to be layered:
+  - Keep the *read* path (`getData`, telemetry, `LOG`, `STAT`) and the Artisan
+    *slider* commands usable, and authenticate the privileged/mutating commands
+    — or gate privileged commands to the dashboard only while Artisan keeps a
+    reduced, network-trust-scoped surface.
+  - Candidate mechanisms, lightest first: **HMAC-signed command envelope**
+    (shared key + monotonic nonce/timestamp for replay protection) — cheap, no
+    TLS handshake, fits the existing JSON envelope; **challenge–response
+    session auth** on connect (device issues a nonce, client proves the shared
+    key, session trusted thereafter); or full **`wss`/TLS** via mbedTLS (heavier
+    on RAM/latency, and still doesn't solve Artisan). OTA already carries a
+    shared password (`OTA_PASS`) — precedent for a secret in `secrets.h` + NVS.
+  - Dashboard gotcha to verify early: the browser HMAC needs Web Crypto
+    (`crypto.subtle`), which requires a **secure context** — `file://` and
+    `localhost` qualify, but a dashboard served over `http://<lan-ip>` may not,
+    which would block signing. Confirm before committing to a browser-HMAC
+    design.
+  - Open questions: which exact commands are "privileged" vs open; replay/nonce
+    persistence across reboot; key provisioning + rotation; and whether to pair
+    this with network-level isolation (roaster VLAN) as the pragmatic near-term
+    mitigation while the crypto path is built. Safety-relevant enough to
+    consider promoting out of *Later* into a scheduled phase.
 - ET RTD probe installation → set `RTD_ET_ENABLED 1` (sensor code is ready).
 - BME688 ambient sensor on STEMMA QT (`0x76/0x77`) — would give a true room
   ambient for feedforward instead of the cold-junction estimate.
