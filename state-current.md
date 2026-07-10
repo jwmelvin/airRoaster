@@ -60,9 +60,32 @@ a message naming the phase. The user's Artisan config churn (`artisan/*.aset`,
 `*.alog`) may be present in the working tree — never sweep it into a firmware
 commit; stage files explicitly.
 
-## Active effort (2026-07-07)
+## Active effort (2026-07-10)
 
-**Ambient reporting → v0.17.0** (on `feature/ambient`). The Artisan `getData`
+**Command authentication → v0.18.0** (on `feature/auth-proxy`). Connect-time
+challenge–response sessions on the WebSocket: the device pushes a random
+nonce to each new client ("auth" push); a client proves the shared `AUTH_KEY`
+(secrets.h; absent/empty = feature entirely off) by returning
+`AUTH HMAC-SHA256(key, nonce-hex)` and its connection is trusted until it
+drops (5 fails burn the connection; each failure re-nonces). Tiered
+enforcement `AUTH MODE OFF|CONFIG|FULL` (NVS "auth"): CONFIG gates
+safety/config mutations while OT1/OT2/INLET stay open for direct Artisan;
+FULL gates all mutations — Artisan then connects through
+`tools/roaster_proxy.py` (localhost signing proxy: answers the challenge,
+relays everything else; transparent pipe against a keyless device). The
+always-open safe subset (operator requirement): reads plus `OT1 0`,
+`INLET OFF`/`INLET 0`, `COOL ON`, `TUNE ABORT` — any device can stop the
+roaster, never start it. `AUTH MODE` itself always requires auth; serial is
+always trusted (physical access). Single gate at the top of
+`processCommand()` via `cmdTier()`. Dashboard: key field (localStorage),
+automatic challenge answering (Web Crypto), Auth panel. Compile-verified;
+proxy validated end-to-end against a firmware-faithful fake device (correct
+key / wrong key / keyless all behave); dashboard HMAC cross-checked against
+a Python reference. On-roaster + live-Artisan drill: state-plan.md § NEXT
+item 13. Design decisions (operator-confirmed 2026-07-10): session auth over
+per-message HMAC; runtime tier; secrets.h key; python proxy.
+
+**Prior: Ambient reporting → v0.17.0** (merged to `main`). The Artisan `getData`
 response gains an `AT` node (°C): Artisan maps it to an extra WebSocket
 channel and selects that channel in **Config › Device › Ambient** (tab), then
 samples it at CHARGE into Roast Properties (README § Ambient temperature has

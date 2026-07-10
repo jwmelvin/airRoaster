@@ -59,6 +59,16 @@ Remaining drills, roughly in commissioning order:
     channel, select it on Config › Device › Ambient, and confirm Roast
     Properties picks up the ambient temperature at CHARGE (README § Ambient
     temperature has the click-path).
+13. **Command auth (v0.18.0)** — with `AUTH_KEY` in secrets.h: dashboard
+    authenticates automatically (key field) and `AUTH` reports authed; set
+    `AUTH MODE CONFIG` and confirm an *unkeyed* browser gets "AUTH required"
+    for `PID`/`IL`/`COOL MIN` but can still run `OT1 60`, `OT1 0`, `INLET
+    OFF`, `COOL ON`; set `AUTH MODE FULL` and confirm `OT1 60` is refused
+    unkeyed while `OT1 0` still works; run `tools/roaster_proxy.py` with the
+    key and confirm live Artisan drives sliders through it in FULL mode;
+    wrong-key proxy → refused; mode survives a power cycle (NVS); serial
+    stays fully trusted. Also confirm a keyless build (empty AUTH_KEY)
+    behaves exactly as v0.17.
 
 ## Completed phases (specs kept for reference; details in the archive)
 
@@ -242,6 +252,8 @@ Single file, zero dependencies, works from `file://`. Grouped panels:
   into the dimmer auto-provision above (address assignment) and the BME688 item
   below.
 - **Cryptographic authentication of the command interface (safety/security).**
+  **→ PROMOTED 2026-07-10: in development as v0.18.0 on `feature/auth-proxy`**
+  (see state-current.md). The notes below are the original design record.
   Today the WebSocket server on `:81` accepts plaintext commands from anyone on
   the network — `OT1`/`OT2`/`INLET`, and the safety config (`IL`, `COOL`,
   `DLRESET`, `PID`, `FF`, `CURVE`, `AMB`). On a private WLAN the risk is low,

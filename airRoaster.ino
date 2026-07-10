@@ -17,11 +17,13 @@
 #include "max31865_direct.h"   // register-level MAX31865 driver, continuous mode
 #include <Preferences.h>   // NVS-backed persistence of the tuning set
 #include <esp_task_wdt.h>  // task watchdog (a hung loop with heat on is the worst case)
+#include <esp_random.h>    // hardware RNG for auth challenge nonces
+#include <mbedtls/md.h>    // HMAC-SHA256 for WebSocket command authentication
 
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.17.0"
+#define FW_VERSION  "0.18.0"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -32,6 +34,15 @@
 // credential, otherwise the WiFi password is reused.
 #ifndef OTA_PASS
 #define OTA_PASS WIFI_PASS
+#endif
+
+// WebSocket command authentication (see the AUTH command / README § Command
+// authentication). AUTH_KEY is the shared secret for the connect-time
+// challenge–response; define it in secrets.h. Left undefined (or empty),
+// authentication is entirely disabled and the firmware behaves as before —
+// so a device without a key is exactly the pre-v0.18 open controller.
+#ifndef AUTH_KEY
+#define AUTH_KEY ""
 #endif
 
 // ---------------------------------------------------------------------------
@@ -137,6 +148,30 @@
 #define AMB_VALID_MAX_C          60.0f
 #define AMB_DFLT_C               20.0f   // placeholder until a capture / manual set
 
+// WebSocket command authentication (AUTH command). Connect-time
+// challenge–response: the device sends a random nonce to each new client;
+// a client proves the shared AUTH_KEY by returning
+// HMAC-SHA256(AUTH_KEY, <nonce-hex-string>) and its connection is trusted
+// until it drops. Serial is physically local and always trusted. Enforcement
+// is tiered (NVS-persisted, AUTH MODE):
+//   OFF    — nothing enforced (the power-on state of a keyless device).
+//   CONFIG — safety/config mutations (PID/FF/IL/COOL config/CURVE/DLRESET/
+//            AMB/TUNE start) require an authenticated connection; the
+//            roast-driving set (OT1/OT2/INLET) stays open so Artisan can
+//            connect directly.
+//   FULL   — every mutation requires auth; Artisan drives through the
+//            signing proxy (tools/roaster_proxy.py).
+// A safe subset is ALWAYS open regardless of mode (operator requirement):
+// reads, plus the safety-increasing commands OT1 0, INLET OFF / INLET <=0,
+// COOL ON, TUNE ABORT — any device on the network can stop the roaster,
+// never start it. AUTH MODE itself always requires auth when a key exists,
+// so enforcement can be raised but never lowered by an unkeyed client.
+#define AUTH_NONCE_LEN     16   // challenge nonce bytes (sent as 32 hex chars)
+#define AUTH_MAX_FAILS     5    // failed responses per connection before ignoring AUTH
+#define AUTH_MODE_OFF      0
+#define AUTH_MODE_CONFIG   1
+#define AUTH_MODE_FULL     2
+
 // WiFi: bounded connect wait at boot; reconnection is watched from loop().
 // The roaster must be fully operable over serial with no network present.
 #define WIFI_CONNECT_TIMEOUT_MS  15000
@@ -239,6 +274,16 @@ uint8_t ambSource  = AMB_SRC_COLDSTART;
 float   ambManualC = AMB_DFLT_C;   // AMB <degC> (dashboard converts °F before sending)
 float   ambColdC   = AMB_DFLT_C;   // BT RTD captured at the last cold boot
 bool    ambColdDone = false;
+
+// Command-auth state. authMode is the enforcement tier (NVS "auth"; forced
+// to OFF behavior whenever AUTH_KEY is empty). The per-client arrays track
+// each WebSocket connection's challenge and whether it has authenticated;
+// they reset on connect/disconnect. WEBSOCKETS_SERVER_CLIENT_MAX comes from
+// the WebSockets library (default 5).
+uint8_t authMode = AUTH_MODE_OFF;
+uint8_t authNonce[WEBSOCKETS_SERVER_CLIENT_MAX][AUTH_NONCE_LEN];
+bool    authOk[WEBSOCKETS_SERVER_CLIENT_MAX]    = {false};
+uint8_t authFails[WEBSOCKETS_SERVER_CLIENT_MAX] = {0};
 
 // Freshness stamp of the last *accepted* inlet reading. The hold-last-good
 // policy means inTemp can be a frozen value during a fault; anything closing a
@@ -426,6 +471,9 @@ void sendCoolState(int8_t clientNum);
 void serviceAmbientColdStart(uint32_t now);
 void sendAmbState(int8_t clientNum);
 float ambientNowC();
+void sendAuthChallenge(uint8_t num);
+void sendAuthState(int8_t clientNum);
+bool authVerifyResponse(uint8_t num, const String &respHex);
 void broadcastStatus();
 void broadcastTelemetry();
 bool handleArtisanRequest(uint8_t clientNum, const String& msg);
@@ -735,6 +783,152 @@ void serviceAmbientColdStart(uint32_t now) {
 }
 
 // ===========================================================================
+// WebSocket command authentication (AUTH command)
+// ===========================================================================
+// Session model: a fresh random nonce is pushed to every new client; the
+// client answers `AUTH <hex>` where hex = HMAC-SHA256(AUTH_KEY, nonce) —
+// the MAC is computed over the nonce's ASCII hex string exactly as it was
+// transmitted (no byte-decoding needed on the client) with the raw AUTH_KEY
+// string bytes as the key, and returned lowercase. On a match, that
+// *connection* is trusted until it drops. Each failure burns the nonce (a
+// fresh challenge is pushed) and counts toward AUTH_MAX_FAILS, after which
+// the connection must re-open to try again. This deliberately trusts the
+// connection after one handshake: the LAN threat model is unauthorized
+// clients connecting, not injection into an established TCP stream — that
+// adversary calls for TLS, which the Artisan client cannot speak anyway.
+
+static const char *NVS_AUTH_NS = "auth";
+
+static inline bool authKeySet() { return AUTH_KEY[0] != '\0'; }
+
+// Command privilege tiers — assigned by cmdTier() (defined beside the
+// command parser) and enforced by the gate at the top of processCommand().
+enum authTier_t : uint8_t { TIER_OPEN = 0, TIER_DRIVE = 1, TIER_CONF = 2 };
+
+void loadAuth() {
+    prefs.begin(NVS_AUTH_NS, true);          // read-only
+    authMode = prefs.getUChar("mode", authMode);
+    prefs.end();
+    if (authMode > AUTH_MODE_FULL) {
+        authMode = AUTH_MODE_OFF;
+        logError("auth NVS invalid: mode OFF");
+    }
+    if (authMode != AUTH_MODE_OFF && !authKeySet()) {
+        // A stored enforcement tier with no compiled-in key would lock every
+        // WS client out with no way to authenticate — treat as OFF and say so.
+        logError("auth: AUTH_KEY empty, enforcement disabled");
+    }
+}
+
+void saveAuth() {
+    prefs.begin(NVS_AUTH_NS, false);         // read-write
+    prefs.putUChar("mode", authMode);
+    prefs.end();
+}
+
+// The tier actually enforced right now (a keyless build is always OFF).
+static uint8_t authModeEffective() {
+    return authKeySet() ? authMode : AUTH_MODE_OFF;
+}
+
+static const char* authModeName() {
+    uint8_t m = authModeEffective();
+    return m == AUTH_MODE_FULL ? "full" : (m == AUTH_MODE_CONFIG ? "config" : "off");
+}
+
+static void bytesToHex(const uint8_t *in, size_t len, char *out) {
+    static const char *d = "0123456789abcdef";
+    for (size_t i = 0; i < len; i++) {
+        out[2 * i]     = d[in[i] >> 4];
+        out[2 * i + 1] = d[in[i] & 0x0F];
+    }
+    out[2 * len] = '\0';
+}
+
+// Strict fixed-length hex parse (both cases accepted); false on any deviation.
+static bool hexToBytes(const String &s, uint8_t *out, size_t len) {
+    if (s.length() != 2 * len) return false;
+    for (size_t i = 0; i < 2 * len; i++) {
+        char c = s[i];
+        uint8_t v;
+        if      (c >= '0' && c <= '9') v = c - '0';
+        else if (c >= 'a' && c <= 'f') v = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') v = c - 'A' + 10;
+        else return false;
+        if (i & 1) out[i / 2] |= v;
+        else       out[i / 2] = v << 4;
+    }
+    return true;
+}
+
+static bool hmacSha256(const uint8_t *key, size_t keyLen,
+                       const uint8_t *msg, size_t msgLen, uint8_t out[32]) {
+    const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    if (md == nullptr) return false;
+    return mbedtls_md_hmac(md, key, keyLen, msg, msgLen, out) == 0;
+}
+
+// Push a fresh challenge to one client (connect, and after every failed
+// attempt so a response can never be replayed). Also resets that slot's
+// session state — callers use it as the per-connection initializer.
+void sendAuthChallenge(uint8_t num) {
+    if (num >= WEBSOCKETS_SERVER_CLIENT_MAX) return;
+    authOk[num] = false;
+    esp_fill_random(authNonce[num], AUTH_NONCE_LEN);
+    char nonceHex[2 * AUTH_NONCE_LEN + 1];
+    bytesToHex(authNonce[num], AUTH_NONCE_LEN, nonceHex);
+    char b[144];
+    snprintf(b, sizeof(b),
+        "{\"pushMessage\":\"auth\",\"data\":{\"nonce\":\"%s\",\"mode\":\"%s\"}}",
+        nonceHex, authModeName());
+    webSocket.sendTXT(num, b);
+    Serial.printf("auth: challenge sent to client %u\n", num);
+}
+
+// Report auth state to the sender ("auth" push). authed is from the WS
+// client's own session; serial is always-trusted by definition.
+void sendAuthState(int8_t clientNum) {
+    bool authed = clientNum < 0 ||
+        (clientNum < WEBSOCKETS_SERVER_CLIENT_MAX && authOk[clientNum]);
+    char b[128];
+    snprintf(b, sizeof(b),
+        "{\"pushMessage\":\"auth\",\"data\":{\"keySet\":%s,\"mode\":\"%s\",\"authed\":%s}}",
+        authKeySet() ? "true" : "false", authModeName(), authed ? "true" : "false");
+    if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
+    Serial.println(b);
+}
+
+// Verify a client's challenge response. Constant-time compare; a mismatch
+// burns the nonce and issues a new challenge until AUTH_MAX_FAILS.
+bool authVerifyResponse(uint8_t num, const String &respHex) {
+    if (num >= WEBSOCKETS_SERVER_CLIENT_MAX || !authKeySet()) return false;
+    if (authFails[num] >= AUTH_MAX_FAILS) return false;   // reconnect to retry
+
+    uint8_t resp[32];
+    uint8_t expect[32];
+    char nonceHex[2 * AUTH_NONCE_LEN + 1];
+    bytesToHex(authNonce[num], AUTH_NONCE_LEN, nonceHex);
+    bool ok = hexToBytes(respHex, resp, sizeof(resp)) &&
+              hmacSha256((const uint8_t *)AUTH_KEY, strlen(AUTH_KEY),
+                         (const uint8_t *)nonceHex, 2 * AUTH_NONCE_LEN, expect);
+    if (ok) {
+        uint8_t diff = 0;                     // constant-time compare
+        for (size_t i = 0; i < sizeof(expect); i++) diff |= resp[i] ^ expect[i];
+        ok = (diff == 0);
+    }
+    if (ok) {
+        authOk[num]    = true;
+        authFails[num] = 0;
+        Serial.printf("auth: client %u authenticated\n", num);
+        return true;
+    }
+    authFails[num]++;
+    Serial.printf("auth: client %u failed attempt %u/%u\n", num, authFails[num], AUTH_MAX_FAILS);
+    if (authFails[num] < AUTH_MAX_FAILS) sendAuthChallenge(num);
+    return false;
+}
+
+// ===========================================================================
 // OTA firmware updates
 // ===========================================================================
 // ArduinoOTA (espota protocol; push with `./verify.sh ota [host]`). Serviced
@@ -815,6 +1009,7 @@ void setup() {
     loadInterlock();
     loadCool();
     loadAmb();
+    loadAuth();
 
     // Task watchdog on the loop task. A hang with the heater energized is the
     // worst failure mode; panic->reset is safe because the boot dimmer sync
@@ -905,12 +1100,25 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
     switch (type) {
         case WStype_CONNECTED:
             Serial.printf("[WS] Client %u connected\n", num);
+            // A new connection starts unauthenticated with a fresh challenge
+            // (no-op without a key — the device is then open, as pre-v0.18).
+            if (num < WEBSOCKETS_SERVER_CLIENT_MAX) {
+                authOk[num]    = false;
+                authFails[num] = 0;
+            }
+            if (authKeySet()) sendAuthChallenge(num);
             // Send current status to the newly connected client
             broadcastStatus();
             break;
 
         case WStype_DISCONNECTED:
             Serial.printf("[WS] Client %u disconnected\n", num);
+            // The slot number will be reused — never let a session outlive
+            // its connection.
+            if (num < WEBSOCKETS_SERVER_CLIENT_MAX) {
+                authOk[num]    = false;
+                authFails[num] = 0;
+            }
             break;
 
         case WStype_TEXT: {
@@ -1541,6 +1749,69 @@ static void replyBadArg(int8_t clientNum, const char *kw) {
     Serial.println(b);
 }
 
+// Privilege tier of a parsed command, for the auth gate (see the AUTH
+// section). TIER_OPEN — reads and the always-open safe subset: any device on
+// the network may stop the roaster, never start it (operator requirement).
+// TIER_DRIVE — the roast-driving set (heat/fan/setpoint): privileged only in
+// FULL mode, so Artisan can connect directly in CONFIG mode. TIER_CONF —
+// safety/config mutations: privileged in CONFIG and FULL. Unknown keywords
+// classify OPEN (they fall through processCommand as no-ops anyway).
+// (Returns uint8_t, not authTier_t: the Arduino auto-prototype would land
+// before the enum's definition and fail to compile — same class of gotcha
+// as the struct notes earlier in this file.)
+static uint8_t cmdTier(const String &kw, String tokens[], int n) {
+    String a1 = (n >= 2) ? tokens[1] : String("");
+    a1.toUpperCase();
+
+    // Reads, telemetry cadence, and the auth handshake itself are open —
+    // except AUTH MODE, which must never let an unkeyed client *lower*
+    // enforcement (raising it only helps the operator, but keep it symmetric
+    // and simple: any MODE change requires auth).
+    if (kw == "LOG" || kw == "STAT" || kw == "TELEM") return TIER_OPEN;
+    if (kw == "AUTH") return (a1 == "MODE") ? TIER_CONF : TIER_OPEN;
+
+    // Report-vs-mutate keywords: bare = read (open); with arguments = config.
+    if (kw == "PID" || kw == "FF" || kw == "IL" ||
+        kw == "COOL" || kw == "CURVE" || kw == "AMB") {
+        if (n == 1) return TIER_OPEN;
+        if (kw == "COOL" && a1 == "ON") return TIER_OPEN;   // safety-increasing
+        return TIER_CONF;
+    }
+
+    if (kw == "OT1") {
+        float v;
+        if (n >= 2 && parseFloatStrict(tokens[1], v) && v <= 0.0f)
+            return TIER_OPEN;                               // OT1 0: heat off
+        return TIER_DRIVE;
+    }
+    if (kw == "INLET") {
+        if (a1 == "OFF") return TIER_OPEN;                  // disengage
+        float v;
+        if (n >= 2 && parseFloatStrict(tokens[1], v) && v <= 0.0f)
+            return TIER_OPEN;                               // INLET 0: manual + heat 0
+        return TIER_DRIVE;
+    }
+    if (kw == "OT2") return TIER_DRIVE;
+    if (kw == "TUNE") {
+        if (a1 == "OFF" || a1 == "ABORT") return TIER_OPEN; // stop a running test
+        return TIER_CONF;   // starts an autonomous heat step / writes gains
+    }
+    if (kw == "DLRESET") return TIER_CONF;   // drives an output full-on ~3-4 s
+
+    return TIER_OPEN;
+}
+
+// Reject a privileged command from an unauthenticated connection (to the
+// sender only — like replyBadArg, an auth miss is not a device fault).
+static void replyAuthRequired(int8_t clientNum, const char *kw) {
+    char b[96];
+    snprintf(b, sizeof(b),
+        "{\"pushMessage\":\"error\",\"data\":\"%s: AUTH required (mode %s)\"}",
+        kw, authModeName());
+    if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
+    Serial.println(b);
+}
+
 void processCommand(String cmd, int8_t clientNum) {
     cmd.trim();
     if (cmd.length() == 0) return;
@@ -1551,6 +1822,24 @@ void processCommand(String cmd, int8_t clientNum) {
 
     String kw = tokens[0];
     kw.toUpperCase();
+
+    // --- Command-auth gate (the single choke point; see the AUTH section).
+    // Serial (clientNum < 0) is physically local: always trusted. A keyless
+    // build or mode OFF enforces nothing. Everything else: the command's
+    // tier decides whether this connection must have authenticated.
+    {
+        uint8_t mode = authModeEffective();
+        if (clientNum >= 0 && mode != AUTH_MODE_OFF &&
+            !(clientNum < WEBSOCKETS_SERVER_CLIENT_MAX && authOk[clientNum])) {
+            uint8_t tier = cmdTier(kw, tokens, n);
+            bool needsAuth = (tier == TIER_CONF) ||
+                             (tier == TIER_DRIVE && mode == AUTH_MODE_FULL);
+            if (needsAuth) {
+                replyAuthRequired(clientNum, kw.c_str());
+                return;
+            }
+        }
+    }
 
     if (kw == "LOG") {
         if (clientNum >= 0) {
@@ -1988,6 +2277,40 @@ void processCommand(String cmd, int8_t clientNum) {
             saveAmb();
         }
         sendAmbState(clientNum);
+
+    } else if (kw == "AUTH") {
+        // AUTH                       — report key presence, mode, and whether
+        //                              this connection is authenticated.
+        // AUTH <hex>                 — answer the connect-time challenge with
+        //                              HMAC-SHA256(AUTH_KEY, nonce-hex), hex.
+        // AUTH MODE OFF|CONFIG|FULL  — set the enforcement tier (NVS). Gated
+        //                              TIER_CONF: requires an authenticated
+        //                              connection whenever a key exists.
+        // WS-only for responses (serial is always trusted and its 32-byte
+        // line buffer cannot carry a 64-hex MAC anyway).
+        if (n >= 2) {
+            String up = tokens[1];
+            up.toUpperCase();
+            if (up == "MODE") {
+                String m = (n >= 3) ? tokens[2] : String("");
+                m.toUpperCase();
+                if (!authKeySet()) {
+                    // Refuse to persist enforcement that nobody could satisfy.
+                    replyBadArg(clientNum, "AUTH MODE no key");
+                    return;
+                }
+                if      (m == "OFF")    authMode = AUTH_MODE_OFF;
+                else if (m == "CONFIG") authMode = AUTH_MODE_CONFIG;
+                else if (m == "FULL")   authMode = AUTH_MODE_FULL;
+                else { replyBadArg(clientNum, "AUTH MODE"); return; }
+                saveAuth();
+            } else if (clientNum >= 0) {
+                // Challenge response — the reply is the state report below
+                // (ok => authed:true) plus a fresh challenge on failure.
+                authVerifyResponse((uint8_t)clientNum, tokens[1]);
+            }
+        }
+        sendAuthState(clientNum);
 
     } else if (kw == "DLRESET") {
         // DLRESET HEAT|FAN — operator-commanded DimmerLink soft reset, the
@@ -2473,6 +2796,29 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.18.0 2026-07-10  WebSocket command authentication (AUTH). Connect-time
+//                     challenge–response sessions: the device pushes a random
+//                     nonce ("auth" push) to each new client; the client
+//                     returns AUTH <hex> = HMAC-SHA256(AUTH_KEY, nonce-hex)
+//                     and its connection is trusted until it drops (5 failed
+//                     tries burn the connection; every failure re-nonces).
+//                     AUTH_KEY lives in secrets.h — absent/empty disables
+//                     the feature entirely (device is the pre-v0.18 open
+//                     controller). Tiered enforcement (AUTH MODE OFF|CONFIG|
+//                     FULL, NVS "auth"): CONFIG gates safety/config mutations
+//                     (PID/FF/IL/COOL config/CURVE/DLRESET/AMB/TUNE start)
+//                     while OT1/OT2/INLET stay open for direct Artisan use;
+//                     FULL gates every mutation (Artisan connects through
+//                     tools/roaster_proxy.py, which authenticates upstream
+//                     and then relays). Always-open safe subset regardless of
+//                     mode (operator requirement): all reads, OT1 0,
+//                     INLET OFF / INLET <=0, COOL ON, TUNE ABORT — any device
+//                     may stop the roaster, never start it. AUTH MODE itself
+//                     always requires auth so enforcement can't be lowered by
+//                     an unkeyed client. Serial remains fully trusted
+//                     (physical access). Single enforcement choke point at
+//                     the top of processCommand() (cmdTier()); HMAC via
+//                     mbedTLS, nonces from esp_fill_random.
 // v0.17.0 2026-07-07  Ambient temperature reporting + cold-junction surfaced.
 //                     The Artisan getData response gains an "AT" node (°C):
 //                     map it to an extra WebSocket channel and select that

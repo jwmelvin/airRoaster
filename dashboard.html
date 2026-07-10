@@ -107,6 +107,8 @@
 <!-- ======================= connection ======================= -->
 <div class="panel" id="topbar">
   <input id="ip" placeholder="192.168.1.x" />
+  <input id="key" type="password" placeholder="auth key" style="width:100px"
+         title="AUTH_KEY shared secret — leave blank if the device has no key" />
   <button id="btnConnect" class="primary" onclick="toggleConnect()">Connect</button>
   <label class="chk"><input type="checkbox" id="autoRe" checked> auto-reconnect</label>
   <span id="indicator" class="closed"></span>
@@ -293,6 +295,18 @@
         AT channel (map it as ambient temperature source there); saved to NVS</div>
     </div>
     <div>
+      <h3>Auth</h3>
+      mode <select id="auMode">
+        <option value="OFF">off</option>
+        <option value="CONFIG">config</option>
+        <option value="FULL">full</option>
+      </select>
+      <button onclick="sendAuthMode()">Set</button>
+      <button onclick="send('AUTH')">Read</button>
+      <div class="kv" style="margin-top:0.3em" id="auState">enter the key in the
+        connection bar — the device's challenge is answered automatically</div>
+    </div>
+    <div>
       <h3>FF step cal</h3>
       fan step <input class="num" id="ffStepSize" value="7">
       <button id="ffStepBtn" onclick="ffStepStart()">Start</button>
@@ -417,6 +431,7 @@ function connect() {
     ws.send("CURVE"); // prefill the curve selectors
     ws.send("COOL");  // prefill the cooldown panel
     ws.send("AMB");   // prefill the ambient panel
+    ws.send("AUTH");  // report key/mode state (the challenge, if any, is pushed unprompted)
   };
 
   ws.onclose = () => {
@@ -505,7 +520,7 @@ function handleMessage(raw) {
       case "log":    cls = "log";    break;
       case "status": cls = "status"; applyStatus(obj.data); break;
       case "telem":  cls = "telem";  applyTelem(obj.data);  break;
-      case "tune": case "pid": case "ff": case "stat": case "il": case "curve": case "cool": case "amb":
+      case "tune": case "pid": case "ff": case "stat": case "il": case "curve": case "cool": case "amb": case "auth":
         cls = "report";
         if (obj.pushMessage === "tune")  applyTune(obj.data);
         if (obj.pushMessage === "pid")   applyPid(obj.data);
@@ -514,6 +529,7 @@ function handleMessage(raw) {
         if (obj.pushMessage === "curve") applyCurve(obj.data);
         if (obj.pushMessage === "cool")  applyCool(obj.data);
         if (obj.pushMessage === "amb")   applyAmb(obj.data);
+        if (obj.pushMessage === "auth")  applyAuth(obj.data);
         break;
     }
   }
@@ -729,6 +745,45 @@ function applyCool(d) {
   } else {
     st.textContent = "armed — fan-off allowed once inlet < " + d.offC +
       " °C for " + d.dwellS + " s";
+  }
+}
+
+// ============================ auth ============================
+// Session challenge–response (firmware v0.18.0): the device pushes a nonce on
+// connect; we answer AUTH HMAC-SHA256(key, nonce-hex) and the connection is
+// trusted until it drops. crypto.subtle needs a secure context — file:// and
+// http://localhost qualify; a LAN-http-served dashboard would not.
+async function hmacHex(key, msg) {
+  const enc = new TextEncoder();
+  const k = await crypto.subtle.importKey(
+    "raw", enc.encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", k, enc.encode(msg));
+  return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function sendAuthMode() {
+  send("AUTH MODE " + document.getElementById("auMode").value);
+}
+
+async function applyAuth(d) {
+  if (!d) return;
+  const st = document.getElementById("auState");
+  if (d.nonce !== undefined) {              // challenge
+    if (d.mode) document.getElementById("auMode").value = d.mode.toUpperCase();
+    const key = document.getElementById("key").value;
+    if (!key) { st.textContent = "challenge received — enter the auth key and reconnect"; return; }
+    if (!window.crypto || !crypto.subtle) {
+      logLine("crypto.subtle unavailable (insecure context) — open the dashboard from file:// or localhost", "error");
+      return;
+    }
+    send("AUTH " + await hmacHex(key, d.nonce));
+    return;
+  }
+  if (d.authed !== undefined) {             // state report
+    if (d.mode) document.getElementById("auMode").value = d.mode.toUpperCase();
+    st.textContent = !d.keySet
+      ? "device has no AUTH_KEY — enforcement disabled"
+      : "mode " + d.mode + " — " + (d.authed ? "AUTHENTICATED" : "NOT authenticated");
   }
 }
 
@@ -1035,6 +1090,11 @@ window.addEventListener("resize", drawChart);
 window.onload = () => {
   const saved = localStorage.getItem("airRoaster_ip");
   if (saved) document.getElementById("ip").value = saved;
+  // Hobby-grade key storage: localStorage on the operator's machine. Anyone
+  // with local access to this browser profile can read it — acceptable for a
+  // LAN roaster; don't reuse a valuable password as AUTH_KEY.
+  const savedKey = localStorage.getItem("airRoaster_key");
+  if (savedKey) document.getElementById("key").value = savedKey;
   const f = localStorage.getItem("airRoaster_filters");
   if (f) {
     const on = JSON.parse(f);
@@ -1045,6 +1105,8 @@ window.onload = () => {
 
 document.getElementById("ip").addEventListener("change", e =>
   localStorage.setItem("airRoaster_ip", e.target.value));
+document.getElementById("key").addEventListener("change", e =>
+  localStorage.setItem("airRoaster_key", e.target.value));
 
 document.querySelectorAll(".fcls").forEach(b => b.addEventListener("change", () => {
   const on = [];

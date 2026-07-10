@@ -25,7 +25,15 @@ WiFi and OTA credentials live in `secrets.h` at the repo root. The file is
 #define WIFI_SSID  "your-network"
 #define WIFI_PASS  "your-password"
 #define OTA_PASS   "your-ota-password"   // falls back to WIFI_PASS if omitted
+#define AUTH_KEY   "your-auth-secret"    // optional: WebSocket command auth;
+                                         // omitted/empty = auth fully disabled
 ```
+
+The same `AUTH_KEY` value goes to the clients that authenticate: the
+dashboard's connection-bar key field, and the Artisan proxy's
+`AIRROASTER_KEY` environment variable (see § 4.4). See
+[README § Command authentication](README.md#command-authentication) for the
+protocol and enforcement tiers.
 
 `OTA_HOSTNAME` (mDNS name for over-the-air updates, default `airroaster` →
 `airroaster.local`) is a compile-time constant in `airRoaster.ino`, not a secret.
@@ -187,7 +195,24 @@ value stays °C). The firmware's ambient source (cold-start memory / cold juncti
 / manual) is chosen with the `AMB` command or the dashboard's Ambient panel —
 see [README § Ambient temperature](README.md#ambient-temperature-at).
 
-### 4.4 Troubleshooting
+### 4.4 Command authentication (only if `AUTH_KEY` is set)
+
+With an `AUTH_KEY` compiled in and `AUTH MODE FULL` set, Artisan cannot talk
+to the roaster directly (it can't answer the HMAC challenge). Run the signing
+proxy on the machine that runs Artisan and point Artisan at it:
+
+```
+pip install websockets
+export AIRROASTER_KEY='the-shared-secret'    # same value as AUTH_KEY
+python3 tools/roaster_proxy.py --roaster <device-ip>
+```
+
+Then in **Config › Port › WebSocket** set **Host `127.0.0.1`, Port `8181`**
+(everything else unchanged). In `CONFIG` mode (or with no key) Artisan
+connects directly and no proxy is needed. Details:
+[README § Command authentication](README.md#command-authentication).
+
+### 4.5 Troubleshooting
 
 If a channel reads 0 °C / 32 °F while live data appears on a *different* curve,
 the cause is almost always the **firmware** reading the wrong board for that

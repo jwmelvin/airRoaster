@@ -38,6 +38,9 @@ If `secrets.h.example` does not exist yet, create `secrets.h` manually:
 // Optional: dedicated password for over-the-air updates.
 // If omitted, OTA authentication falls back to WIFI_PASS (never unauthenticated).
 #define OTA_PASS    "your_ota_password"
+// Optional: shared secret for WebSocket command authentication (see
+// README § Command authentication). Omitted or empty, auth is fully disabled.
+#define AUTH_KEY    "your_command_auth_secret"
 ```
 
 ### Compile-time constants
@@ -122,9 +125,9 @@ and tuning console: it connects to the device's WebSocket (below) and every
 button simply sends one of the plain-text commands documented in the next
 section, so anything the dashboard does can also be typed by hand.
 
-- **Connection bar** — device IP (remembered in the browser), connect/
-  disconnect with optional auto-reconnect, link indicator, and always-visible
-  safety actions: `HEAT 0`, `INLET OFF`, `TUNE ABORT`.
+- **Connection bar** — device IP and auth key (remembered in the browser),
+  connect/disconnect with optional auto-reconnect, link indicator, and
+  always-visible safety actions: `HEAT 0`, `INLET OFF`, `TUNE ABORT`.
 - **Status** — mode badge (manual / inlet / tune), heat bar showing the
   applied level against the requested level (so an interlock cap is visible at
   a glance), fan bar, interlock state, and cooldown-guard state (whether the
@@ -155,6 +158,9 @@ section, so anything the dashboard does can also be typed by hand.
   memory / cold junction / manual) and enter a manual value in °F (default) or
   °C — converted to °C before sending; see
   [Ambient temperature](#ambient-temperature-at).
+- **Auth** — the device's connect-time challenge is answered automatically
+  from the connection-bar key; read/set the enforcement mode — see
+  [Command authentication](#command-authentication).
 - **Console + log** — free-form command line, every message timestamped into
   a capped capture buffer with per-class show/hide (telemetry hidden by
   default) and free-text filtering, **Save log** to a file. The device keeps
@@ -233,6 +239,9 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 | `CURVE` | `CURVE` | Report both dimmer curve modes (`curve` push message) |
 | `CURVE HEAT\|FAN <0-2>` | `CURVE FAN 0` | Set a channel's dimmer curve: 0=linear, 1=rms, 2=log. Runtime-only — reboot restores RMS |
 | `DLRESET HEAT\|FAN` | `DLRESET FAN` | Soft-reset a stuck dimmer module. **The module output goes to full for ~3–4 s during the reset** — `DLRESET HEAT` is refused unless the fan is at or above the interlock minimum |
+| `AUTH` | `AUTH` | Report auth state: key presence, enforcement mode, whether this connection is authenticated (`auth` push) — see [Command authentication](#command-authentication) |
+| `AUTH <hex>` | `AUTH 98ab…031c` | Answer the connect-time challenge: `HMAC-SHA256(AUTH_KEY, nonce-hex)`, hex-encoded |
+| `AUTH MODE OFF\|CONFIG\|FULL` | `AUTH MODE FULL` | Set the enforcement tier (NVS-persisted). Always requires an authenticated connection when a key exists |
 | `LOG` | `LOG` | Retrieve the error log (sent only to requesting client) |
 
 > **Changed in v0.10.0:** bare `IL` used to *toggle* the mode; it now reports.
@@ -312,6 +321,67 @@ debounced-fault state (its value is held, not live).
 ### Serial (115200 baud)
 
 Accepts the same command set as WebSocket, terminated by newline. Maximum command length is 32 bytes. `LOG` prints the error log to Serial, one entry per line prefixed with `[LOG]`.
+
+---
+
+## Command authentication
+
+The WebSocket drives a heating element, so from v0.18.0 the command surface
+can require clients to prove a shared secret. **With no `AUTH_KEY` in
+`secrets.h` the feature is entirely off** and the device behaves exactly as
+before — nothing about a keyless build changes.
+
+**Session model.** On connect the device pushes a challenge
+(`{"pushMessage":"auth","data":{"nonce":"<32 hex>","mode":"…"}}`). The client
+answers `AUTH <hex>` where `<hex>` = `HMAC-SHA256(AUTH_KEY, nonce)` — the MAC
+is computed over the nonce's ASCII hex string exactly as received, keyed with
+the raw `AUTH_KEY` bytes, sent hex-encoded. On a match that **connection** is
+trusted until it drops. Every failed attempt burns the nonce (a fresh
+challenge is pushed); after 5 failures the connection must re-open. Serial is
+physically local and always trusted.
+
+**Enforcement tiers** (`AUTH MODE`, NVS-persisted):
+
+| Mode | Requires auth | Stays open |
+|------|---------------|------------|
+| `OFF` | nothing | everything (the power-on state of a keyless device) |
+| `CONFIG` | safety/config mutations: `PID`, `FF`, `IL`, `COOL MIN/DWELL/OFF`, `CURVE`, `DLRESET`, `AMB`, `TUNE` start/apply, `AUTH MODE` | the roast-driving set (`OT1`, `OT2`, `INLET`) — Artisan connects directly |
+| `FULL` | every mutation | reads + the safe subset — Artisan connects through the proxy |
+
+**The safe subset is always open, in every mode** (operator requirement): all
+reads (`LOG`, `STAT`, `TELEM`, bare `PID`/`FF`/`IL`/`COOL`/`CURVE`/`AMB`,
+`getData`) plus the safety-*increasing* commands `OT1 0`, `INLET OFF`,
+`INLET 0`, `COOL ON`, and `TUNE ABORT`. Any device on the network can stop the
+roaster; none can start it. `AUTH MODE` itself always requires auth when a key
+exists, so enforcement can be raised but never lowered by an unkeyed client.
+
+**Clients.**
+- **Dashboard** — enter the key in the connection bar; the challenge is
+  answered automatically (Web Crypto, which requires the page be opened from
+  `file://` or `localhost`). The Auth panel reads/sets the mode. The key is
+  remembered in browser localStorage — don't reuse a valuable password.
+- **Artisan** — cannot authenticate itself (plain `ws://`, no auth support).
+  In `CONFIG` mode it connects directly and drives sliders as always. In
+  `FULL` mode, run the signing proxy on the operator's machine and point
+  Artisan's WebSocket Host at `127.0.0.1`, port `8181`:
+
+  ```
+  pip install websockets
+  export AIRROASTER_KEY='the-shared-secret'
+  python3 tools/roaster_proxy.py --roaster <device-ip>
+  ```
+
+  The proxy answers the device's challenge and relays everything else
+  untouched; against a keyless device it degrades to a transparent pipe. One
+  upstream connection is opened per Artisan connection, so Artisan's own
+  reconnect logic drives the proxy's reconnects.
+
+**Threat model honesty.** This authenticates *connections*, not messages: it
+stops unauthorized clients from issuing commands, which is the LAN exposure
+that matters here. It does not defend against an adversary who can inject
+into an established TCP stream or read traffic (the key itself is never on
+the wire, but commands are) — that adversary calls for TLS, which Artisan
+cannot speak anyway. Physical serial access remains fully trusted.
 
 ---
 
@@ -778,6 +848,7 @@ companion documents alongside this README:
 | [hardware/emi.md](hardware/emi.md) | How the AC dimmers couple noise into the temperature sensors, the RTD fault/noise history, and the mitigations. Read before touching `serviceRtd()` or the robust-read constants. |
 | [hardware/triac-protection.md](hardware/triac-protection.md) | Protecting the RBDimmer triac modules against the observed fan-channel failure (failed-closed / full output): snubber placement, MOV/TVS transient suppression, inductive-fan vs. resistive-heater differences. |
 | [max31865_direct.h](max31865_direct.h) | The register-direct MAX31865 RTD driver (continuous auto-convert mode) and the rationale for not using the Adafruit library. |
+| [tools/roaster_proxy.py](tools/roaster_proxy.py) | Artisan-facing authentication proxy: answers the device's connect-time HMAC challenge on Artisan's behalf and relays everything else — see [Command authentication](#command-authentication). |
 | [artisan/artisan_config_context.md](artisan/artisan_config_context.md) | End-to-end Artisan setup context: reading BT/ET from Phidget modules and driving the roaster over WebSocket. |
 | [artisan/artisan_help_sliders.md](artisan/artisan_help_sliders.md) | Reference dump of Artisan's custom-button / event-slider configuration fields (upstream help text). |
 | [state-current.md](state-current.md) | Development state: the active effort, plus a "read this first" framework overview for anyone (human or LLM) picking the project up. |
