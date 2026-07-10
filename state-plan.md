@@ -277,10 +277,12 @@ Single file, zero dependencies, works from `file://`. Grouped panels:
     *keyed devices* are operators (any machine with the key can run the proxy;
     the dashboard could HMAC directly), and the Artisan machine is already the
     operator console — the proxy co-locates with it. What's lost is ad-hoc
-    access from unkeyed devices; mitigate by leaving an unauthenticated
-    **safe subset** in firmware — reads plus safety-increasing commands only
-    (`OT1 0`, `INLET OFF`, `COOL ON`) — so anything on the network can still
-    stop the roaster, never start it. A proxy crash mid-roast is no worse than
+    access from unkeyed devices; the fix is an unauthenticated **safe subset**
+    in firmware — reads plus safety-increasing commands only (`OT1 0`,
+    `INLET OFF`, `COOL ON`) — so anything on the network can still stop the
+    roaster, never start it. **Operator-approved (2026-07-10): the safe subset
+    is a requirement of any future auth design**, not an optional mitigation.
+    A proxy crash mid-roast is no worse than
     Artisan crashing: the firmware failsafes are client-independent.
   - Open questions: which exact commands are "privileged" vs open; replay/nonce
     persistence across reboot; key provisioning + rotation; and whether to pair
