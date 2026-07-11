@@ -8,11 +8,9 @@ curves) is documented in the [README](README.md) command reference and persists
 in NVS on the device; this file covers the setup that happens **outside** the
 normal command surface.
 
-> An alternate, Phidget-based Artisan configuration (BT/ET read from networked
-> Phidget modules rather than the ESP32) is documented separately in
-> [artisan/artisan_config_context.md](artisan/artisan_config_context.md). This
-> file describes the all-in-firmware setup, where the ESP32 is the temperature
-> source.
+> The ESP32 is the temperature source in this setup. An alternate, Phidget-based
+> measurement path (BT/ET read from networked Phidget modules) predates it and
+> is kept as a fallback — see [§ 4.6](#46-alternate-phidget-based-measurement-fallback).
 
 ---
 
@@ -232,3 +230,38 @@ If a channel reads 0 °C / 32 °F while live data appears on a *different* curve
 the cause is almost always the **firmware** reading the wrong board for that
 channel (confirm `CS_RTD_BT` points at the MAX31865 the bean probe is wired to,
 [hardware/pins.md](hardware/pins.md)) — not an Artisan channel-order issue.
+
+Artisan's WebSocket protocol (the envelope fields in § 4.1) is documented at
+<https://artisan-scope.org/devices/websockets/>.
+
+### 4.6 Alternate: Phidget-based measurement (fallback)
+
+Before the firmware became the temperature source, BT/ET were read from
+networked Phidget modules while the ESP32 handled control only. The hardware
+is still on hand; this setup remains useful as an **independent cross-check**
+of the firmware's readings, or as a fallback if the onboard sensing is down.
+
+| Device | Role |
+|--------|------|
+| Phidget HUB5000 | VINT hub, networked at `192.168.1.232` (also `hub5000.local`), Phidget network server port `5661` |
+| Phidget TMP1200, HUB VINT port 0 | RTD input, PT1000 probe → **BT** |
+| Phidget TMP1101, HUB VINT port 1 | 4-channel thermocouple input, K-type on channel 0 → **ET** |
+
+Each module delivers only one channel, but Artisan's main device expects two.
+The trick (from the home-barista forum, post #7 by Rob W) is to use an Extra
+Device for the second module and remap its channel to ET symbolically:
+
+1. **Config › Device › ET/BT**: Meter = `Phidget TMP1200` (provides BT).
+2. **Config › Device › Phidgets**: TMP1200 on VINT port `0`, channel `0`, RTD
+   type `PT1000`; **Network** ticked, host `192.168.1.232`, port `5661`.
+3. **Config › Device › Extra Devices**: add `Phidget TMP1101 4xTC`, VINT port
+   `1`, channel `0`, thermocouple type `K`. Untick LCD/curve for both of its
+   channels (channel 2 carries no signal; channel 1 is remapped to ET).
+4. **Config › Device › Symb ET/BT**: **ET Y(x)** = `Y3` — the symbolic variable
+   for channel 1 of the first extra device, routing the TMP1101 reading into
+   the main device's ET slot.
+
+Slider control of the roaster is unchanged: a WebSocket extra device pointed at
+`ws://<device-ip>:81` (LCD/curve unticked) carries the § 4.2 commands. Phidget
+configuration background:
+<https://artisan-roasterscope.blogspot.com/2017/12/more-phidgets.html>.
