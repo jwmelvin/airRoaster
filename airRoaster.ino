@@ -806,8 +806,13 @@ static inline bool authKeySet() { return AUTH_KEY[0] != '\0'; }
 enum authTier_t : uint8_t { TIER_OPEN = 0, TIER_DRIVE = 1, TIER_CONF = 2 };
 
 void loadAuth() {
+    // First boot of a keyed build (no stored mode yet) defaults to CONFIG:
+    // guardrails locked, Artisan still connects directly. A keyless build
+    // defaults OFF (and enforces nothing regardless). Explicit AUTH MODE
+    // choices persist in NVS and override this default thereafter.
+    uint8_t dflt = authKeySet() ? AUTH_MODE_CONFIG : AUTH_MODE_OFF;
     prefs.begin(NVS_AUTH_NS, true);          // read-only
-    authMode = prefs.getUChar("mode", authMode);
+    authMode = prefs.getUChar("mode", dflt);
     prefs.end();
     if (authMode > AUTH_MODE_FULL) {
         authMode = AUTH_MODE_OFF;
@@ -2805,7 +2810,8 @@ void loop() {
 //                     AUTH_KEY lives in secrets.h — absent/empty disables
 //                     the feature entirely (device is the pre-v0.18 open
 //                     controller). Tiered enforcement (AUTH MODE OFF|CONFIG|
-//                     FULL, NVS "auth"): CONFIG gates safety/config mutations
+//                     FULL, NVS "auth"; a keyed build's first boot defaults
+//                     to CONFIG): CONFIG gates safety/config mutations
 //                     (PID/FF/IL/COOL config/CURVE/DLRESET/AMB/TUNE start)
 //                     while OT1/OT2/INLET stay open for direct Artisan use;
 //                     FULL gates every mutation (Artisan connects through

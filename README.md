@@ -340,7 +340,9 @@ trusted until it drops. Every failed attempt burns the nonce (a fresh
 challenge is pushed); after 5 failures the connection must re-open. Serial is
 physically local and always trusted.
 
-**Enforcement tiers** (`AUTH MODE`, NVS-persisted):
+**Enforcement tiers** (`AUTH MODE`, NVS-persisted). A keyed build's first
+boot defaults to `CONFIG` — guardrails locked, Artisan still direct; an
+explicit `AUTH MODE` choice persists and overrides the default thereafter:
 
 | Mode | Requires auth | Stays open |
 |------|---------------|------------|

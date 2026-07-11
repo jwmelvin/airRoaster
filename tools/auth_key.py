@@ -101,7 +101,8 @@ def cmd_generate(args):
           "     (OTA works too, but the image — key included — crosses the LAN in cleartext)\n"
           "  2. dashboard:          paste the key into the connection-bar field, reconnect\n"
           "  3. Artisan proxy:      nothing — it reads secrets.h automatically\n"
-          "  4. enable enforcement: AUTH MODE CONFIG (or FULL) from an authenticated client")
+          "  4. enforcement:        a keyed build boots in CONFIG mode (guardrails locked,\n"
+          "     Artisan direct); raise to FULL with AUTH MODE FULL from an authed client")
 
 
 def cmd_show(args):

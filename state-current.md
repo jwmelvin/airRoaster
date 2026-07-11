@@ -68,7 +68,8 @@ nonce to each new client ("auth" push); a client proves the shared `AUTH_KEY`
 (secrets.h; absent/empty = feature entirely off) by returning
 `AUTH HMAC-SHA256(key, nonce-hex)` and its connection is trusted until it
 drops (5 fails burn the connection; each failure re-nonces). Tiered
-enforcement `AUTH MODE OFF|CONFIG|FULL` (NVS "auth"): CONFIG gates
+enforcement `AUTH MODE OFF|CONFIG|FULL` (NVS "auth"; a keyed build's first
+boot defaults to CONFIG — operator decision 2026-07-11): CONFIG gates
 safety/config mutations while OT1/OT2/INLET stay open for direct Artisan;
 FULL gates all mutations — Artisan then connects through
 `tools/roaster_proxy.py` (localhost signing proxy: answers the challenge,
