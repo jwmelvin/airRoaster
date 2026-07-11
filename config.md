@@ -35,6 +35,9 @@ Don't invent `AUTH_KEY` by hand — generate it:
 python3 tools/auth_key.py generate            # writes secrets.h (refuses to
 python3 tools/auth_key.py generate --rotate   #   replace without --rotate)
 python3 tools/auth_key.py show                # print for the dashboard paste
+python3 tools/auth_key.py ota                 # dedicated random OTA_PASS —
+                                              #   without one, OTA auth falls
+                                              #   back to the WiFi password
 ```
 
 `secrets.h` is the single source of truth: the firmware compiles it in

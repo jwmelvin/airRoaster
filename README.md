@@ -76,7 +76,18 @@ After the first USB flash, updates can be pushed over WiFi:
 
 Uses [ArduinoOTA](https://docs.espressif.com/projects/arduino-esp32/en/latest/ota_web_update.html)
 (part of the ESP32 core — no new dependencies), authenticated with `OTA_PASS`
-(falling back to `WIFI_PASS`). The build uses the TinyUF2 **OTA** partition
+(falling back to `WIFI_PASS`). **Set a dedicated random `OTA_PASS`** — the
+fallback means the OTA credential is the WiFi password, which everyone on the
+WLAN knows by definition, i.e. anyone on the network could push firmware:
+
+```
+python3 tools/auth_key.py ota    # 64-hex CSPRNG OTA_PASS into secrets.h
+./verify.sh upload               # first flash after a change must be USB —
+                                 # the device still expects the old password
+```
+
+`./verify.sh ota` reads `OTA_PASS` from `secrets.h` automatically thereafter.
+The build uses the TinyUF2 **OTA** partition
 scheme: two 1408 KB app slots — the update writes to the inactive slot and the
 device reboots into it. NVS (persisted tunings and interlock config) is
 untouched by updates.

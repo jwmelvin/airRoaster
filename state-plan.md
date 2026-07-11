@@ -300,6 +300,19 @@ Single file, zero dependencies, works from `file://`. Grouped panels:
     persistence across reboot; key provisioning + rotation; and whether to pair
     this with network-level isolation (roaster VLAN) as the pragmatic near-term
     mitigation while the crypto path is built.
+- **OTA hardening beyond the dedicated password** (first-order fix shipped
+  2026-07-11: `auth_key.py ota` generates a random `OTA_PASS`, closing the
+  WIFI_PASS fallback where anyone on the WLAN could push firmware). Two
+  further layers, deliberately deferred: (a) **OTA arming** — only call
+  `ArduinoOTA.handle()` for ~5 min after an authenticated `OTA ARM` command
+  (TIER_CONF or serial), so a push needs both secrets and accidental pushes
+  are impossible; cheap (a flag + timeout + one command) and consistent with
+  the existing idle gate — do this one first if OTA exposure ever worries us
+  again. (b) **Signed images / ESP32 Secure Boot** — defends adversaries who
+  already hold the passwords; Secure Boot burns irreversible eFuses and the
+  ESP32 Arduino core lacks built-in update signing (unlike ESP8266), so this
+  is real toolchain work for a threat beyond the stated LAN model. espota
+  transport remains cleartext either way — key-bearing flashes stay on USB.
 - ET RTD probe installation → set `RTD_ET_ENABLED 1` (sensor code is ready).
 - BME688 ambient sensor on STEMMA QT (`0x76/0x77`) — would give a true room
   ambient for feedforward instead of the cold-junction estimate.

@@ -20,6 +20,13 @@ Subcommands (stdlib only, no dependencies):
     hmac <nonce>          Print HMAC-SHA256(key, nonce) — the exact challenge
                           response the firmware expects — for manual testing
                           from a raw WebSocket client.
+    ota [--rotate]        Create/rotate a dedicated random OTA_PASS the same
+                          way. Without one, the firmware falls back to
+                          WIFI_PASS — which everyone on the WLAN knows by
+                          definition, i.e. anyone on the network could push
+                          firmware. verify.sh reads the new value
+                          automatically; the first flash after a change must
+                          go over USB (the device still expects the old one).
 
 Rotation checklist (printed by `generate --rotate` too):
   1. Reflash the device:  ./verify.sh upload   (USB keeps the key off the air;
@@ -38,7 +45,13 @@ import sys
 from pathlib import Path
 
 DEFAULT_SECRETS = Path(__file__).resolve().parent.parent / "secrets.h"
-KEY_RE = re.compile(r'^(\s*#define\s+AUTH_KEY\s+)"([^"]*)"', re.M)
+
+
+def _define_re(name: str):
+    # Active defines only (a commented-out template line starts with //, which
+    # ^\s* does not match). New defines are written at column 0 — verify.sh's
+    # sed extraction of OTA_PASS requires that.
+    return re.compile(r'^(\s*#define\s+' + name + r'\s+)"([^"]*)"', re.M)
 
 SECRETS_TEMPLATE = """\
 #pragma once
@@ -53,25 +66,34 @@ SECRETS_TEMPLATE = """\
 """
 
 
-def read_auth_key(path: Path = DEFAULT_SECRETS):
-    """Return the AUTH_KEY string from secrets.h, or None if absent/empty."""
+def read_define(name: str, path: Path):
+    """Return a #define's string value from secrets.h, or None if absent/empty."""
     try:
-        m = KEY_RE.search(path.read_text())
+        m = _define_re(name).search(path.read_text())
     except OSError:
         return None
     return m.group(2) or None if m else None
 
 
-def write_auth_key(path: Path, key: str):
+def read_auth_key(path: Path = DEFAULT_SECRETS):
+    """Return the AUTH_KEY string from secrets.h, or None (imported by roaster_proxy)."""
+    return read_define("AUTH_KEY", path)
+
+
+def write_define(name: str, path: Path, value: str):
+    rx = _define_re(name)
     if path.exists():
         text = path.read_text()
-        if KEY_RE.search(text):
-            text = KEY_RE.sub(lambda m: m.group(1) + '"' + key + '"', text, count=1)
+        if rx.search(text):
+            text = rx.sub(lambda m: m.group(1) + '"' + value + '"', text, count=1)
         else:
-            text = text.rstrip("\n") + f'\n\n// Managed by tools/auth_key.py:\n#define AUTH_KEY    "{key}"\n'
+            text = (text.rstrip("\n") +
+                    f'\n\n// Managed by tools/auth_key.py:\n#define {name}    "{value}"\n')
     else:
-        text = SECRETS_TEMPLATE.replace('#define AUTH_KEY    ""',
-                                        f'#define AUTH_KEY    "{key}"')
+        text = SECRETS_TEMPLATE.replace(f'#define {name}    ""',
+                                        f'#define {name}    "{value}"')
+        if f'#define {name}' not in text:   # template had no slot for it
+            text += f'\n// Managed by tools/auth_key.py:\n#define {name}    "{value}"\n'
         print(f"note: created {path} with PLACEHOLDER WiFi credentials — edit them",
               file=sys.stderr)
     path.write_text(text)
@@ -92,7 +114,7 @@ def cmd_generate(args):
         sys.exit(f"{args.secrets} already holds a key — pass --rotate to replace it\n"
                  "(a key change locks out every client until they get the new key)")
     key = pysecrets.token_hex(32)          # 32 bytes -> 64 hex chars, 256-bit
-    write_auth_key(args.secrets, key)
+    write_define("AUTH_KEY", args.secrets, key)
     copied = clipboard(key)
     print(f"AUTH_KEY {'rotated' if existing else 'generated'} in {args.secrets}:\n\n"
           f"    {key}\n" + ("    (copied to clipboard)\n" if copied else ""))
@@ -103,6 +125,21 @@ def cmd_generate(args):
           "  3. Artisan proxy:      nothing — it reads secrets.h automatically\n"
           "  4. enforcement:        a keyed build boots in CONFIG mode (guardrails locked,\n"
           "     Artisan direct); raise to FULL with AUTH MODE FULL from an authed client")
+
+
+def cmd_ota(args):
+    existing = read_define("OTA_PASS", args.secrets)
+    if existing and not args.rotate:
+        sys.exit(f"{args.secrets} already holds an OTA_PASS — pass --rotate to replace it")
+    password = pysecrets.token_hex(32)
+    write_define("OTA_PASS", args.secrets, password)
+    print(f"OTA_PASS {'rotated' if existing else 'generated'} in {args.secrets}\n")
+    print("Next steps:\n"
+          "  1. flash over USB once:  ./verify.sh upload\n"
+          "     (the device still authenticates OTA with its OLD password, so this\n"
+          "      first flash cannot go over the air)\n"
+          "  2. thereafter:           ./verify.sh ota — it reads OTA_PASS from\n"
+          "     secrets.h automatically; nothing else holds this credential")
 
 
 def cmd_show(args):
@@ -130,6 +167,10 @@ def main():
     g.set_defaults(func=cmd_generate)
     s = sub.add_parser("show", help="print the current key")
     s.set_defaults(func=cmd_show)
+    o = sub.add_parser("ota", help="create (or --rotate) a dedicated random OTA_PASS")
+    o.add_argument("--rotate", action="store_true",
+                   help="replace an existing OTA_PASS (first reflash must be USB)")
+    o.set_defaults(func=cmd_ota)
     h = sub.add_parser("hmac", help="compute a challenge response for a nonce")
     h.add_argument("nonce", help="the nonce hex string from the device's auth push")
     h.set_defaults(func=cmd_hmac)

@@ -90,7 +90,13 @@ is the single source of truth — `generate` writes a 64-hex CSPRNG key there
 (refuses to replace without `--rotate`), the proxy parses it automatically,
 `show` feeds the dashboard paste, `hmac <nonce>` supports manual testing;
 rotation = generate --rotate + reflash (USB preferred — an OTA image carries
-the key across the LAN in cleartext) + dashboard re-paste.
+the key across the LAN in cleartext) + dashboard re-paste. The helper's `ota`
+subcommand likewise generates a dedicated random OTA_PASS (2026-07-11): the
+firmware's WIFI_PASS fallback means a device without one accepts firmware
+pushes from anyone on the WLAN; verify.sh reads the value automatically, and
+the first flash after a change must be USB. Deliberately deferred (see the
+auth item in state-plan § Later for the record): signed images / Secure Boot
+/ OTA arming.
 
 **Prior: Ambient reporting → v0.17.0** (merged to `main`). The Artisan `getData`
 response gains an `AT` node (°C): Artisan maps it to an extra WebSocket
