@@ -1105,7 +1105,10 @@ window.onload = () => {
 
 document.getElementById("ip").addEventListener("change", e =>
   localStorage.setItem("airRoaster_ip", e.target.value));
-document.getElementById("key").addEventListener("change", e =>
+// "input", not "change": persist on the paste itself — the key is often
+// entered while the roaster is offline, and a paste-then-close-tab must
+// not lose it (change only fires when the field loses focus).
+document.getElementById("key").addEventListener("input", e =>
   localStorage.setItem("airRoaster_key", e.target.value));
 
 document.querySelectorAll(".fcls").forEach(b => b.addEventListener("change", () => {
