@@ -13,9 +13,12 @@ challenge itself and relaying everything else untouched:
 
 Usage:
     pip install websockets
-    export AIRROASTER_KEY='the-shared-secret'      # matches AUTH_KEY in secrets.h
     python3 tools/roaster_proxy.py --roaster 192.168.1.109
     # then point Artisan's WebSocket Host at 127.0.0.1, port 8181
+    #
+    # The key is read from the repo's secrets.h automatically (the same
+    # AUTH_KEY the firmware was compiled with — see tools/auth_key.py);
+    # --key / --key-file / AIRROASTER_KEY env override it, in that order.
 
 Design notes:
   - One upstream device connection per Artisan connection (Artisan's own
@@ -44,6 +47,11 @@ try:
     import websockets
 except ImportError:
     sys.exit("missing dependency: pip install websockets")
+
+# Key parsing lives in auth_key.py (same directory) — secrets.h is the single
+# source of truth for the shared secret on the operator machine.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from auth_key import read_auth_key, DEFAULT_SECRETS
 
 log = logging.getLogger("roaster_proxy")
 
@@ -142,13 +150,22 @@ def main():
                         format="%(asctime)s %(levelname)s %(message)s",
                         datefmt="%H:%M:%S")
 
-    key = args.key or os.environ.get("AIRROASTER_KEY")
-    if args.key_file:
+    # Key resolution, most explicit first: --key, --key-file, AIRROASTER_KEY
+    # env, then the repo's secrets.h (the normal case — zero configuration).
+    if args.key:
+        key, src = args.key, "--key"
+    elif args.key_file:
         with open(args.key_file) as f:
-            key = f.readline().strip()
-    if not key:
-        log.warning("no key configured (AIRROASTER_KEY / --key / --key-file) — "
-                    "proxy will relay but cannot authenticate")
+            key, src = f.readline().strip(), args.key_file
+    elif os.environ.get("AIRROASTER_KEY"):
+        key, src = os.environ["AIRROASTER_KEY"], "AIRROASTER_KEY env"
+    else:
+        key, src = read_auth_key(), str(DEFAULT_SECRETS)
+    if key:
+        log.info("key loaded from %s", src)
+    else:
+        log.warning("no key found (--key / --key-file / AIRROASTER_KEY / %s) — "
+                    "proxy will relay but cannot authenticate", DEFAULT_SECRETS)
 
     uri = normalize_uri(args.roaster)
 

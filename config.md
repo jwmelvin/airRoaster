@@ -29,9 +29,18 @@ WiFi and OTA credentials live in `secrets.h` at the repo root. The file is
                                          // omitted/empty = auth fully disabled
 ```
 
-The same `AUTH_KEY` value goes to the clients that authenticate: the
-dashboard's connection-bar key field, and the Artisan proxy's
-`AIRROASTER_KEY` environment variable (see § 4.4). See
+Don't invent `AUTH_KEY` by hand — generate it:
+
+```
+python3 tools/auth_key.py generate            # writes secrets.h (refuses to
+python3 tools/auth_key.py generate --rotate   #   replace without --rotate)
+python3 tools/auth_key.py show                # print for the dashboard paste
+```
+
+`secrets.h` is the single source of truth: the firmware compiles it in
+(reflash to apply — prefer USB for key changes, the OTA image crosses the
+LAN unencrypted), the Artisan proxy reads it automatically (see § 4.4), and
+the dashboard takes a one-time paste into its connection-bar key field. See
 [README § Command authentication](README.md#command-authentication) for the
 protocol and enforcement tiers.
 
@@ -203,9 +212,11 @@ proxy on the machine that runs Artisan and point Artisan at it:
 
 ```
 pip install websockets
-export AIRROASTER_KEY='the-shared-secret'    # same value as AUTH_KEY
 python3 tools/roaster_proxy.py --roaster <device-ip>
 ```
+
+The proxy reads `AUTH_KEY` from the repo's `secrets.h` automatically;
+`--key` / `--key-file` / the `AIRROASTER_KEY` env var override it.
 
 Then in **Config › Port › WebSocket** set **Host `127.0.0.1`, Port `8181`**
 (everything else unchanged). In `CONFIG` mode (or with no key) Artisan

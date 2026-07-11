@@ -83,7 +83,13 @@ proxy validated end-to-end against a firmware-faithful fake device (correct
 key / wrong key / keyless all behave); dashboard HMAC cross-checked against
 a Python reference. On-roaster + live-Artisan drill: state-plan.md § NEXT
 item 13. Design decisions (operator-confirmed 2026-07-10): session auth over
-per-message HMAC; runtime tier; secrets.h key; python proxy.
+per-message HMAC; runtime tier; secrets.h key; python proxy. Key management
+(`tools/auth_key.py`, stdlib-only; operator-confirmed 2026-07-11): secrets.h
+is the single source of truth — `generate` writes a 64-hex CSPRNG key there
+(refuses to replace without `--rotate`), the proxy parses it automatically,
+`show` feeds the dashboard paste, `hmac <nonce>` supports manual testing;
+rotation = generate --rotate + reflash (USB preferred — an OTA image carries
+the key across the LAN in cleartext) + dashboard re-paste.
 
 **Prior: Ambient reporting → v0.17.0** (merged to `main`). The Artisan `getData`
 response gains an `AT` node (°C): Artisan maps it to an extra WebSocket

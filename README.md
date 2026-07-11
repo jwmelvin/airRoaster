@@ -355,11 +355,31 @@ reads (`LOG`, `STAT`, `TELEM`, bare `PID`/`FF`/`IL`/`COOL`/`CURVE`/`AMB`,
 roaster; none can start it. `AUTH MODE` itself always requires auth when a key
 exists, so enforcement can be raised but never lowered by an unkeyed client.
 
+**Key management** (`tools/auth_key.py`, no dependencies). The secret lives in
+one place — `#define AUTH_KEY` in the gitignored `secrets.h` — and every other
+holder is fed from it:
+
+```
+python3 tools/auth_key.py generate     # 32-byte CSPRNG key into secrets.h
+./verify.sh upload                     # compile it into the device (USB)
+```
+
+`generate` refuses to replace an existing key unless given `--rotate` (a key
+change locks out every client until updated). `show` prints the key for
+pasting into the dashboard; `hmac <nonce>` computes a challenge response for
+manual testing. Rotation = `generate --rotate` + reflash + re-paste in the
+dashboard; the proxy picks the new key up from `secrets.h` by itself. Prefer
+USB over OTA for the key-changing flash: the OTA image (key included) crosses
+the LAN unencrypted. There is one shared key — no per-client identity — so
+revoking a single client means rotating everything. If the key is ever lost,
+serial still works and reflashing with an empty `AUTH_KEY` disables auth.
+
 **Clients.**
-- **Dashboard** — enter the key in the connection bar; the challenge is
-  answered automatically (Web Crypto, which requires the page be opened from
-  `file://` or `localhost`). The Auth panel reads/sets the mode. The key is
-  remembered in browser localStorage — don't reuse a valuable password.
+- **Dashboard** — enter the key in the connection bar (`auth_key.py show`);
+  the challenge is answered automatically (Web Crypto, which requires the
+  page be opened from `file://` or `localhost`). The Auth panel reads/sets
+  the mode. The key is remembered in browser localStorage — don't reuse a
+  valuable password.
 - **Artisan** — cannot authenticate itself (plain `ws://`, no auth support).
   In `CONFIG` mode it connects directly and drives sliders as always. In
   `FULL` mode, run the signing proxy on the operator's machine and point
@@ -367,9 +387,11 @@ exists, so enforcement can be raised but never lowered by an unkeyed client.
 
   ```
   pip install websockets
-  export AIRROASTER_KEY='the-shared-secret'
   python3 tools/roaster_proxy.py --roaster <device-ip>
   ```
+
+  The proxy reads the key from the repo's `secrets.h` automatically
+  (override with `--key` / `--key-file` / `AIRROASTER_KEY`, in that order).
 
   The proxy answers the device's challenge and relays everything else
   untouched; against a keyless device it degrades to a transparent pipe. One
@@ -849,6 +871,7 @@ companion documents alongside this README:
 | [hardware/triac-protection.md](hardware/triac-protection.md) | Protecting the RBDimmer triac modules against the observed fan-channel failure (failed-closed / full output): snubber placement, MOV/TVS transient suppression, inductive-fan vs. resistive-heater differences. |
 | [max31865_direct.h](max31865_direct.h) | The register-direct MAX31865 RTD driver (continuous auto-convert mode) and the rationale for not using the Adafruit library. |
 | [tools/roaster_proxy.py](tools/roaster_proxy.py) | Artisan-facing authentication proxy: answers the device's connect-time HMAC challenge on Artisan's behalf and relays everything else — see [Command authentication](#command-authentication). |
+| [tools/auth_key.py](tools/auth_key.py) | AUTH_KEY management: generate/rotate the shared secret in `secrets.h`, print it for the dashboard, compute challenge responses for manual testing. |
 | [artisan/artisan_config_context.md](artisan/artisan_config_context.md) | End-to-end Artisan setup context: reading BT/ET from Phidget modules and driving the roaster over WebSocket. |
 | [artisan/artisan_help_sliders.md](artisan/artisan_help_sliders.md) | Reference dump of Artisan's custom-button / event-slider configuration fields (upstream help text). |
 | [state-current.md](state-current.md) | Development state: the active effort, plus a "read this first" framework overview for anyone (human or LLM) picking the project up. |
