@@ -44,6 +44,12 @@
                 font-size: 0.85em; font-weight: 600; background: #e7e5e4; }
   .mode-badge.inlet { background: #dbeafe; color: #1d4ed8; }
   .mode-badge.tune  { background: #fef3c7; color: #b45309; }
+  .auth-badge { display: inline-block; padding: 0.1em 0.5em; border-radius: 10px;
+                font-size: 0.75em; font-weight: 600; background: #e7e5e4;
+                color: var(--muted); }
+  .auth-badge.ok   { background: #dcfce7; color: #15803d; }
+  .auth-badge.bad  { background: #fee2e2; color: #b91c1c; }
+  .auth-badge.warn { background: #fef3c7; color: #b45309; }
   .bar { position: relative; background: #e7e5e4; border-radius: 4px; height: 16px;
          overflow: hidden; margin: 2px 0 6px 0; }
   .bar .fill { position: absolute; left: 0; top: 0; bottom: 0; background: #fca5a5; }
@@ -113,6 +119,7 @@
   <label class="chk"><input type="checkbox" id="autoRe" checked> auto-reconnect</label>
   <span id="indicator" class="closed"></span>
   <span id="status-text">disconnected</span>
+  <span id="authBadge" class="auth-badge" title="command-auth session state">auth –</span>
   <span style="flex:1"></span>
   <button class="danger" onclick="send('OT1 0')" title="heat to zero">HEAT 0</button>
   <button onclick="send('INLET OFF')">INLET OFF</button>
@@ -432,11 +439,13 @@ function connect() {
     ws.send("COOL");  // prefill the cooldown panel
     ws.send("AMB");   // prefill the ambient panel
     ws.send("AUTH");  // report key/mode state (the challenge, if any, is pushed unprompted)
+    authProbeStart(); // badge shows "no reply" if the device never answers AUTH
   };
 
   ws.onclose = () => {
     setStatus("disconnected", false);
     logLine("-- disconnected --", "other");
+    authProbeStop("auth –");   // a session never outlives its connection
     scheduleRetry();
   };
 
@@ -753,6 +762,34 @@ function applyCool(d) {
 // connect; we answer AUTH HMAC-SHA256(key, nonce-hex) and the connection is
 // trusted until it drops. crypto.subtle needs a secure context — file:// and
 // http://localhost qualify; a LAN-http-served dashboard would not.
+
+// Connection-bar badge: this session's auth state at a glance. The probe
+// timer catches the silent case — a device that never answers AUTH at all
+// is running firmware older than v0.18, which would otherwise look like
+// "connected, nothing wrong".
+let authInfoSeen = false;
+let authProbeTimer = null;
+
+function setAuthBadge(cls, text) {
+  const el = document.getElementById("authBadge");
+  el.className = "auth-badge" + (cls ? " " + cls : "");
+  el.textContent = text;
+}
+
+function authProbeStart() {
+  authInfoSeen = false;
+  setAuthBadge("", "auth ?");
+  clearTimeout(authProbeTimer);
+  authProbeTimer = setTimeout(() => {
+    if (!authInfoSeen) setAuthBadge("warn", "auth: no reply — fw < 0.18?");
+  }, 2500);
+}
+
+function authProbeStop(text) {
+  clearTimeout(authProbeTimer);
+  setAuthBadge("", text);
+}
+
 async function hmacHex(key, msg) {
   const enc = new TextEncoder();
   const k = await crypto.subtle.importKey(
@@ -767,15 +804,22 @@ function sendAuthMode() {
 
 async function applyAuth(d) {
   if (!d) return;
+  authInfoSeen = true;
   const st = document.getElementById("auState");
   if (d.nonce !== undefined) {              // challenge
     if (d.mode) document.getElementById("auMode").value = d.mode.toUpperCase();
     const key = document.getElementById("key").value;
-    if (!key) { st.textContent = "challenge received — enter the auth key and reconnect"; return; }
-    if (!window.crypto || !crypto.subtle) {
-      logLine("crypto.subtle unavailable (insecure context) — open the dashboard from file:// or localhost", "error");
+    if (!key) {
+      st.textContent = "challenge received — enter the auth key and reconnect";
+      setAuthBadge("bad", "not authed — no key entered");
       return;
     }
+    if (!window.crypto || !crypto.subtle) {
+      logLine("crypto.subtle unavailable (insecure context) — open the dashboard from file:// or localhost", "error");
+      setAuthBadge("bad", "not authed — no crypto.subtle");
+      return;
+    }
+    setAuthBadge("warn", "challenged…");
     send("AUTH " + await hmacHex(key, d.nonce));
     return;
   }
@@ -784,6 +828,10 @@ async function applyAuth(d) {
     st.textContent = !d.keySet
       ? "device has no AUTH_KEY — enforcement disabled"
       : "mode " + d.mode + " — " + (d.authed ? "AUTHENTICATED" : "NOT authenticated");
+    if (!d.keySet)       setAuthBadge("", "auth off (no key on device)");
+    else if (d.authed)   setAuthBadge("ok", "authed · " + d.mode);
+    else                 setAuthBadge(d.mode === "off" ? "" : "bad",
+                                      "not authed · " + d.mode);
   }
 }
 

@@ -171,7 +171,11 @@ section, so anything the dashboard does can also be typed by hand.
   [Ambient temperature](#ambient-temperature-at).
 - **Auth** — the device's connect-time challenge is answered automatically
   from the connection-bar key; read/set the enforcement mode — see
-  [Command authentication](#command-authentication).
+  [Command authentication](#command-authentication). A badge beside the
+  connection status shows the session state at a glance: `authed · <mode>`
+  (green), `not authed` (red), `auth off`, or — when the device never answers
+  `AUTH` at all — a "no reply" warning, which means the firmware predates
+  v0.18.
 - **Console + log** — free-form command line, every message timestamped into
   a capped capture buffer with per-class show/hide (telemetry hidden by
   default) and free-text filtering, **Save log** to a file. The device keeps
