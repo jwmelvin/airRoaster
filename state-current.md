@@ -60,9 +60,30 @@ a message naming the phase. The user's Artisan config churn (`artisan/*.aset`,
 `*.alog`) may be present in the working tree — never sweep it into a firmware
 commit; stage files explicitly.
 
-## Active effort (2026-07-07)
+## Active effort (2026-07-12)
 
-**Ambient reporting → v0.17.0** (on `feature/ambient`). The Artisan `getData`
+**BME688 ambient sensor, standalone → planned** (on `feature/bme688`,
+branched off `main` v0.17.0). A BME688 on STEMMA QT (`0x76/0x77`) becomes a
+true room-ambient source for the AMB system, integrated the ordinary way —
+hardcoded like every other sensor. It was originally the first device of the
+data-driven device registry idea; that registry is **shelved** (operator
+decision 2026-07-12: the firmware is growing enough that the registry's
+flexibility is not worth the bloat), with its design decisions — per-device
+NVS records via a `REG` command family, the read-only/safety-core invariants
+— recorded in state-plan.md § Later should it return. Full spec:
+state-plan.md § PLANNED (runtime probe, Adafruit BME680 driver with gas
+heater off, async non-blocking reads, `AMB SRC BME` with fall-back to the
+cold-start capture when stale/absent, telemetry + dashboard surfacing).
+Companion hardware: a sampling air pump (Adafruit 4699, 5 V ~500 mA) is
+planned alongside it, gated on re-planning the overloaded 5 V supply — see
+the new [hardware/power.md](hardware/power.md).
+Status: planned, no code yet. Sequencing: `feature/auth-proxy` (v0.18.0,
+command auth — in validation) merges first; rebase this branch onto it so
+the extended `AMB` surface inherits CONFIG-tier gating, then this ships as
+v0.19.0. Note: the auth effort's own state-doc entries live on its branch —
+reconcile the two versions of the state docs at merge time.
+
+**Prior: Ambient reporting → v0.17.0** (on `feature/ambient`). The Artisan `getData`
 response gains an `AT` node (°C): Artisan maps it to an extra WebSocket
 channel and selects that channel in **Config › Device › Ambient** (tab), then
 samples it at CHARGE into Roast Properties (README § Ambient temperature has

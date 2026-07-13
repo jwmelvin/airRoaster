@@ -196,6 +196,61 @@ Single file, zero dependencies, works from `file://`. Grouped panels:
   next roast's fault log.
 - Keep state docs current per the update discipline in state-current.md.
 
+## PLANNED — BME688 ambient sensor, standalone (on `feature/bme688`)
+
+*Spun off 2026-07-12 from the device-registry idea (§ Later), which is shelved
+— the operator judged the registry's flexibility not worth the firmware bloat.
+The BME688 integrates the same way every other sensor does: hardcoded, small,
+direct. Payoff: a true room-ambient source for the AMB system (Artisan's `AT`
+node) instead of the cold-junction estimate.*
+
+1. **Presence by runtime probe, no compile flag.** At `initSensors()` time,
+   probe I2C `0x76` then `0x77` (STEMMA QT, no extra wiring — pins.md already
+   reserves it). Found → init and remember the address; absent → one log line
+   and the feature stays dormant (roaster fully functional, per the
+   no-bench convention). Update pins.md with the confirmed address once the
+   board is on the bus.
+2. **Driver: Adafruit BME680 library** (supports the BME688 for T/RH/P; new
+   dependency alongside Adafruit Unified Sensor → README § Dependencies).
+   Gas measurement and heater **disabled** — no BSEC blob, and the heater's
+   self-heating would corrupt the one number we actually want. Low
+   oversampling for the same reason.
+3. **Non-blocking reads.** `performReading()` blocks up to ~200 ms — never in
+   `loop()`. Use the async split (`beginReading()` → poll
+   `remainingReadingMillis()` → `endReading()`) on a slow cadence (~2–5 s;
+   ambient doesn't move faster). Hold-last-good with a freshness stamp;
+   debounced, rate-limited fault logging (the `SensorFaultState` pattern).
+   `Wire` timeout protection — the bus is shared with the dimmers
+   (see [hardware/emi.md](hardware/emi.md)); a wedged aux read must never
+   stall the loop or escalate onto the dimmer path.
+4. **AMB integration.** New source `AMB_SRC_BME` (`AMB SRC BME`, push name
+   `"bme"`), NVS-persisted like the others with load re-validation. Because
+   ambient is report-only, staleness/absence **falls back to the cold-start
+   capture with a rate-limited log line** rather than holding stale data
+   forever; a persisted `bme` source with the sensor missing at boot does the
+   same. `ambientNowC()` stays the single dispatch point.
+5. **Surfacing.** Telemetry gains BME fields when present (`bmeT`, `bmeRH`,
+   `bmeP`); dashboard Ambient panel shows the readouts and the new source
+   option.
+6. **Optional (decide during implementation):** no-arg `FF AMB` prefers a
+   fresh BME reading over the cold-junction estimate when seeding
+   `ffAmbient` — that is the feedforward payoff the § Later item originally
+   named.
+7. **Sequencing/version.** Branch is off `main` (v0.17.0). Rebase onto auth
+   (v0.18.0, `feature/auth-proxy`) once it merges, so the extended `AMB`
+   surface inherits CONFIG-tier gating; this effort then ships as
+   **v0.19.0**. On-roaster validation joins § NEXT when the code lands.
+
+**Companion hardware (planned, not in this firmware phase): sampling air
+pump.** An Adafruit 4699 (ZR370-02PM: brushed DC, 4.5 V nominal / runs at 5 V,
+~500 mA, 2.5 LPM, ~50 % duty rating) will draw a sample airflow across the
+BME688. Not yet spec'd: drive electronics (MOSFET low-side switch + flyback
+diode on a free GPIO, [hardware/pins.md](hardware/pins.md)) and any firmware
+control surface. **Power gate:** the pump roughly doubles the 5 V load and the
+existing R-78W-0.5 converter is already over budget from the dimmer fans —
+implement [hardware/power.md](hardware/power.md) § Decided architecture (clean
+electronics rail + 2 A motor branch for pump and fans) before wiring it.
+
 ## Later / not scheduled
 
 - **Evaluate moving the DimmerLink link from I2C back to UART serial.** The
@@ -225,8 +280,8 @@ Single file, zero dependencies, works from `file://`. Grouped panels:
   time, or before the second is wired); (d) safety — only with heat off and the
   boot heat-zero intact. Payoff: plug in a replacement dimmer and it
   self-provisions.
-- **Data-driven device registry (add a device via a `.json` change) — all
-  buses.** Make adding an *auxiliary* peripheral a config edit, not a code
+- **Data-driven device registry (add a device via a config change, not a
+  code edit) — all buses.** Make adding an *auxiliary* peripheral a config edit, not a code
   edit: a small JSON manifest of `{bus, addressing, type, role, options}` the
   firmware reads at boot to instantiate/parse the device. The idea is not
   I2C-specific — it applies the same way across **all three buses**, with the
@@ -241,6 +296,34 @@ Single file, zero dependencies, works from `file://`. Grouped panels:
   cut is a table of *known* optional device types keyed by bus+address. Ties
   into the dimmer auto-provision above (address assignment) and the BME688 item
   below.
+  **Design pass 2026-07-12 (decisions recorded; effort shelved — operator
+  decision: the firmware is growing enough that the registry's flexibility
+  is not worth the bloat right now).** Planning briefly ran on a
+  `feature/device-registry` branch (deleted again, no commits). Decisions to
+  keep if this returns:
+  - **Storage is per-device NVS records managed by a `REG` command family**
+    (`REG` → list records + presence; `REG ADD <type> <bus> <addressing>
+    [role] [period_ms]`; `REG DEL <slot>`; `REG EN <slot> 0|1`; namespace
+    `"reg"`, slot-indexed keys, set-time validation like `IL`) — **not** the
+    JSON manifest originally sketched above. Rationale: the firmware's only
+    JSON parsing is the two flat-field extractors (`jsonString`/`jsonFloat`);
+    a manifest of nested arrays means writing a real parser or adding
+    ArduinoJson, while command records reuse the existing tokenized-command
+    + Preferences conventions with zero new dependencies. A compiled-in
+    default table covers the "flashed with the firmware" case.
+  - Invariants agreed: the safety core (both dimmers, inlet TC, RTDs) is
+    never registry-managed; registry devices are **read-only telemetry
+    contributors** — never actuate, never gate the interlock, never feed
+    `controlStep()` (sole sanctioned consumer: an explicit `AMB` source);
+    absent devices log once at boot and the roaster runs normally; records
+    validate against reserved addresses/pins (`0x3C`/`0x51`/`0x52`, the
+    pins.md free-GPIO list) at set-time; aux polling is non-blocking (async
+    reads) and rate-limited — never anywhere near the WDT.
+  - Mutating `REG` commands gate at CONFIG tier once v0.18 auth is in;
+    `REG` (read) stays open.
+  - The BME688 — the registry's motivating first device — was **decoupled
+    2026-07-12** and proceeds as its own standalone effort (see the promoted
+    item below and the PLANNED phase spec above).
 - **Cryptographic authentication of the command interface (safety/security).**
   Today the WebSocket server on `:81` accepts plaintext commands from anyone on
   the network — `OT1`/`OT2`/`INLET`, and the safety config (`IL`, `COOL`,
@@ -291,6 +374,10 @@ Single file, zero dependencies, works from `file://`. Grouped panels:
 - ET RTD probe installation → set `RTD_ET_ENABLED 1` (sensor code is ready).
 - BME688 ambient sensor on STEMMA QT (`0x76/0x77`) — would give a true room
   ambient for feedforward instead of the cold-junction estimate.
+  **→ PROMOTED 2026-07-12: standalone integration (without the device
+  registry) in planning on `feature/bme688`** — spec in § PLANNED above.
+  Targets the firmware version after v0.18.0 auth (`feature/auth-proxy`)
+  lands; rebase onto it so the new `AMB`/`FF` surface picks up tier gating.
 - DimmerLink curve-mode experiments: curve is set to RMS (mode 1) at
   startup; LINEAR/LOG untested.
 - Move `controlStep()` to a pinned FreeRTOS task if `STAT` evidence (post
