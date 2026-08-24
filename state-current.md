@@ -51,18 +51,22 @@ Compile after every meaningful edit; the script surfaces sketch-local warnings.
   no sensors, and no WiFi present (log, hold safe defaults, keep serving serial).
 
 **Git.** Development happens on feature branches; `main` holds roast-tested
-firmware. `main` is at **v0.17.0** (2026-07-07): `feature/ambient` (ambient
-reporting — the `AT` channel + cold-junction surfacing) was fast-forwarded into
-`main` and pushed; its on-roaster validation is still pending (state-plan.md
-§ NEXT item 12). Start the next effort on a fresh branch off `main`. Commit per
+firmware. `main` is at **v0.18.0** (2026-08-23): `feature/auth-proxy` (command
+authentication — challenge–response sessions + Artisan signing proxy) was
+fast-forwarded into `main`; its on-roaster validation is still pending
+(state-plan.md § NEXT item 13, as is the ambient drill, item 12). Start the
+next effort on a fresh branch off `main`. Commit per
 phase with
 a message naming the phase. The user's Artisan config churn (`artisan/*.aset`,
 `*.alog`) may be present in the working tree — never sweep it into a firmware
 commit; stage files explicitly.
 
-## Active effort (2026-07-10)
+## Active effort (2026-08-23)
 
-**Command authentication → v0.18.0** (on `feature/auth-proxy`). Connect-time
+None — v0.18.0 was fast-forwarded to `main`; next effort starts on a fresh
+branch off `main`.
+
+**Prior: Command authentication → v0.18.0** (merged to `main`). Connect-time
 challenge–response sessions on the WebSocket: the device pushes a random
 nonce to each new client ("auth" push); a client proves the shared `AUTH_KEY`
 (secrets.h; absent/empty = feature entirely off) by returning
