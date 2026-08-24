@@ -53,6 +53,9 @@ SCK = GPIO 36, MOSI = GPIO 35, MISO = GPIO 37
 
 ## Free GPIOs
 
+A planned BME688 sampling air pump (Adafruit 4699, 5 V ~500 mA — see
+[power.md](power.md)) will claim one of these for its MOSFET driver.
+
 | GPIO | Feather label |
 |------|--------------|
 | 5 | A8 |
