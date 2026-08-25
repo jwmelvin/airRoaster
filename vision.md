@@ -282,19 +282,42 @@ If `autoExposureMode` or `gain` is absent → **camera fails, stop here.**
 
 ### 5. Set, then read back
 
-    uvcc --vendor 0xVVVV --product 0xPPPP set autoExposureMode 1
-    uvcc --vendor 0xVVVV --product 0xPPPP set absoluteExposureTime 10
+    uvcc --vendor 0xVVVV --product 0xPPPP set auto_exposure_mode 1
+    uvcc --vendor 0xVVVV --product 0xPPPP set absolute_exposure_time 10
     uvcc --vendor 0xVVVV --product 0xPPPP set gain <mid-range>
-    uvcc --vendor 0xVVVV --product 0xPPPP get autoExposureMode
-    uvcc --vendor 0xVVVV --product 0xPPPP get absoluteExposureTime
+    uvcc --vendor 0xVVVV --product 0xPPPP export
 
-Readback must match what was written.
+Readback must match what was written, give or take one quantization step.
+
+**Control names are snake_case** in uvcc v8 (`auto_exposure_mode`), not the
+camelCase used in the UVC spec. `export` is more useful than repeated `get`,
+which needs one process per control.
+
+**In zsh, do not stash the flags in a plain variable** — `V="--vendor 0x046d
+--product 0x082d"; uvcc $V ...` does not word-split and uvcc prints its usage
+banner instead. Use an array: `V=(--vendor 0x046d --product 0x082d)`.
 
 ### 6. The decisive behavioral test
 
 Open an OpenCV capture on a fixed scene, then **change scene luminance
 substantially** (switch a lamp, or shade half the field). Log mean frame
-intensity per frame rather than eyeballing it:
+intensity per frame rather than eyeballing it.
+
+Three traps, each of which silently produces a confident wrong answer:
+
+1. **Confirm which camera OpenCV opened.** Its index order need not match
+   `ffmpeg -list_devices`. Identify it positively: toggle the UVC exposure
+   register and see which index's brightness *responds*. Reading a built-in
+   camera while writing registers to the USB one looks exactly like "registers
+   hold but the image auto-corrects."
+2. **Apply the lock after the capture opens** (§ 7) — otherwise the run tests
+   whatever macOS chose, not what was set.
+3. **Check the baseline is actually lit.** A black frame compared against a
+   covered lens is black-vs-black and proves nothing.
+
+A monotonic exposure→brightness ramp is the strongest single check: an
+auto-exposing camera cannot produce one, because it compensates each step back
+toward a constant mean.
 
 - **Pass (auto-exposure genuinely off):** mean brightness steps with the
   lighting change and *stays* changed.
@@ -316,8 +339,46 @@ a dark, noisy image — this is where § Lighting stops being optional.
 
 ### Record here
 
-Camera model, vendor/product ID, the exported control list, which controls held,
-shortest usable exposure, achieved frame rate, and the step 6 verdict.
+**Result 2026-08-25 — Logitech C920: PASS. Phase 1 proceeds at zero hardware
+cost; the dart is not required.**
+
+| Item | Value |
+|---|---|
+| Camera | Logitech HD Pro Webcam C920 |
+| Vendor / product | `0x046d` / `0x082d` |
+| OpenCV index | **0** (`cv2.CAP_AVFOUNDATION`) — *not* the ffmpeg index |
+| Exposure range | `3`–`2047` → 0.3–204.7 ms; gain `0`–`255` |
+| Frame rate | **30.0 fps @ 1280x720**, 1351 frames, no drops |
+| Step 4 controls | `auto_exposure_mode`, `absolute_exposure_time`, `gain` all present |
+| Step 5 readback | exact while idle; ±1 quantization once streaming |
+| Step 6 | **PASS** — luminance step of −21.06 (18.2%) held 28 s; registers pinned at `(155, 127, 1)` |
+| Step 7 | **PASS via post-open re-apply** — held 32 s |
+| Step 8 | frame rate ✅; exposure floor vs real roaster lighting **still open** |
+
+Exported control set (16): `absolute_exposure_time`, `absolute_focus`,
+`absolute_pan_tilt`, `absolute_zoom`, `auto_exposure_mode`,
+`auto_exposure_priority`, `auto_focus`, `auto_white_balance_temperature`,
+`backlight_compensation`, `brightness`, `contrast`, `gain`,
+`power_line_frequency`, `saturation`, `sharpness`, `white_balance_temperature`.
+
+**The finding that matters for the vision module.** Opening the capture runs an
+auto-exposure pass that overwrites the lock — observed jumping `exposure
+10 → 415, gain 128 → 255` against a dark scene. Re-applying *while streaming*
+sticks and stays stable. Any code that configures the camera at init and trusts
+it is silently running at gain 255. Order is: open capture → set controls →
+verify by readback.
+
+**Lighting, measured.** At 1 ms in a normally lit room the C920 gives mean
+**0.47** — no usable image. The ramp at gain 127:
+
+| exposure | 1.0 ms | 2.0 ms | 4.0 ms | 8.0 ms | 15.6 ms |
+|---|---|---|---|---|---|
+| mean | 0.47 | 5.29 | 26.16 | 66.08 | 115.52 |
+
+Reaching a usable mean at 1 ms therefore needs roughly **16x** that room's
+illumination, or ~8x at gain 255 with the attendant noise. This is a lighting
+spec, not a camera problem — see § Lighting. Step 8 remains to be run into the
+drum under real conditions before the exposure/lighting pair is settled.
 
 ## Recording — development only
 
