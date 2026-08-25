@@ -221,14 +221,20 @@ Single file, zero dependencies, works from `file://`. Grouped panels:
   candidates, and phased rollout (observation → offline metric → camera
   decision → live display → advisory → closed loop): [vision.md](vision.md).
   Phase 0 (label clips from existing webcam/phone + synced telemetry) costs
-  nothing and gates all spending. The gating unknown is manual exposure control
-  on macOS (OpenCV's `CAP_PROP_EXPOSURE` no-ops on UVC webcams there); vision.md
-  carries a **§ UVC probe procedure** — a runnable `uvcc`/libusb runbook that
-  settles it on hardware already on hand before any purchase. Camera screening
-  done: **Basler dart daA1440-220um** (IMX273, mono global shutter, 227 fps) is
-  the pick — pylon/pypylon covers macOS Intel *and* Apple Silicon *and* Linux
-  ARM, so one camera serves the current laptop, a future one, and an Option B
-  Pi. Teledyne FLIR ruled out (macOS builds stuck at Mojave).
+  nothing and gates all spending. **The gating unknown — manual exposure control
+  on macOS — is resolved (2026-08-25): a Logitech C920 already on hand passed
+  the § UVC probe procedure**, holding exposure and gain at 30.0 fps @ 1280x720.
+  OpenCV's `CAP_PROP_EXPOSURE` does still no-op on UVC webcams on macOS; the
+  working path is `uvcc`/libusb *applied after the capture opens*, which the
+  probe established and `vision/uvcc_probe.py` implements. **Phase 1 therefore
+  needs no camera purchase.** Camera screening remains valid as the fallback:
+  **Basler dart daA1440-220um** (IMX273, mono global shutter, 227 fps) — worth
+  revisiting only if the C920's rolling shutter or frame rate proves inadequate
+  for the metric, which Phase 1 will show. pylon/pypylon covers macOS Intel
+  *and* Apple Silicon *and* Linux ARM, so one camera would serve the current
+  laptop, a future one, and an Option B Pi. Teledyne FLIR ruled out (macOS
+  builds stuck at Mojave). Still open: exposure floor under real drum lighting
+  (probe step 8) — a lighting spec, not a camera question.
 - **Evaluate moving the DimmerLink link from I2C back to UART serial.** The
   modules ship UART-by-default and were switched to I2C during provisioning
   (see [config.md](config.md) § 3); on this project's questionable wiring the

@@ -54,17 +54,33 @@ Compile after every meaningful edit; the script surfaces sketch-local warnings.
 firmware. `main` is at **v0.18.0** (2026-08-23): `feature/auth-proxy` (command
 authentication — challenge–response sessions + Artisan signing proxy) was
 fast-forwarded into `main`; its on-roaster validation is still pending
-(state-plan.md § NEXT item 13, as is the ambient drill, item 12). Start the
-next effort on a fresh branch off `main`. Commit per
-phase with
+(state-plan.md § NEXT item 13, as is the ambient drill, item 12). Current
+working branch is **`feature/vision-uvc-probe`** (docs + host tooling only —
+no firmware change, so nothing here gates on a roast). Start each new effort
+on a fresh branch off `main`. Commit per phase with
 a message naming the phase. The user's Artisan config churn (`artisan/*.aset`,
 `*.alog`) may be present in the working tree — never sweep it into a firmware
 commit; stage files explicitly.
 
-## Active effort (2026-08-23)
+## Active effort (2026-08-25)
 
-None — v0.18.0 was fast-forwarded to `main`; next effort starts on a fresh
-branch off `main`.
+**Vision — UVC camera probe** (`feature/vision-uvc-probe`, host tooling only).
+The § UVC probe procedure was run against a Logitech C920 already on hand and
+it **passed**: manual exposure/gain hold on macOS via the `uvcc`/libusb path,
+30.0 fps @ 1280x720 at 1 ms exposure. **The camera decision is settled — Phase
+1 proceeds at zero hardware cost and the Basler dart is not required.** Results
+are recorded in vision.md § Record here; `vision/uvcc_probe.py` is the runnable
+tool.
+
+The finding that constrains Phase 1 code: opening the capture runs an
+auto-exposure pass that overwrites the lock (exposure 10 → 415, gain 128 → 255),
+so UVC controls must be applied *after* `cv2.VideoCapture` opens and then
+verified. See vision/README.md § What the vision module must inherit.
+
+Still open: step 8's exposure floor under real roaster lighting. At 1 ms a
+normally lit room gives mean 0.47, implying the drum needs ~16x that
+illumination (~8x at gain 255, with noise). That is a lighting spec, not a
+camera problem, and it needs a run at the roaster (`uvcc_probe.py sweep`).
 
 **Prior: Command authentication → v0.18.0** (merged to `main`). Connect-time
 challenge–response sessions on the WebSocket: the device pushes a random
