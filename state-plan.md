@@ -221,9 +221,14 @@ Single file, zero dependencies, works from `file://`. Grouped panels:
   candidates, and phased rollout (observation → offline metric → camera
   decision → live display → advisory → closed loop): [vision.md](vision.md).
   Phase 0 (label clips from existing webcam/phone + synced telemetry) costs
-  nothing and gates all spending; the gating unknown is manual exposure control
-  on macOS (OpenCV's `CAP_PROP_EXPOSURE` is unreliable there — verify on real
-  hardware before committing).
+  nothing and gates all spending. The gating unknown is manual exposure control
+  on macOS (OpenCV's `CAP_PROP_EXPOSURE` no-ops on UVC webcams there); vision.md
+  carries a **§ UVC probe procedure** — a runnable `uvcc`/libusb runbook that
+  settles it on hardware already on hand before any purchase. Camera screening
+  done: **Basler dart daA1440-220um** (IMX273, mono global shutter, 227 fps) is
+  the pick — pylon/pypylon covers macOS Intel *and* Apple Silicon *and* Linux
+  ARM, so one camera serves the current laptop, a future one, and an Option B
+  Pi. Teledyne FLIR ruled out (macOS builds stuck at Mojave).
 - **Evaluate moving the DimmerLink link from I2C back to UART serial.** The
   modules ship UART-by-default and were switched to I2C during provisioning
   (see [config.md](config.md) § 3); on this project's questionable wiring the

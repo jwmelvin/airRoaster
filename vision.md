@@ -114,37 +114,89 @@ constraint that decides the camera.
 **Verified gotcha (2026-08-24):** on macOS, OpenCV's `CAP_PROP_EXPOSURE` is
 widely reported not to work with UVC webcams — reads return 0 and writes
 silently no-op. macOS exposes far less UVC control through AVFoundation than
-Linux does through V4L2. **Confirm exposure control on the actual camera before
-building anything on it** — the same "verify the platform gotcha early" posture
-the auth plan took with Web Crypto secure contexts.
+Linux does through V4L2. The problem is narrower than "UVC is unusable,"
+though: it is *OpenCV's macOS backend* that cannot reach the controls. Talking
+to the device directly over libusb does work — see § UVC probe procedure.
 
-Options, cheapest first:
+### Vendor screening for macOS (2026-08-25)
 
-1. **Existing webcam / phone.** Fine for Phase 0, where the question is "where
-   can a camera see the bed and what does good vs. bad circulation look like."
-   Do not tune a metric on it.
-2. **UVC webcam + `uvcc`** (USB Video Class configurator) to set controls
-   out-of-band when OpenCV cannot. Works on *some* cameras; cheap to test.
-   Industrial UVC modules (Arducam, e-con See3CAM) generally expose honest
-   manual controls where consumer webcams do not.
-3. **USB3 machine-vision camera** (Basler ace / pylon, FLIR / Spinnaker) —
-   full manual control, global shutter options, and **cross-platform SDKs that
-   cover both macOS and Linux**, so one camera serves development *and* either
-   deployment option. ~$300–600 each is the real cost. Caution: Basler's
-   published macOS pylon download lags the Windows/Linux line — verify current
-   macOS support before purchase.
-4. **Pi CSI cameras** (Global Shutter IMX296, or Camera Module 3 IMX708) —
-   excellent control via `picamera2`, cheapest good option, but **Pi-only**, so
-   they force Option B and forfeit dev/deploy continuity.
+Machine vision is a Windows-first industry and macOS support is where most
+vendors quietly give up. Screened before comparing any specs:
+
+| Vendor | macOS verdict |
+|--------|---------------|
+| **Basler** (pylon) | **Clears it.** pylon runs natively on macOS **Intel and Apple Silicon**; `pypylon` ships prebuilt PyPI wheels for both (macOS ≥ 14.0). pylon also supports **Linux ARM**. |
+| Teledyne FLIR (Spinnaker) | **Ruled out.** Maintenance policy builds macOS against **Mojave 10.14** (2018); newer requires contacting sales. |
+| IDS, Allied Vision, Daheng, The Imaging Source | Not pursued — macOS support ranges from absent to worse, and Basler already works. |
+
+Basler's reach is the decisive property, not merely a convenience: **one camera
+covers the current Intel Mac, a future Apple Silicon Mac, and an Option B Pi**
+(pylon on Linux ARM). That closes § Camera continuity outright rather than
+managing it.
+
+Wrinkle, currently in our favor: the pylon Viewer GUI is not native on Apple
+Silicon (needs Rosetta + pylon 6.2), but **runs natively on Intel** — and it is
+genuinely useful for first-time focus and exposure setup.
+
+### Recommended camera — Basler dart daA1440-220um (CS-mount)
+
+Sony IMX273, 1440×1080, 227 fps, **global shutter, mono**, USB3, 1/2.9" format,
+3.45 µm pixels, 0–50 °C rated. Specs from Basler's product page.
+
+Why it fits this problem almost exactly:
+
+- **Global shutter** freezes bean motion with no rolling-shutter skew
+  corrupting the flow field.
+- **227 fps** is large headroom; expect to run 60–100 and crop for more.
+- **Mono is an upgrade, not a compromise.** No Bayer filter means ~3× the light
+  per pixel, which is exactly what buys the ≲1 ms exposures needed to freeze
+  beans. No debayer cost, and optical flow ignores color anyway. Cheaper than
+  the color `-220uc`.
+- 1.6 MP is ample when processing runs at 320×240, while the spare pixels help
+  framing and focus.
+- IMX273 is the same Sony Pregius generation and pixel pitch as the Pi GS
+  camera's IMX296, so Option B stays familiar — though no camera change would
+  be needed.
+
+**Take CS-mount** (not S-mount or bare board): CS lenses mount directly and
+C-mount lenses fit with a 5 mm adapter, giving the widest optical choice.
+S-mount (M12) is smaller and cheaper but optically limiting.
+
+The `ace` line is the tier above and buys features this project does not need
+(housing, I/O, higher-end sensors). `dart` is the correct tier.
+
+**Pricing unverified** — Basler gates shop pricing by region and the retail
+listing refused automated fetch. Get a quote from Edmund Optics or Graftek.
+Rough expectation only: ~$250–350 per body, ~$50–150 per lens.
+
+**Buy one, not two.** Open question 3 (does the second view add information?) is
+precisely what Phase 1 answers; buying the pair now spends real money on an
+untested hypothesis.
+
+### Lens
+
+Separate purchase, **not specifiable until Phase 0** yields standoff distance
+and desired field of view.
+
+    focal length ≈ sensor width × (working distance ÷ field width)
+
+Sensor width here is ~5.0 mm (1440 × 3.45 µm). A 300 mm standoff viewing a
+150 mm bed wants ≈ 10 mm. Expect 6–16 mm for plausible roaster geometry.
+
+Two requirements beyond focal length: a **fast lens** (f/1.4–f/2.0), because
+short exposures are light-starved; and **manual focus and iris that lock** —
+autofocus drifts exactly the way auto-exposure does.
 
 ### Camera continuity, dev → deploy
 
 If Phase 1 tunes a metric on camera A and Phase 2 deploys camera B, the metric
 may not transfer: rolling vs. global shutter changes how fast motion is
-rendered, and exposure/noise characteristics shift the flow field. Options 3
-and 4 above sit on opposite sides of this — a USB3 MV camera costs more but is
-the same instrument throughout; CSI is cheap but only exists on the Pi. **This
-is the main reason to prefer Option A + a USB camera.**
+rendered, and exposure/noise characteristics shift the flow field. **Choosing
+Basler dissolves this** — the same camera and the same SDK serve the Intel Mac
+now, an Apple Silicon Mac later, and a Pi under Option B. Any cheaper path
+(§ UVC probe procedure) reintroduces the risk and must be treated as
+provisional: a metric validated on a probed webcam needs re-checking on the
+final camera.
 
 For motion analysis, **frame rate and exposure control beat resolution** —
 processing runs around 320×240 regardless. Short exposures (≲1 ms) to freeze
@@ -173,6 +225,99 @@ beans are the real requirement, which drives lighting.
   purge across the window.
 - USB cameras are bus-powered, so mounting needs no separate supply — one more
   simplification from Option A.
+
+## UVC probe procedure — run before buying a camera
+
+**Purpose.** Determine whether a UVC camera already on hand can hold a *fixed*
+exposure and gain on macOS. Pass → Phase 1 proceeds at zero hardware cost.
+Fail → order the dart (§ Recommended camera). Either way this costs an evening
+and gates a several-hundred-dollar decision.
+
+**Why readback alone is not enough.** A camera can accept a control write and
+still auto-adjust underneath. Step 6 is the decisive test; steps 3–5 only
+establish that the control surface exists.
+
+### Prerequisites
+
+    brew install node libusb
+    npm install --global uvcc
+    pip install opencv-python
+
+Optional GUI cross-check: "Webcam Settings" (Mac App Store).
+
+### 1. Enumerate cameras
+
+    system_profiler SPCameraDataType
+    ffmpeg -f avfoundation -list_devices true -i "" 2>&1 | sed -n '/video devices/,/audio devices/p'
+
+### 2. Get vendor / product IDs
+
+`uvcc` addresses devices by USB ID, not by name:
+
+    system_profiler SPUSBDataType | grep -B 2 -A 12 -iE 'camera|webcam|imaging'
+
+Record `Vendor ID: 0x____` and `Product ID: 0x____`. Note the built-in FaceTime
+camera is generally **not** UVC-controllable — use an external USB camera.
+
+### 3. Dump the control surface (the key discovery step)
+
+    uvcc --vendor 0xVVVV --product 0xPPPP export
+
+Prints every control the camera actually exposes, with current values. Save the
+output into this doc.
+
+### 4. Confirm the required controls exist
+
+Minimum set:
+
+- `autoExposureMode` — must accept **1 = manual** (UVC: 1 manual, 2 auto,
+  4 shutter priority, 8 aperture priority).
+- `absoluteExposureTime` — units are **100 µs**, so `10` = 1 ms, `1` = 0.1 ms.
+- `gain` — auto-gain is as damaging as auto-exposure; must be settable and stay put.
+
+Lock these too if present: `autoWhiteBalance`, `whiteBalanceTemperature`,
+`brightness`, `contrast`, `powerLineFrequency`.
+
+If `autoExposureMode` or `gain` is absent → **camera fails, stop here.**
+
+### 5. Set, then read back
+
+    uvcc --vendor 0xVVVV --product 0xPPPP set autoExposureMode 1
+    uvcc --vendor 0xVVVV --product 0xPPPP set absoluteExposureTime 10
+    uvcc --vendor 0xVVVV --product 0xPPPP set gain <mid-range>
+    uvcc --vendor 0xVVVV --product 0xPPPP get autoExposureMode
+    uvcc --vendor 0xVVVV --product 0xPPPP get absoluteExposureTime
+
+Readback must match what was written.
+
+### 6. The decisive behavioral test
+
+Open an OpenCV capture on a fixed scene, then **change scene luminance
+substantially** (switch a lamp, or shade half the field). Log mean frame
+intensity per frame rather than eyeballing it:
+
+- **Pass (auto-exposure genuinely off):** mean brightness steps with the
+  lighting change and *stays* changed.
+- **Fail (auto-exposure still active):** mean brightness dips, then drifts back
+  toward its prior value over ~1 s.
+
+### 7. Verify the lock survives capture start
+
+macOS may reset UVC state when AVFoundation opens the device. With OpenCV still
+streaming, re-run the step 5 `get` commands and confirm nothing changed. If the
+values reset, retry setting them *after* the capture opens; if they still reset,
+the camera fails.
+
+### 8. Measure the exposure floor and frame rate
+
+Confirm the camera reaches ≲1 ms exposure *while* delivering the wanted frame
+rate under the lighting actually available. Short exposure plus weak light gives
+a dark, noisy image — this is where § Lighting stops being optional.
+
+### Record here
+
+Camera model, vendor/product ID, the exported control list, which controls held,
+shortest usable exposure, achieved frame rate, and the step 6 verdict.
 
 ## Recording — development only
 
@@ -256,10 +401,15 @@ criterion: a metric that ranks segments consistently with operator judgment
 **across load sizes and roast stages**. Test the two-camera hypothesis here if
 Phase 0 captured paired views. No hardware beyond Phase 0's.
 
-**Phase 1.5 — camera decision.** Only now, knowing what the metric needs
-(frame rate, shutter type, whether view 2 earns its slot), buy the real
-camera(s) + lighting. Verify manual exposure control on macOS *first*
-(§ Manual exposure control).
+**Phase 1.5 — camera decision.** Ordering:
+1. Run the **§ UVC probe procedure** on a webcam already on hand. Pass → carry
+   Phase 1 on it at zero cost, treating the result as provisional
+   (§ Camera continuity). Fail → proceed to buy.
+2. Knowing what the metric needs (frame rate, shutter type, whether view 2
+   earns its slot), buy **one** Basler dart daA1440-220um (CS-mount) + a fast
+   manual lens + lighting (§ Recommended camera, § Lens).
+3. Re-validate the metric on the final camera if Phase 1 was tuned on a probed
+   webcam — different shutter and noise characteristics shift the flow field.
 
 **Phase 2 — live metric, human in the loop.** Vision process runs live on the
 Mac; metric pushed to the dashboard as a curve next to fan level. Operator
@@ -291,6 +441,7 @@ roaster, per Option B.
    operator set the target per roast (e.g. "hold circulation where I put it
    at charge")? The latter is the safer initial design — repeatability within
    a roast first, absolute targets later.
-5. Which camera clears the macOS manual-exposure bar at acceptable cost?
-   (Phase 1.5, but test a candidate early — it gates Option A.)
+5. Does a webcam already on hand clear the macOS manual-exposure bar, or is
+   the Basler purchase required? (§ UVC probe procedure — run early, it gates
+   Option A and a several-hundred-dollar decision. Answered as of: not yet run.)
 6. Mac-to-roaster USB cable reach, and whether active extension is needed.
