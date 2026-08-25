@@ -208,6 +208,22 @@ Single file, zero dependencies, works from `file://`. Grouped panels:
 
 ## Later / not scheduled
 
+- **Vision module — camera-based fan trim for bean circulation** (idea opened
+  2026-08-24). Fan setting isn't repeatable across beans/loads, but circulation
+  quality is visually observable; a vision process would quantify it and send
+  bounded `FANTRIM` adjustments over the authenticated WebSocket, with
+  firmware-side clamp + timeout decay so vision is advisory, never fan
+  authority. **Leading architecture: the Mac hosts it** — it already runs
+  Artisan and the auth proxy every roast, which deletes the coprocessor, its
+  power rail, its EMI cell, and any dev/deploy transfer risk; a Pi 5 stays on
+  the shelf as the later path to a self-contained roaster. Firmware exposure is
+  one command (`FANTRIM`, default off). Full plan, camera trade study, metric
+  candidates, and phased rollout (observation → offline metric → camera
+  decision → live display → advisory → closed loop): [vision.md](vision.md).
+  Phase 0 (label clips from existing webcam/phone + synced telemetry) costs
+  nothing and gates all spending; the gating unknown is manual exposure control
+  on macOS (OpenCV's `CAP_PROP_EXPOSURE` is unreliable there — verify on real
+  hardware before committing).
 - **Evaluate moving the DimmerLink link from I2C back to UART serial.** The
   modules ship UART-by-default and were switched to I2C during provisioning
   (see [config.md](config.md) § 3); on this project's questionable wiring the
