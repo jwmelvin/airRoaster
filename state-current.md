@@ -121,6 +121,15 @@ has no term for. New gains: Kp 3.0, Ki 0.02, floor raised 120 -> 170 degC (a
 crude feedforward), `svLookahead` 20 s. Detail and the caveats are in
 state-plan.md § Roast 40.
 
+**Roast 41 (later the same evening, dashboard telemetry only) validated the
+inner loop**: on the SV 150 plateau it tracks to rms 0.3 degC, heat reached 100%
+for 16 s across 9.5 min and never 0, one clean engage/disengage. Every
+limitation seen so far is the outer loop, which rang +/-50-60 degC at a 30-50 s
+period through the charge transient. SV also sat at its 120 degC floor for 19 s
+during the charge dip — with the range limit unchecked that would have been
+`INLET 0` and a heat kill mid-roast, so the floor is doing real work. Detail in
+state-plan.md § Roast 41.
+
 **Delivered so far**: `artisan/airRoaster_cascadePID.aset`, derived from
 `artisan/airRoaster_inletPoints.aset` (the operator's live config saved
 2026-09-02, which supersedes the repo's older `airRoaster.aset`; their

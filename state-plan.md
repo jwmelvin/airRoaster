@@ -388,6 +388,50 @@ level and control mode are invisible to this analysis and it cannot be shown
 whether the inner loop ever saturated. Capture a dashboard CSV alongside the
 next roast and run both through `downsample_logs.py`.
 
+### Roast 41 (2026-09-02, 23:15 UTC) — inner loop validated, outer loop ringing
+
+Dashboard telemetry only (`airRoaster_data_2026-09-02-23-27-01.csv`; no .alog
+captured, so the background target and the outer-loop error are not
+reconstructable). A separate, later roast — it starts 28.5 min after roast 40's
+charge epoch and reaches BT 205.5 vs 197.4. Ran with the floor still at 120,
+`positiveTargetRangeLimit` re-checked and `duty_filter` on. Artisan's gains are
+not in this file; the ringing signature suggests `pidKp` was still 8.5.
+
+**The inner loop is not the limitation — this closes the open question.** On the
+SV 150 preheat plateau (1:30-2:05) the tracking error is mean +0.0 degC,
+**rms 0.3 degC**, max +1.2. Over the whole closed-loop span (0:38-10:11) mean
+-0.7, rms 8.5, with the rms entirely from transients (max -102 degC at 2:06, the
+charge). Heat reached 100% for **16 s total** across 9.5 min and never hit 0.
+One clean engage/disengage, no mode chatter. The firmware tracks whatever the
+outer loop asks, with headroom.
+
+**The outer loop rings.** SV direction reversals over 15 degC: 2:08 (257->185),
+2:09 (185->228), 2:43 (245->123), 3:08 (123->225), 3:36 (225->184), 4:19
+(184->228) — swings of +/-50-60 degC at a 30-50 s period through the charge
+transient, settling around 4:19, then ringing again 8:46-9:10 (239 -> 286 ->
+202 -> 255). Consistent with excessive proportional gain.
+
+**The floor earned its keep, measurably.** SV sat at 120 for 19 s (2:24-2:42),
+in the charge dip. With `positiveTargetRangeLimit` unchecked, `heat_min` reverts
+to the slider minimum of 0, so the output would instead have commanded
+`INLET 0` — firmware to manual at heat 0 with the inner integrator reset, two
+and a half minutes into the roast. SV also touched the 300 ceiling for 5 s at
+8:41.
+
+**The TP collapse is systematic, not a one-off.** As in roast 40, at turning
+point the background target and actual BT converge, error goes to ~0, and a
+P-dominated loop drops to its floor. This is the direct evidence for the
+`positiveTargetMin` 120 -> 170 raise and `Ki` 0.003 -> 0.02; both target exactly
+this failure.
+
+**Separate finding, outside this phase.** `FF` is railed at 100 for essentially
+the whole run (range 94-100) while actual heat is ~55%, with the inner
+integrator holding -40 to -50 to cancel it. The feedforward is over-predicting
+by roughly 2x at these setpoints and fan levels, so it contributes a constant
+bias rather than shaping the response — the operating-point job it exists for is
+being done by the integrator instead. Stable, not urgent, but worth its own
+look.
+
 ### Commissioning order
 
 1. **Bench, heater cold.** Load `airRoaster_cascadePID.aset`. PID on -> confirm
