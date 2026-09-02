@@ -439,13 +439,45 @@ I ~ 90 and it could not come down. One root cause: at Ki=0.003 the integrator is
 far too slow to be the operating-point supplier, so it parks wherever history
 left it and P does all the work. This is the strongest argument for the Ki raise.
 
-**Unresolved**: how I reached ~89 by CHARGE+40 s. At Ki=0.003 it cannot have
-accumulated during the roast, so it was inherited — either the PID ran through
-preheat against the background's CHARGE temperature (129.4 degC) while BT was
-still cold, or `Iterm` was seeded on activation. These logs cannot distinguish
-them. Practical consequence either way: **the PID must not be armed before
-CHARGE**; `pidOnCHARGE=true` covers that as long as it is not switched on by
-hand during preheat.
+**Resolved (operator confirmed the PID was *not* enabled during a manual 150 degC
+preheat): Artisan's software PID keeps integrating while switched off.** Three
+source facts in a chain:
+
+1. The target keeps updating when inactive. `canvas.py:4946` gates on
+   `(pidActive and svMode == 1) or svMode == 2` — comment: *"in BackgroundFollow
+   mode we update the SV even if not active, just we do not move the SV
+   slider."* This config is `svMode=2`.
+2. `update()` integrates unconditionally. Pterm, Iterm, clamping and
+   `final_output` are all computed before the only `if self.active:` guard,
+   which merely gates dispatching the output to the slider (pid.py:497-500).
+3. `on()` deliberately does not reset: *"we keep the PID running always, even if
+   inactive, and do not disturb it with an init on switching it active"*
+   (pid.py:355).
+
+So through the manual preheat the PID silently integrated against the
+background's CHARGE temperature (129.4 degC) while BT was still cold.
+
+**Why it parks near 90 instead of running away.** `pidIWP=true` gives
+conditional integration: integration stops once the *unclamped* output exceeds
+`outMax` (pid.py:313). Iterm therefore rises until `P + I ~ 100`, i.e.
+`I ~ 100 - Kp*err` — about 89 at err ~ +1.3 with Kp=8.5. The integrator fills
+quickly through saturation and drains only at `Ki*err`: at Ki=0.003 with
+err ~ -3 that is 0.009/s, roughly three hours to unwind. **That asymmetry —
+fast fill, glacial drain — is the actual defect**, and it is a further argument
+for the Ki raise.
+
+**The only thing that clears Iterm** is `confSoftwarePID(reset=True)` ->
+`pid.reset()` -> `init()` -> `Iterm = 0.0` (pid_control.py:1487, pid.py:515,
+532). That is called from exactly one place: **monitor start, the ON button**
+(canvas.py:12962). `pidOn()` calls `confSoftwarePID()` with the default
+`reset=False`, so arming the PID does *not* clear it; neither does DROP, RESET,
+nor loading a settings file. Iterm therefore persists across roasts for the
+whole Artisan session.
+
+**Operating procedure (required, not optional):** preheat first, then **press
+OFF then ON to reset the integrator with the roaster already hot, then CHARGE.**
+Without this, every roast inherits whatever the preheat and the previous roast
+left in the integrator.
 
 **The outer loop rings.** SV direction reversals over 15 degC: 2:08 (257->185),
 2:09 (185->228), 2:43 (245->123), 3:08 (123->225), 3:36 (225->184), 4:19
@@ -476,6 +508,9 @@ look.
 
 ### Commissioning order
 
+0. **Every roast: preheat, then OFF -> ON, then CHARGE.** Pressing ON is the only
+   thing that zeroes the outer loop's integrator (§ Roast 41). Skipping it
+   carries preheat windup into the roast.
 1. **Bench, heater cold.** Load `airRoaster_cascadePID.aset`. PID on -> confirm
    `INLET` traffic on the dashboard, that the commanded value floors at 170 and
    never reaches 0, that it carries a fraction, and that firmware `mode` reads

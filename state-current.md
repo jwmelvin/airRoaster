@@ -131,7 +131,19 @@ at 83-95 against a one-sided [0, 100] clamp for the whole roast, so BT ran
 term could trim it — which is what made Kp=8.5 look like it was helping, and
 what produced the +/-50-60 degC ringing. This is the mirror of roast 40, where
 I ~ 14 and the loop could not push up; one root cause, an integrator far too
-slow at Ki=0.003 to serve as the operating-point supplier. SV also sat at its 120 degC floor for 19 s
+slow at Ki=0.003 to serve as the operating-point supplier.
+
+**Why the integrator was already wound up at CHARGE**: Artisan's software PID
+keeps integrating while switched off — in `svMode=2` the target updates even
+when inactive (canvas.py:4946), `update()` accumulates Iterm before the only
+`if self.active:` guard (pid.py:497), and `on()` deliberately does not
+re-initialise (pid.py:355). So a manual preheat silently winds it against the
+background's CHARGE temperature. Conditional integration (`pidIWP`) stops the
+fill at `P + I ~ 100`, which is why it parks near 90; it then drains only at
+`Ki*err`. **The only thing that zeroes Iterm is the ON button** (monitor start
+-> `confSoftwarePID(reset=True)`, canvas.py:12962) — not `pidOn`, not DROP, not
+RESET, not loading settings. Required procedure: preheat, then OFF -> ON, then
+CHARGE. SV also sat at its 120 degC floor for 19 s
 during the charge dip — with the range limit unchecked that would have been
 `INLET 0` and a heat kill mid-roast, so the floor is doing real work. Detail in
 state-plan.md § Roast 41.
