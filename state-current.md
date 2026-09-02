@@ -117,8 +117,7 @@ standing **+17 degC BT deficit** to hold its output, all roast. The reason the
 estimate was wrong is structural — the outer loop's output is an absolute
 setpoint, so the integrator must supply the entire operating point, a job the
 firmware's inner loop gives to `feedforward()` and which Artisan's software PID
-has no term for. New gains: Kp 3.0, Ki 0.02, floor raised 120 -> 170 degC (a
-crude feedforward), `svLookahead` 20 s. Detail and the caveats are in
+has no term for. New gains: Kp 3.0, Ki 0.04, floor 140 degC, `svLookahead` 20 s. Detail and the caveats are in
 state-plan.md § Roast 40.
 
 **Roast 41 (later the same evening, dashboard telemetry only) validated the
@@ -142,8 +141,12 @@ background's CHARGE temperature. Conditional integration (`pidIWP`) stops the
 fill at `P + I ~ 100`, which is why it parks near 90; it then drains only at
 `Ki*err`. **The only thing that zeroes Iterm is the ON button** (monitor start
 -> `confSoftwarePID(reset=True)`, canvas.py:12962) — not `pidOn`, not DROP, not
-RESET, not loading settings. Required procedure: preheat, then OFF -> ON, then
-CHARGE. SV also sat at its 120 degC floor for 19 s
+RESET, not loading settings. Required procedure: press ON (clears Iterm), turn the PID on,
+**preheat under PID control**, then CHARGE — the preheat target is supplied
+automatically as the background's CHARGE BT. That forced the floor back down to
+140 (the loop needs inlet ~148 to hold 129.4 degC, which a 170 floor forbids)
+and Ki up to 0.04 (a correctly-started integrator sits at the empty-roaster
+operating point ~5 duty and must climb to ~55 during the roast). SV also sat at its 120 degC floor for 19 s
 during the charge dip — with the range limit unchecked that would have been
 `INLET 0` and a heat kill mid-roast, so the floor is doing real work. Detail in
 state-plan.md § Roast 41.

@@ -82,7 +82,7 @@ setpoint** that the firmware's existing `MODE_INLET` loop holds.
 ```
 background BT curve (authored in Artisan's Designer)
   -> Artisan software PID (PV = BT, pidCycle 1000 ms)
-  -> duty 0-100% mapped onto the slider-3 subrange [170, 300] degC
+  -> duty 0-100% mapped onto the slider-3 subrange [140, 300] degC
   -> slider 3 action: send({"command":"INLET","value":{}})
   -> firmware controlStep() (250 ms) modulates heat to hold that inlet temp
 ```
@@ -111,8 +111,8 @@ profile following against a background curve.
   setpoint is computed live by the outer loop.
 - Output target = **slider 3** (`pidPositiveTarget=3`), the existing `INLET`
   slider.
-- Setpoint range **170-300 degC via `positiveTargetRangeLimit=true`,
-  `positiveTargetMin=170`, `positiveTargetMax=300`** — see § The floor for why
+- Setpoint range **140-300 degC via `positiveTargetRangeLimit=true`,
+  `positiveTargetMin=140`, `positiveTargetMax=300`** — see § The floor for why
   this, and not `dutyMin`/`dutyMax`.
 - `pidOnCHARGE=true`, `pidOffDROP=true`.
 - **Heat-off at drop needs an Artisan alarm**, not `PID_OFF_action` — see
@@ -139,9 +139,9 @@ because it carries the operator's refined playback/event wiring.
 | `pidSource` | 3 (Inlet) | 1 (BT) |
 | `pidPositiveTarget` | 4 (OT1 heat) | 3 (INLET) |
 | `positiveTargetRangeLimit` | false | true |
-| `positiveTargetMin` / `positiveTargetMax` | 0 / 4 | 170 / 300 |
-| `pidKp` / `pidKi` / `pidKd` | 0.18 / 0.054 / 0.09 | 3.0 / 0.02 / 0 |
-| `pidKp1,2` / `pidKi1,2` / `pidKd1,2` | 27 / 0.018 / 36 | 3.0 / 0.02 / 0 |
+| `positiveTargetMin` / `positiveTargetMax` | 0 / 4 | 140 / 300 |
+| `pidKp` / `pidKi` / `pidKd` | 0.18 / 0.054 / 0.09 | 3.0 / 0.04 / 0 |
+| `pidKp1,2` / `pidKi1,2` / `pidKd1,2` | 27 / 0.018 / 36 | 3.0 / 0.04 / 0 |
 | `svLookahead` | 0 | 20 s |
 | `pidDsetpointWeight` | 1 | 0 (derivative on measurement) |
 | `pidOnCHARGE` / `pidOffDROP` | false / false | true / true |
@@ -174,8 +174,8 @@ open, and corrects two earlier assumptions.
    of the integer value"). No 1 degC quantization on the wire — the earlier
    concern about `dutySteps` re-introducing what airRoaster.ino:1141 removed
    does not apply to the *value*. It does bound the update *cadence*: an update
-   is emitted when the duty moves by `dutySteps` (1 duty unit = 1.3 degC over
-   the 130 degC span) or the integer slider position changes.
+   is emitted when the duty moves by `dutySteps` (1 duty unit = 1.6 degC over
+   the 160 degC span) or the integer slider position changes.
 4. **Slider action type**: stored `slideractions=18` maps through
    `eventactionx` (`a+2` for `21 > a > 5`) to action 20 = "Artisan Command",
    which is what accepts the `send({...})` form. Unchanged by this work.
@@ -203,20 +203,20 @@ A runaway-heat configuration. (`pid_control.py:1525` separately re-clamps
 domain.)
 
 The correct mechanism is the one Artisan documents for exactly this:
-`positiveTargetRangeLimit=true` with `positiveTargetMin=170`,
+`positiveTargetRangeLimit=true` with `positiveTargetMin=140`,
 `positiveTargetMax=300` — "the duty is mapped to the target slider subrange"
-(`pid_control.py:1211`). Duty 0% -> 170 degC, duty 100% -> 300 degC. (The floor
-was 120 until roast 40; see below.)
+(`pid_control.py:1211`). Duty 0% -> 140 degC, duty 100% -> 300 degC. (120 until
+roast 40, briefly 170, then 140 to allow a PID-driven preheat; see below.)
 
 **`[Sliders]` is deliberately left alone.** Artisan's own stated assumption is
 `slider_min < positiveTargetMin < positiveTargetMax < slider_max`
 (`pid_control.py:1317`). Slider 3's existing 0-320 satisfies
-`0 < 170 < 300 < 320`. The earlier plan to tighten `slidermax` to 300 would
+`0 < 140 < 300 < 320`. The earlier plan to tighten `slidermax` to 300 would
 violate it — so the 320/300 mismatch against `INLET_SV_MAX_C` stays, and
 remains harmless (the firmware clamps, and the cascade never asks above 300).
 
 Note the floor is a *heating* floor: on a BT overshoot the coolest the cascade
-can ask for is 170 degC inlet. The operator's path below that is to turn the
+can ask for is 140 degC inlet. The operator's path below that is to turn the
 PID off, which is also what `pidOffDROP` does at the drop.
 
 ### Heat-off at drop — already wired, no alarm needed
@@ -474,10 +474,11 @@ for the Ki raise.
 nor loading a settings file. Iterm therefore persists across roasts for the
 whole Artisan session.
 
-**Operating procedure (required, not optional):** preheat first, then **press
-OFF then ON to reset the integrator with the roaster already hot, then CHARGE.**
-Without this, every roast inherits whatever the preheat and the previous roast
-left in the integrator.
+**Operating procedure (required, not optional):** **press ON to start
+monitoring — that zeroes the integrator — then turn the PID on and preheat under
+its control, then CHARGE.** See § PID-driven preheat. Without the ON, every
+roast inherits whatever the previous one left in the integrator; without the PID
+on during preheat, the integrator winds blind.
 
 **The outer loop rings.** SV direction reversals over 15 degC: 2:08 (257->185),
 2:09 (185->228), 2:43 (245->123), 3:08 (123->225), 3:36 (225->184), 4:19
@@ -506,13 +507,50 @@ bias rather than shaping the response — the operating-point job it exists for 
 being done by the integrator instead. Stable, not urgent, but worth its own
 look.
 
+### PID-driven preheat (operator decision 2026-09-02)
+
+The windup above is fixed at its source by **running the preheat under the PID**
+rather than driving the slider by hand, so the integrator always reflects a
+closed loop instead of accumulating with its output disconnected.
+
+Artisan supplies the preheat target automatically: before CHARGE, `calcSV`
+returns the background profile's **CHARGE BT** (pid_control.py:1731-1740) —
+129.4 degC for `profile_001.alog`. No "default temperature" setting is needed.
+
+The operator's manual 150 degC preheat was already calibrated to almost exactly
+that. Fitting the preheat segment of roast 41 (SV pinned at 150, empty roaster):
+
+```
+dBT/min = -1.375 * BT + 180.2   ->  inlet 150 degC equilibrates BT at 131.0 degC
+background CHARGE BT (the pre-CHARGE PID target)   =  129.4 degC
+```
+
+So the loop settles near **inlet 148** to hold 129.4.
+
+**This is why the floor came back down to 140.** At `positiveTargetMin=170` the
+PID cannot command 148 — it would sit on its floor, drive BT to roughly 148, and
+charge ~19 degC hot against a background built for a 129 degC charge. 140 leaves
+about 8 degC of room below the preheat operating point for the loop to trim.
+
+**And why Ki went to 0.04.** A PID-driven preheat leaves the integrator at the
+*empty-roaster* operating point — about 5 duty — whereas mid-roast needs ~55. The
+loop must climb ~50 duty during the roast. At Ki=0.02 with err ~ +10 that takes
+~250 s, most of the roast; at 0.04 it is ~125 s. Ki=0.02 was sized for a
+wound-up start, which is no longer the starting condition.
+
+**This also removes the reason the floor was raised.** With Ki=0.04 the
+integrator is already near 45 by TP (~25 s of large positive error after CHARGE),
+putting SV near 210 rather than collapsing onto the floor. Adequate integral
+action, not a high floor, is what carries the loop through turning point.
+
 ### Commissioning order
 
-0. **Every roast: preheat, then OFF -> ON, then CHARGE.** Pressing ON is the only
-   thing that zeroes the outer loop's integrator (§ Roast 41). Skipping it
-   carries preheat windup into the roast.
+0. **Every roast: press ON (zeroes the integrator), turn the PID on, preheat
+   under PID control, then CHARGE.** ON is the only thing that clears Iterm
+   (§ Roast 41); preheating under the PID stops it winding blind
+   (§ PID-driven preheat).
 1. **Bench, heater cold.** Load `airRoaster_cascadePID.aset`. PID on -> confirm
-   `INLET` traffic on the dashboard, that the commanded value floors at 170 and
+   `INLET` traffic on the dashboard, that the commanded value floors at 140 and
    never reaches 0, that it carries a fraction, and that firmware `mode` reads
    `inlet`. Mark DROP -> confirm the existing button chain sends `INLET 0` and
    the firmware returns to `manual` at heat 0. Confirm no T_inlet playback
