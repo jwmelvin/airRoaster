@@ -273,6 +273,21 @@ So `airRoaster_cascadePID.aset` additionally sets, outside `[ArduinoPID]`:
 | `specialeventplayback` | `false, false, true, false` | all `false` |
 | `specialeventplaybackramp` | `false, false, true, false` | all `false` |
 | `alarmflag` | QVariantList[int] = 1 | 0 (alarm disabled) |
+| `buttonactionstrings[0]` (CHARGE, `[DefaultButtons]`) | `"17,18,19"` | *(empty)* |
+
+The CHARGE row is the third playback trigger in the live config: buttons 17-19
+are `playback_time` / `playback_ON` / `playback_ramp`. It was already inert
+there — `buttonactions[0]=0` (None) means `eventactionx` never runs the string —
+but leaving the string in place is a trap: setting the action type would
+silently start playback fighting the PID for slider 3. Cleared in the cascade
+config.
+
+**CHARGE still arms the outer loop**, without a button action:
+`pidOnCHARGE=true` makes `markCharge` call `pidcontrol.pidOn()` directly
+(canvas.py:14206), before any button action runs — mirroring `pidOffDROP` at
+canvas.py:15012. This is also the moment the charge-aligned background SV curve
+becomes meaningful. The remaining `[DefaultButtons]` rows (DRY, FCs, FCe, SCs,
+SCe, COOL) are all action 0 with empty strings and need nothing.
 
 These are exactly what to re-enable when switching back to the inner-loop
 playback workflow — which is why the two configs stay separate files rather

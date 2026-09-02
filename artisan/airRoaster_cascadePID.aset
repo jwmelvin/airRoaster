@@ -363,7 +363,7 @@ extramarkersizes2=6, 6
 
 [DefaultButtons]
 buttonactions=0, 0, 0, 0, 0, 0, 20, 0
-buttonactionstrings="17,18,19", , , , , , "16,15,11", 
+buttonactionstrings=, , , , , , "16,15,11", 
 buttons_undo=true
 buttonvisibility=true, true, true, true, false, false, true, false
 extrabuttonactions=0, 0, 0
