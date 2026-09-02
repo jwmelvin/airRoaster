@@ -54,17 +54,66 @@ Compile after every meaningful edit; the script surfaces sketch-local warnings.
 firmware. `main` is at **v0.18.0** (2026-08-23): `feature/auth-proxy` (command
 authentication — challenge–response sessions + Artisan signing proxy) was
 fast-forwarded into `main`; its on-roaster validation is still pending
-(state-plan.md § NEXT item 13, as is the ambient drill, item 12). Start the
-next effort on a fresh branch off `main`. Commit per
-phase with
+(state-plan.md § NEXT item 13, as is the ambient drill, item 12). Current
+working branch is **`feature/artisan-pid`** (Artisan configuration + docs only
+— no firmware change). Note that `feature/vision-uvc-probe` holds two commits
+that exist on no other branch and have never been pushed. Start each new effort
+on a fresh branch off `main`. Commit per phase with
 a message naming the phase. The user's Artisan config churn (`artisan/*.aset`,
 `*.alog`) may be present in the working tree — never sweep it into a firmware
 commit; stage files explicitly.
 
-## Active effort (2026-08-23)
+## Active effort (2026-09-02)
 
-None — v0.18.0 was fast-forwarded to `main`; next effort starts on a fresh
-branch off `main`.
+**Artisan cascade PID** (`feature/artisan-pid`, off `main` at v0.18.0).
+Artisan's software PID becomes the **outer** loop of a cascade: PV = BT against
+a background curve authored in Artisan's Designer, and its output is the
+**inlet setpoint** that the firmware's existing `MODE_INLET` loop holds —
+`background BT curve → Artisan PID (1 Hz) → INLET <degC> → controlStep()
+(250 ms) → heat`. This replaces the current flat arrangement, where
+`pidSource=3` has Artisan PID-ing on the *Inlet* channel straight to OT1 heat,
+duplicating the firmware's own inner loop across a 1 Hz WebSocket link. The
+cascade keeps the fast inner loop on-device and gives Artisan the slow outer
+job it is good at.
+
+**No firmware change is needed** — `INLET` already accepts fractional setpoints
+and already retargets bumplessly, and the hazards close in Artisan config.
+The `INLET <= 0` = *disengage* semantics (v0.15.1) would let a low-saturating
+outer loop reset the inner loop and kill heat once per tick; the fix is
+Artisan's target subrange (`positiveTargetRangeLimit` with min 120 / max 300),
+which maps the PID's 0-100% duty onto 120-300 degC so the output cannot reach 0.
+
+**Three earlier assumptions were wrong and are corrected in the plan**, all
+caught by reading Artisan's source (the shipped .app is compiled; source at
+github.com/artisan-roaster-scope/artisan). First, `dutyMin`/`dutyMax` are duty
+*percentages*, not degC — the originally-planned `dutyMin=120` would have pinned
+the inlet setpoint at maximum permanently with the outer loop having no effect,
+a runaway-heat configuration. Second, `pidSource` is 1=BT / 2=ET / >2=extra
+curves, so BT is 1. Third, heat-off at drop needed no new mechanism at all:
+`PID_OFF_action` fires only for external MODBUS/S7 PID control, and Artisan
+alarms have no WebSocket action either — but the operator's config **already**
+does it, via the DROP button action (`buttonactions[6]` -> Multiple Event ->
+the `inlet_OFF` button -> `INLET 0`), and `pidOffDROP` is invoked before that
+button action, so there is no race.
+
+The one real conflict is background event **playback**: it replays T_inlet onto
+slider 3, the same slider the outer PID drives. The cascade config therefore
+disables `specialeventplayback`/`...ramp` and the Playback-ON-at-CHARGE alarm.
+
+Design decisions, the settings delta, the source citations, starting gains, and
+the commissioning order are in state-plan.md § Artisan cascade PID. Two scope
+boundaries fixed by the operator (2026-09-02):
+`artisan/make_inlet_background.py` is **unchanged** — it stays the tool for the
+*inner*-loop event-playback path, which remains the non-cascade alternative —
+and the inner loop is **not retuned** (Kp 1.5 / Ki 0.05 / Kd 0 stand,
+roast-validated).
+
+**Delivered so far**: `artisan/airRoaster_cascadePID.aset`, derived from
+`artisan/airRoaster_inletPoints.aset` (the operator's live config saved
+2026-09-02, which supersedes the repo's older `airRoaster.aset`; their
+`[ArduinoPID]` and `[Sliders]` sections are byte-identical). 17 `[ArduinoPID]`
+keys plus three playback keys changed, nothing else; both originals untouched.
+Still to do: bench verification with the heater cold, then a first roast.
 
 **Prior: Command authentication → v0.18.0** (merged to `main`). Connect-time
 challenge–response sessions on the WebSocket: the device pushes a random

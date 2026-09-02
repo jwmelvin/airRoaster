@@ -70,6 +70,249 @@ Remaining drills, roughly in commissioning order:
     stays fully trusted. Also confirm a keyless build (empty AUTH_KEY)
     behaves exactly as v0.17.
 
+## Artisan cascade PID — outer BT loop driving the inlet setpoint
+
+*Active effort, branch `feature/artisan-pid` (off `main` at v0.18.0).
+Artisan configuration + docs + commissioning; **no firmware change**.*
+
+**Shape.** Artisan's software PID becomes the *outer* loop of a cascade: it
+controls BT against a background curve, and its output is the **inlet
+setpoint** that the firmware's existing `MODE_INLET` loop holds.
+
+```
+background BT curve (authored in Artisan's Designer)
+  -> Artisan software PID (PV = BT, pidCycle 1000 ms)
+  -> duty 0-100% mapped onto the slider-3 subrange [120, 300] degC
+  -> slider 3 action: send({"command":"INLET","value":{}})
+  -> firmware controlStep() (250 ms) modulates heat to hold that inlet temp
+```
+
+The firmware needs nothing new: `INLET <degC>` is already the entry point,
+`engageInlet()` is already bumpless on retarget (keeps the integrator across a
+gradually-moving setpoint), and the JSON envelope already preserves the
+fraction (airRoaster.ino:1141). Time-constant separation is why this should
+work — inlet air responds in seconds, BT in tens of seconds.
+
+**Why not the flat loop.** Today `pidSource=3` points Artisan's software PID at
+the *Inlet* channel with output to slider 4 (OT1 heat): Artisan duplicating the
+firmware's own inner loop across a 1 Hz WebSocket link. The cascade keeps the
+fast inner loop on-device and hands Artisan the slow outer job it is good at —
+profile following against a background curve.
+
+**Design decisions (operator-confirmed 2026-09-02).**
+
+- Outer PV = **BT**, which is `pidSource=1` (see § Verified against source).
+- Outer SV = **follow background** (`svMode=2`, already set); curves authored in
+  Artisan's **Designer**.
+- `artisan/make_inlet_background.py` is **out of scope and unchanged.** It
+  remains the tool for the *inner*-loop event-playback path (README § Driving
+  the setpoint from a roast profile), which stays available as the non-cascade
+  alternative. The cascade does not generate inlet curves at all — the inlet
+  setpoint is computed live by the outer loop.
+- Output target = **slider 3** (`pidPositiveTarget=3`), the existing `INLET`
+  slider.
+- Setpoint range **120-300 degC via `positiveTargetRangeLimit=true`,
+  `positiveTargetMin=120`, `positiveTargetMax=300`** — see § The floor for why
+  this, and not `dutyMin`/`dutyMax`.
+- `pidOnCHARGE=true`, `pidOffDROP=true`.
+- **Heat-off at drop needs an Artisan alarm**, not `PID_OFF_action` — see
+  § Heat-off at drop.
+- Inner loop **not retuned** — Kp 1.5 / Ki 0.05 / Kd 0 stand (roast-validated).
+  Revisit only if commissioning shows the inner loop is the limiting factor.
+- The alternate gain sets (`pidKp1/2` etc.) were leftovers of unknown
+  provenance; they are overwritten to match the new single set.
+  `pidGainScheduling` stays false.
+
+**Deliverable.** `artisan/airRoaster_cascadePID.aset`, derived from
+**`artisan/airRoaster_inletPoints.aset`** (the operator's live config as saved
+2026-09-02, which supersedes the older `airRoaster.aset` in the repo). Both
+originals are left untouched so the playback setup stays loadable.
+
+`airRoaster.aset` and `airRoaster_inletPoints.aset` differ in batch counters,
+`RoRlimit`, `autotimex`, three new playback event buttons (17-19), and a new
+alarm — but their **`[ArduinoPID]` and `[Sliders]` sections are byte-identical**,
+so the PID delta below applies to either base. `inletPoints` is the right base
+because it carries the operator's refined playback/event wiring.
+
+| Key (`[ArduinoPID]`) | From | To |
+|---|---|---|
+| `pidSource` | 3 (Inlet) | 1 (BT) |
+| `pidPositiveTarget` | 4 (OT1 heat) | 3 (INLET) |
+| `positiveTargetRangeLimit` | false | true |
+| `positiveTargetMin` / `positiveTargetMax` | 0 / 4 | 120 / 300 |
+| `pidKp` / `pidKi` / `pidKd` | 0.18 / 0.054 / 0.09 | 2.5 / 0.003 / 0 |
+| `pidKp1,2` / `pidKi1,2` / `pidKd1,2` | 27 / 0.018 / 36 | 2.5 / 0.003 / 0 |
+| `pidDsetpointWeight` | 1 | 0 (derivative on measurement) |
+| `pidOnCHARGE` / `pidOffDROP` | false / false | true / true |
+
+`dutyMin`/`dutyMax` stay **0 / 100** and `[Sliders]` is **unchanged** — both
+deliberate, see below.
+
+### Verified against source
+
+Read from `artisanlib/{pid,pid_control,main,canvas}.py` at
+github.com/artisan-roaster-scope/artisan (the shipped .app is compiled, so the
+bundle cannot answer these). This settles all four items previously listed as
+open, and corrects two earlier assumptions.
+
+1. **`pidSource` numbering is 1=BT, 2=ET, >2=extra curves** with
+   `n = pidSource-3`, `c = n//2`, even `n` = channel A / odd = channel B
+   (`pid_control.py:1447`). So BT is **1**, not 2. The earlier inference of
+   1=ET/2=BT was backwards. The identification of `pidSource=3` as extra1A
+   ("Inlet") was right, since extras start at 3 either way.
+2. **The PID output is a duty in [0,100] that is linearly mapped onto the
+   target slider's range** (`pid_control.py` `setEnergy`):
+   `raw = numpy.interp(v, [0,100], [heat_min, heat_max])`, where `heat_min/max`
+   come from the slider's own min/max, narrowed to
+   `[positiveTargetMin, positiveTargetMax]` when `positiveTargetRangeLimit`.
+   So the slider range governs the commanded degC entirely.
+3. **The fractional value does reach the command.** `setEnergy` emits both the
+   rounded int and `raw_heat`; `addEvent_internal` uses the int only for the
+   slider position and change-detection, and passes `raw_value` to the slider
+   action ("if raw_value is not None, it is send to the slider action instead
+   of the integer value"). No 1 degC quantization on the wire — the earlier
+   concern about `dutySteps` re-introducing what airRoaster.ino:1141 removed
+   does not apply to the *value*. It does bound the update *cadence*: an update
+   is emitted when the duty moves by `dutySteps` (1 duty unit = 1.8 degC over a
+   180 degC span) or the integer slider position changes.
+4. **Slider action type**: stored `slideractions=18` maps through
+   `eventactionx` (`a+2` for `21 > a > 5`) to action 20 = "Artisan Command",
+   which is what accepts the `send({...})` form. Unchanged by this work.
+
+### The floor — and the correction that matters
+
+`INLET <= 0` means *disengage*, not *setpoint 0* (v0.15.1, README § Inlet
+temperature control): Artisan's SV slider parks at 0 after a background
+playback, and a 0 degC target would leave the loop railed with heat pinned at
+0. In a cascade, an outer loop that saturates low would kick the inner loop to
+`MODE_MANUAL` at heat 0 and then, next tick, re-engage through `engageInlet()`
+— which reseeds the integrator from the now-zero heat level. Not mere mode
+chatter: a full inner-loop reset plus a heat kill, once per tick. The output
+must therefore be structurally unable to reach 0.
+
+**`dutyMin=120` was the wrong mechanism and would have been dangerous.**
+`dutyMin`/`dutyMax` are *duty percentages*, not degC: `pid.py:490` clamps
+`final_output = min(dutyMax, max(dutyMin, output))` where `output` is already
+bounded by `outMin=0`/`outMax=100`. Setting `dutyMin=120` would pin
+`final_output` at 120 every cycle, and `numpy.interp(120, [0,100], ...)` clamps
+above the input range and returns `heat_max` — i.e. **the inlet setpoint would
+sit at its maximum permanently, with the outer loop having no effect at all.**
+A runaway-heat configuration. (`pid_control.py:1525` separately re-clamps
+`dutyMin/Max` into 0-100 on the ArduinoTC4 path, confirming the intended
+domain.)
+
+The correct mechanism is the one Artisan documents for exactly this:
+`positiveTargetRangeLimit=true` with `positiveTargetMin=120`,
+`positiveTargetMax=300` — "the duty is mapped to the target slider subrange"
+(`pid_control.py:1211`). Duty 0% -> 120 degC, duty 100% -> 300 degC.
+
+**`[Sliders]` is deliberately left alone.** Artisan's own stated assumption is
+`slider_min < positiveTargetMin < positiveTargetMax < slider_max`
+(`pid_control.py:1317`). Slider 3's existing 0-320 satisfies
+`0 < 120 < 300 < 320`. The earlier plan to tighten `slidermax` to 300 would
+violate it — so the 320/300 mismatch against `INLET_SV_MAX_C` stays, and
+remains harmless (the firmware clamps, and the cascade never asks above 300).
+
+Note the floor is a *heating* floor: on a BT overshoot the coolest the cascade
+can ask for is 120 degC inlet. The operator's path below that is to turn the
+PID off, which is also what `pidOffDROP` does at the drop.
+
+### Heat-off at drop — already wired, no alarm needed
+
+**This is already configured in `airRoaster_inletPoints.aset`** and needs no new
+work. `buttonactions=0,0,0,0,0,0,20,0` with
+`buttonactionstrings[6]="16,15,11"`: index 6 is DROP (canvas.py `markDrop` calls
+`eventactionx(self.buttonactions[6], ...)` at canvas.py:15130), and stored 20
+maps through `eventactionx` to action 3 = Multiple Event, which presses extra
+event buttons 16, 15 and 11:
+
+| Button | Label | Effect |
+|---|---|---|
+| 16 | `playback_OFF` | `playbackmode(0)` |
+| 15 | `inlet_OFF` | `send({"command":"INLET","value":0})` -> firmware manual, heat 0 |
+| 11 | `heatSlider_OFF` | event type 3 value 0 -> slider 3 to 0, same INLET 0 (redundant, harmless) |
+
+`INLET 0` is exactly the v0.15.1 cooldown path: `MODE_MANUAL`,
+`requestedHeatLevel = 0`, `applyInterlock()`.
+
+**The ordering against `pidOffDROP` is safe.** In `markDrop`,
+`pidcontrol.pidOff()` runs at canvas.py:15012, *before* the button action at
+canvas.py:15130 — so the PID is already stopped when `INLET 0` is sent and
+cannot re-command a setpoint afterwards. (CHARGE mirrors this: `pidOn()` at
+canvas.py:14206 precedes `eventactionx(buttonactions[0])`.)
+
+**An earlier draft of this plan was wrong twice here** and both errors are
+retracted: first that `PID_OFF_action` could carry `INLET 0` (it fires only for
+external MODBUS/S7 PID control, `pid_control.py:1570-1580`; this is a WebSocket
+device so `externalPIDControl()` returns 0), and then that an Artisan **alarm**
+should send the WebSocket command instead — alarm actions have their own
+numbering that tops out at 25 (`canvas.py:5928-6110`: 0=popup, 2=event button,
+3-6=sliders, 13=DROP, 22=Playback ON, 23=Playback OFF, 24/25=canvas colour) and
+include **no** WebSocket or Artisan Command action at all. An alarm could only
+have reached the firmware indirectly via action 2 (press an event button). None
+of that is needed, because the DROP button action already does it directly.
+
+### Background event playback must be off
+
+The one genuine conflict. In `airRoaster_inletPoints.aset`,
+`specialeventplayback=false, false, true, false` and
+`specialeventplaybackramp=false, false, true, false` enable replay of the
+**T_inlet** event type — which drives **slider 3**. The cascade's outer PID
+drives that same slider. Both writing it would fight.
+
+The live config also carries an alarm that turns playback on automatically:
+enabled, source -3 (no temperature source, so time-only), `alarmtime=0`
+(after CHARGE), `alarmoffset=1` (1 s), `alarmaction=22` = **Playback ON**
+(`turn_playback_event_ON()`), empty command string. It must not fire in the
+cascade config.
+
+So `airRoaster_cascadePID.aset` additionally sets, outside `[ArduinoPID]`:
+
+| Key | From | To |
+|---|---|---|
+| `specialeventplayback` | `false, false, true, false` | all `false` |
+| `specialeventplaybackramp` | `false, false, true, false` | all `false` |
+| `alarmflag` | QVariantList[int] = 1 | 0 (alarm disabled) |
+
+These are exactly what to re-enable when switching back to the inner-loop
+playback workflow — which is why the two configs stay separate files rather
+than one file with a mode switch.
+
+### Starting gains
+
+Gains are in **duty units per degC of BT error**, not degC of SV — the mapping
+to degC happens after the PID (`Iterm += Ki * err * dt`, `pid.py:456`). With
+the 120-300 subrange, 1 duty unit = 1.8 degC of inlet SV.
+
+Reasoning: a 5 degC BT shortfall wanting roughly 25 degC more inlet is
+~4.5 degC-SV per degC-error, i.e. **Kp = 4.5/1.8 ~ 2.5 duty/degC**. The outer
+integral must be well slower than the inner loop's `Ki = 0.05 1/s`:
+**Ki ~ 0.003**. **Kd = 0** to start. These are estimates to commission from,
+not trusted values.
+
+### Commissioning order
+
+1. **Bench, heater cold.** Load `airRoaster_cascadePID.aset`. PID on -> confirm
+   `INLET` traffic on the dashboard, that the commanded value floors at 120 and
+   never reaches 0, that it carries a fraction, and that firmware `mode` reads
+   `inlet`. Mark DROP -> confirm the existing button chain sends `INLET 0` and
+   the firmware returns to `manual` at heat 0. Confirm no T_inlet playback
+   traffic appears on the slider.
+2. **First roast, conservative gains.** Watch for outer-loop overshoot and for
+   the inner loop saturating (heat pinned at 0 or 100 for long stretches means
+   the outer loop is asking for something unreachable).
+3. Retune Kp/Ki from the log; only then consider Kd and `svLookahead`
+   (currently 0; a few seconds of lead may help against thermal lag).
+
+Optional tuning aid: `createEvents=true` records the commanded inlet SV into
+the profile as events, which makes the outer loop's output reviewable
+afterwards at the cost of a cluttered profile.
+
+No bundled machine profile in Artisan's own `Machines/` directory does a
+cascade: all 35 with a configured software PID target slider 4 (heat), the
+Giesens included, even though they too put a temperature slider on 3. There is
+no vendor precedent to copy here.
+
 ## Completed phases (specs kept for reference; details in the archive)
 
 ## Phase 1 — firmware safety (FW 0.7.0) — DONE 2026-07-02
