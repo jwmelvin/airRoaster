@@ -395,7 +395,7 @@ captured, so the background target and the outer-loop error are not
 reconstructable). A separate, later roast — it starts 28.5 min after roast 40's
 charge epoch and reaches BT 205.5 vs 197.4. Ran with the floor still at 120,
 `positiveTargetRangeLimit` re-checked and `duty_filter` on. Artisan's gains are
-not in this file; the ringing signature suggests `pidKp` was still 8.5.
+not in this file; `airRoaster_41.alog` later confirmed `pidKp` was still 8.5.
 
 **The inner loop is not the limitation — this closes the open question.** On the
 SV 150 preheat plateau (1:30-2:05) the tracking error is mean +0.0 degC,
@@ -404,6 +404,48 @@ SV 150 preheat plateau (1:30-2:05) the tracking error is mean +0.0 degC,
 charge). Heat reached 100% for **16 s total** across 9.5 min and never hit 0.
 One clean engage/disengage, no mode chatter. The firmware tracks whatever the
 outer loop asks, with headroom.
+
+**Root cause: integral windup against a one-sided integrator** (established
+2026-09-02 once `airRoaster_41.alog` was available; the ringing below is a
+symptom, not the fault). The alog confirms `pidKp=8.5`, `pidKi=0.003`,
+`svLookahead=0`, background `profile_001.alog`, `pidSource=1`.
+
+BT ran *above* the background target for the entire roast — every milestone came
+early (DRYe 2:48 vs 3:00, FCs 5:56 vs 6:20, DROP 6:31 vs 7:11) — so the error was
+**negative** (-2 to -4 degC) and a healthy loop would have been backing off.
+Instead SV sat at 240-250 degC. Solving `duty = Kp*err + I` with the real error
+recovers the integral term:
+
+| tau | err | P = 8.5*err | duty | required I |
+|---|---|---|---|---|
+| 0:40 | -10.5 | -89.3 | 0.0 | **89.3** |
+| 2:00 | -4.0 | -33.8 | 53.6 | **87.3** |
+| 4:00 | -2.4 | -20.4 | 70.9 | **91.3** |
+| 6:00 | -3.5 | -29.7 | 64.8 | **94.5** |
+
+The integrator sat at **83-95 the whole roast**, against a clamp of **[0, 100]**:
+`_calculate_integral_limits` sets `integral_min = 0.0` whenever `outMin >= 0`,
+and `integral_max` stays 100 because `beta = pidPsetpointWeight = 1` zeroes the
+adjustment term (pid.py:52-66, 377-382). Two independent derivations agree — the
+0:40 row comes from the output hitting its floor, the others from mid-roast
+setpoints.
+
+Pinned near the ceiling with no way to unwind at Ki=0.003, the only thing able to
+reduce output was a large negative P term. **That is why Kp=8.5 appeared to give
+control effort**: with I railed, P was the only actuator left.
+
+**Mirror image of roast 40.** There I ~ 14 and the loop could not push up; here
+I ~ 90 and it could not come down. One root cause: at Ki=0.003 the integrator is
+far too slow to be the operating-point supplier, so it parks wherever history
+left it and P does all the work. This is the strongest argument for the Ki raise.
+
+**Unresolved**: how I reached ~89 by CHARGE+40 s. At Ki=0.003 it cannot have
+accumulated during the roast, so it was inherited — either the PID ran through
+preheat against the background's CHARGE temperature (129.4 degC) while BT was
+still cold, or `Iterm` was seeded on activation. These logs cannot distinguish
+them. Practical consequence either way: **the PID must not be armed before
+CHARGE**; `pidOnCHARGE=true` covers that as long as it is not switched on by
+hand during preheat.
 
 **The outer loop rings.** SV direction reversals over 15 degC: 2:08 (257->185),
 2:09 (185->228), 2:43 (245->123), 3:08 (123->225), 3:36 (225->184), 4:19

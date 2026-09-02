@@ -124,8 +124,14 @@ state-plan.md § Roast 40.
 **Roast 41 (later the same evening, dashboard telemetry only) validated the
 inner loop**: on the SV 150 plateau it tracks to rms 0.3 degC, heat reached 100%
 for 16 s across 9.5 min and never 0, one clean engage/disengage. Every
-limitation seen so far is the outer loop, which rang +/-50-60 degC at a 30-50 s
-period through the charge transient. SV also sat at its 120 degC floor for 19 s
+limitation seen so far is the outer loop. Its fault is **integral windup**:
+solving the loop equation against the real error shows the integral term pinned
+at 83-95 against a one-sided [0, 100] clamp for the whole roast, so BT ran
+*above* target throughout (every milestone early) and only a large negative P
+term could trim it — which is what made Kp=8.5 look like it was helping, and
+what produced the +/-50-60 degC ringing. This is the mirror of roast 40, where
+I ~ 14 and the loop could not push up; one root cause, an integrator far too
+slow at Ki=0.003 to serve as the operating-point supplier. SV also sat at its 120 degC floor for 19 s
 during the charge dip — with the range limit unchecked that would have been
 `INLET 0` and a heat kill mid-roast, so the floor is doing real work. Detail in
 state-plan.md § Roast 41.
