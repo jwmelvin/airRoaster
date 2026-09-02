@@ -108,6 +108,19 @@ boundaries fixed by the operator (2026-09-02):
 and the inner loop is **not retuned** (Kp 1.5 / Ki 0.05 / Kd 0 stand,
 roast-validated).
 
+**First cascade roast: airRoaster_40, 2026-09-02.** The cascade ran correctly —
+the failure was tuning. Replaying the recorded BT error through the PID with the
+as-shipped gains reproduces the measured inlet to within ~5 degC, so the config
+did what it was told. `Ki=0.003` was 10-20x too small: after six minutes the
+integrator had supplied 14 duty of ~60, leaving a P-only loop that needed a
+standing **+17 degC BT deficit** to hold its output, all roast. The reason the
+estimate was wrong is structural — the outer loop's output is an absolute
+setpoint, so the integrator must supply the entire operating point, a job the
+firmware's inner loop gives to `feedforward()` and which Artisan's software PID
+has no term for. New gains: Kp 3.0, Ki 0.02, floor raised 120 -> 170 degC (a
+crude feedforward), `svLookahead` 20 s. Detail and the caveats are in
+state-plan.md § Roast 40.
+
 **Delivered so far**: `artisan/airRoaster_cascadePID.aset`, derived from
 `artisan/airRoaster_inletPoints.aset` (the operator's live config saved
 2026-09-02, which supersedes the repo's older `airRoaster.aset`; their

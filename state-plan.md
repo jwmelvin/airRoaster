@@ -82,7 +82,7 @@ setpoint** that the firmware's existing `MODE_INLET` loop holds.
 ```
 background BT curve (authored in Artisan's Designer)
   -> Artisan software PID (PV = BT, pidCycle 1000 ms)
-  -> duty 0-100% mapped onto the slider-3 subrange [120, 300] degC
+  -> duty 0-100% mapped onto the slider-3 subrange [170, 300] degC
   -> slider 3 action: send({"command":"INLET","value":{}})
   -> firmware controlStep() (250 ms) modulates heat to hold that inlet temp
 ```
@@ -111,8 +111,8 @@ profile following against a background curve.
   setpoint is computed live by the outer loop.
 - Output target = **slider 3** (`pidPositiveTarget=3`), the existing `INLET`
   slider.
-- Setpoint range **120-300 degC via `positiveTargetRangeLimit=true`,
-  `positiveTargetMin=120`, `positiveTargetMax=300`** — see § The floor for why
+- Setpoint range **170-300 degC via `positiveTargetRangeLimit=true`,
+  `positiveTargetMin=170`, `positiveTargetMax=300`** — see § The floor for why
   this, and not `dutyMin`/`dutyMax`.
 - `pidOnCHARGE=true`, `pidOffDROP=true`.
 - **Heat-off at drop needs an Artisan alarm**, not `PID_OFF_action` — see
@@ -139,9 +139,10 @@ because it carries the operator's refined playback/event wiring.
 | `pidSource` | 3 (Inlet) | 1 (BT) |
 | `pidPositiveTarget` | 4 (OT1 heat) | 3 (INLET) |
 | `positiveTargetRangeLimit` | false | true |
-| `positiveTargetMin` / `positiveTargetMax` | 0 / 4 | 120 / 300 |
-| `pidKp` / `pidKi` / `pidKd` | 0.18 / 0.054 / 0.09 | 2.5 / 0.003 / 0 |
-| `pidKp1,2` / `pidKi1,2` / `pidKd1,2` | 27 / 0.018 / 36 | 2.5 / 0.003 / 0 |
+| `positiveTargetMin` / `positiveTargetMax` | 0 / 4 | 170 / 300 |
+| `pidKp` / `pidKi` / `pidKd` | 0.18 / 0.054 / 0.09 | 3.0 / 0.02 / 0 |
+| `pidKp1,2` / `pidKi1,2` / `pidKd1,2` | 27 / 0.018 / 36 | 3.0 / 0.02 / 0 |
+| `svLookahead` | 0 | 20 s |
 | `pidDsetpointWeight` | 1 | 0 (derivative on measurement) |
 | `pidOnCHARGE` / `pidOffDROP` | false / false | true / true |
 
@@ -173,8 +174,8 @@ open, and corrects two earlier assumptions.
    of the integer value"). No 1 degC quantization on the wire — the earlier
    concern about `dutySteps` re-introducing what airRoaster.ino:1141 removed
    does not apply to the *value*. It does bound the update *cadence*: an update
-   is emitted when the duty moves by `dutySteps` (1 duty unit = 1.8 degC over a
-   180 degC span) or the integer slider position changes.
+   is emitted when the duty moves by `dutySteps` (1 duty unit = 1.3 degC over
+   the 130 degC span) or the integer slider position changes.
 4. **Slider action type**: stored `slideractions=18` maps through
    `eventactionx` (`a+2` for `21 > a > 5`) to action 20 = "Artisan Command",
    which is what accepts the `send({...})` form. Unchanged by this work.
@@ -202,19 +203,20 @@ A runaway-heat configuration. (`pid_control.py:1525` separately re-clamps
 domain.)
 
 The correct mechanism is the one Artisan documents for exactly this:
-`positiveTargetRangeLimit=true` with `positiveTargetMin=120`,
+`positiveTargetRangeLimit=true` with `positiveTargetMin=170`,
 `positiveTargetMax=300` — "the duty is mapped to the target slider subrange"
-(`pid_control.py:1211`). Duty 0% -> 120 degC, duty 100% -> 300 degC.
+(`pid_control.py:1211`). Duty 0% -> 170 degC, duty 100% -> 300 degC. (The floor
+was 120 until roast 40; see below.)
 
 **`[Sliders]` is deliberately left alone.** Artisan's own stated assumption is
 `slider_min < positiveTargetMin < positiveTargetMax < slider_max`
 (`pid_control.py:1317`). Slider 3's existing 0-320 satisfies
-`0 < 120 < 300 < 320`. The earlier plan to tighten `slidermax` to 300 would
+`0 < 170 < 300 < 320`. The earlier plan to tighten `slidermax` to 300 would
 violate it — so the 320/300 mismatch against `INLET_SV_MAX_C` stays, and
 remains harmless (the firmware clamps, and the cascade never asks above 300).
 
 Note the floor is a *heating* floor: on a BT overshoot the coolest the cascade
-can ask for is 120 degC inlet. The operator's path below that is to turn the
+can ask for is 170 degC inlet. The operator's path below that is to turn the
 PID off, which is also what `pidOffDROP` does at the drop.
 
 ### Heat-off at drop — already wired, no alarm needed
@@ -296,7 +298,7 @@ with the current gains and sampling rate.
 
 The live config has it **false**, so this is a required change, not a
 convenience. It also surfaces the CONTROL button, which is the operator's
-manual PID on/off — the escape hatch for dropping below the 120 degC floor
+manual PID on/off — the escape hatch for dropping below the floor
 mid-roast. (`PIDbuttonflag` is a different flag, for TC4/Fuji hardware PID
 control; left as-is.)
 
@@ -311,22 +313,85 @@ These are exactly what to re-enable when switching back to the inner-loop
 playback workflow — which is why the two configs stay separate files rather
 than one file with a mode switch.
 
-### Starting gains
+### Roast 40 (2026-09-02) — first cascade run, and the gains it produced
 
-Gains are in **duty units per degC of BT error**, not degC of SV — the mapping
-to degC happens after the PID (`Iterm += Ki * err * dt`, `pid.py:456`). With
-the 120-300 subrange, 1 duty unit = 1.8 degC of inlet SV.
+First live run. `airRoaster_40.alog` (in ~/Documents/artisan) with background
+`artisan/profile_001.alog`. **The cascade ran correctly — the failure was
+tuning, not configuration.** Replaying the recorded BT error through the PID
+with the as-shipped gains reproduces the measured inlet to within ~5 degC for
+the whole roast, which is the proof that the plumbing did what it was told:
 
-Reasoning: a 5 degC BT shortfall wanting roughly 25 degC more inlet is
-~4.5 degC-SV per degC-error, i.e. **Kp = 4.5/1.8 ~ 2.5 duty/degC**. The outer
-integral must be well slower than the inner loop's `Ki = 0.05 1/s`:
-**Ki ~ 0.003**. **Kd = 0** to start. These are estimates to commission from,
-not trusted values.
+| t | err (target-BT) | P | I | sim inlet | measured |
+|---|---|---|---|---|---|
+| 1:30 | +10.9 | 27.3 | 1.5 | 171.9 | 177.0 |
+| 3:00 | +14.0 | 34.9 | 4.8 | 191.5 | 196.2 |
+| 4:30 | +18.6 | 46.5 | 9.3 | 220.4 | 224.2 |
+| 6:00 | +17.0 | 42.5 | **14.2** | 222.0 | 228.5 |
+
+**`Ki = 0.003` was 10-20x too small.** After six minutes the integrator had
+contributed 14 duty out of ~60, so the loop ran on proportional action alone —
+and a P-only loop needs a standing error to produce output. It settled at the
+error required to hold ~228 degC inlet: about **+17 degC of BT deficit for the
+entire roast**. BT never caught the target; DROP came at 8:02 against the
+background's 7:11.
+
+**The structural reason, which the original gain estimate missed:** the outer
+loop's output is an *absolute setpoint*, so the integrator must supply the whole
+operating point (~228 degC of inlet), not merely trim it. The firmware's inner
+loop has `feedforward(sv, fanLevel)` for exactly that job; Artisan's software
+PID has no feedforward term, so Ki has to do all of it. The starting gains were
+sized as if for a trim loop.
+
+Two further readings from the log:
+
+- **Not a plant limit.** The inlet reached 300.2 degC at 7:00, so the 228 degC
+  mid-roast plateau was the commanded setpoint, not the roaster running out of
+  heat.
+- **The loop backed off exactly when it should not.** At TP (0:30) target and
+  actual both read 52.2 degC, so error was ~0, output fell to the floor and the
+  measured inlet dropped to 124 degC. The roast spent the next seven minutes
+  climbing out of that hole. This is the direct argument for raising the floor.
+
+Mid-roast the operator raised `pidKp` to 8.5 and unchecked
+`positiveTargetRangeLimit`. The Kp change is what produced the visible control
+effort (at err ~16 that is 136 duty, saturating to 300 degC) but it was already
+ringing — inlet went 300 -> 189 -> 236 over the following minute. Unchecking the
+range limit is the more serious of the two: it reverts `heat_min` to the
+slider's own minimum of 0, so a low PID output commands `INLET 0`, which the
+firmware reads as *disengage* — manual, heat 0, inner integrator reset. That is
+precisely the hazard § The floor exists to prevent. It did not trigger (output
+never got that low) but it was live for the last 90 s. Both were reverted.
+
+**Gains after roast 40** (in duty units per degC of BT error; with the 170-300
+subrange, 1 duty unit = 1.3 degC of inlet SV):
+
+| | roast 40 | now |
+|---|---|---|
+| `pidKp` | 2.5 (raised to 8.5 mid-roast) | **3.0** |
+| `pidKi` | 0.003 | **0.02** |
+| `positiveTargetMin` | 120 | **170** |
+| `svLookahead` | 0 | **20 s** |
+
+Raising the floor to 170 degC is a crude feedforward: duty 0 becomes a working
+inlet temperature, so the integrator covers ~40 duty instead of ~60 and the TP
+collapse cannot recur. `duty_filter` stays 1 (enabled; it is a boolean,
+`int(dutyFilterFlag.isChecked())`, pid_dialogs.py:1650). `dutyMin`/`dutyMax`
+stay 0/100 — they are duty percentages and are *not* the floor mechanism.
+
+**Caveat on Ki = 0.02**: the replay above is open-loop against the *recorded*
+error. Once the loop actually corrects, the error shrinks and the integral stops
+growing, so overshoot cannot be bounded from this data. 0.02 is a deliberate
+first step, not a computed optimum.
+
+**What the next run needs**: the `.alog` carries no firmware telemetry, so heat
+level and control mode are invisible to this analysis and it cannot be shown
+whether the inner loop ever saturated. Capture a dashboard CSV alongside the
+next roast and run both through `downsample_logs.py`.
 
 ### Commissioning order
 
 1. **Bench, heater cold.** Load `airRoaster_cascadePID.aset`. PID on -> confirm
-   `INLET` traffic on the dashboard, that the commanded value floors at 120 and
+   `INLET` traffic on the dashboard, that the commanded value floors at 170 and
    never reaches 0, that it carries a fraction, and that firmware `mode` reads
    `inlet`. Mark DROP -> confirm the existing button chain sends `INLET 0` and
    the firmware returns to `manual` at heat 0. Confirm no T_inlet playback
