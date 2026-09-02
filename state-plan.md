@@ -538,6 +538,21 @@ loop must climb ~50 duty during the roast. At Ki=0.02 with err ~ +10 that takes
 ~250 s, most of the roast; at 0.04 it is ~125 s. Ki=0.02 was sized for a
 wound-up start, which is no longer the starting condition.
 
+**SV slider / SV buttons** (`svSlider=true`, `svButtons=true`, `svSliderMax`
+316 -> 250; the "SV Slider"/"SV Buttons" checkboxes in the PID dialog,
+pid_dialogs.py:1979-1983). Note **the PID SV is a BT target in this cascade, not
+an inlet temperature** — the PID's *output* is the inlet setpoint. The
+equivalent of the old manual "preheat at inlet 150" is an SV of ~130, not 150.
+The Artisan Command **`pidSV(<n>)`** (main.py:10431) sets it from any event
+button or slider; the existing button 9 ("SV off") already uses `pidSV(0)`.
+
+Both are overridden within ~1 s in Follow Background: canvas.py:4946 recomputes
+the SV every sample and calls `setSV` whenever it differs, so a manual SV only
+sticks in `svMode=0`. For preheat this does not matter — `calcSV` already
+returns the background's CHARGE BT automatically. The slider's real value here
+is as a **live readout of the BT target** (with `svSlider` true, `setSV` moves
+it, pid_control.py:1816-1818), plus a manual escape in Manual SV mode.
+
 **This also removes the reason the floor was raised.** With Ki=0.04 the
 integrator is already near 45 by TP (~25 s of large positive error after CHARGE),
 putting SV near 210 rather than collapsing onto the floor. Adequate integral
