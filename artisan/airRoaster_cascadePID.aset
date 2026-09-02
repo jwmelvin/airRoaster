@@ -373,7 +373,7 @@ xextrabuttonactionstrings=,
 
 [Device]
 ArduinoFILT=70, 70, 70, 70
-Controlbuttonflag=false
+Controlbuttonflag=true
 PIDbuttonflag=true
 YOCTO_async=false, false
 YOCTO_dataRate=256

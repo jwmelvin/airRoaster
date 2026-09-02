@@ -274,6 +274,7 @@ So `airRoaster_cascadePID.aset` additionally sets, outside `[ArduinoPID]`:
 | `specialeventplaybackramp` | `false, false, true, false` | all `false` |
 | `alarmflag` | QVariantList[int] = 1 | 0 (alarm disabled) |
 | `buttonactionstrings[0]` (CHARGE, `[DefaultButtons]`) | `"17,18,19"` | *(empty)* |
+| `Controlbuttonflag` (`[Device]`) | false | **true** |
 
 The CHARGE row is the third playback trigger in the live config: buttons 17-19
 are `playback_time` / `playback_ON` / `playback_ramp`. It was already inert
@@ -281,6 +282,23 @@ there — `buttonactions[0]=0` (None) means `eventactionx` never runs the string
 but leaving the string in place is a trap: setting the action type would
 silently start playback fighting the PID for slider 3. Cleared in the cascade
 config.
+
+### Config > Device > Control must be ticked
+
+`Controlbuttonflag` (Config > Device > "Control") gates the software PID
+itself, not just the visibility of the CONTROL button. `pidOn()`'s software-PID
+branch is `elif self.aw.qmc.Controlbuttonflag:` (pid_control.py:1548), so with
+the flag false `pidOn()` falls through and never activates the PID — meaning
+`pidOnCHARGE` would silently do nothing. Monitor start likewise skips
+`confSoftwarePID(reset=True)` unless `externalPIDControl() == 0 and
+Controlbuttonflag` (canvas.py:12962), so the PID would never even be configured
+with the current gains and sampling rate.
+
+The live config has it **false**, so this is a required change, not a
+convenience. It also surfaces the CONTROL button, which is the operator's
+manual PID on/off — the escape hatch for dropping below the 120 degC floor
+mid-roast. (`PIDbuttonflag` is a different flag, for TC4/Fuji hardware PID
+control; left as-is.)
 
 **CHARGE still arms the outer loop**, without a button action:
 `pidOnCHARGE=true` makes `markCharge` call `pidcontrol.pidOn()` directly
