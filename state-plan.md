@@ -1795,6 +1795,149 @@ size and density; 15-20 batches gives a usable regression and a defensible
 automation rule. That is a data-collection project rather than an analysis one,
 and it is independent of the control work.
 
+### Fan vs batch size: no relationship (2026-09-02)
+
+Scanned every `.alog` in `~/Documents/artisan`, restricted to the current machine
+and to **roast 16 onward** (operator: earlier probe issues). For each roast, the
+fan level held through the roast body (step-interpolated from the Air events,
+sampled 1 Hz from CHARGE to DROP, median).
+
+**First cut was a trap.** Over the unfiltered set the correlation looked real —
+`fan = 0.054*g + 34.7`, r = 0.56. It is entirely a population split: batch
+numbers >= 400 (Jan-Jun 2026, n=127) all sit at **fan 43** with 7-13 minute
+roasts — a different machine/era — while the airRoaster series runs 53-62. Small
+batches happen to be dominated by the former. The correlation is the split, not
+a fan/mass relationship.
+
+**Within the airRoaster, roast 16 onward, there is nothing there.**
+
+| batch size | n | fan level |
+|---|---|---|
+| 250-286 g | 16 | 59.6 +- 1.1 |
+| 345 g | 1 | 60.0 |
+| 400-428 g | 7 | 59.4 +- 1.4 |
+| 450-459 g | 4 | 58.8 +- 0.8 |
+
+```
+n = 29, 161-459 g       fan = -0.0020*g + 60.05      r = -0.15,  r^2 = 0.023
+slope -0.20 +- 0.25 fan units per 100 g  ->  0.8 sigma, indistinguishable from zero
+predicted change across the whole 250-460 g range: -0.4 units, against a
+scatter of +-1.1 units at fixed mass
+```
+
+**The operator's own controlled pair says the same.** Roasts 37 and 38, same
+day, same bean (Panama Elida natural), same intended roast, 450 g against 250 g:
+**fan 58 against 57.** A 200 g difference moved the setting by one unit.
+
+**This is physically the expected answer.** Minimum fluidisation velocity is a
+property of the *particle* — diameter, density, shape — not of the bed mass.
+Charge mass changes bed depth and hence pressure drop, which moves a fixed-duty
+blower along its system curve, but that is a second-order effect and the data
+puts it at about one fan unit over 200 g.
+
+**Consequences.**
+
+- **A fixed fan setting is defensible**, ~59-60 across 228-575 g. That removes
+  the within-roast disturbance entirely, which is the thing that was perturbing
+  the loop, and it costs nothing in stability terms (§ Scheduling: margin runs
+  28-31 deg across the whole fan range).
+- **The within-roast ramp is a different question and has a real basis.** The
+  same roasts start at a mean of 62.0 at charge and settle at 59.4, min 58.5 — a
+  deliberate ~3 unit reduction. That tracks the *bean's* changing density as
+  moisture leaves and the bean expands, which is a within-roast property, not a
+  charge-mass one. If it is kept, making it a smooth repeatable ramp rather than
+  3 s steps is what the loop would prefer.
+- **The screen-size data the operator does not have is not the missing piece.**
+  Mass is not predictive here at all, so no mass-based rule needs the density
+  correction. If bean-to-bean variation matters it will show up as scatter in the
+  fan setting at *fixed* mass, which is presently +-1.1 units — about the
+  resolution of the judgement being made.
+
+### Logging the control effort in one file (operator request 2026-09-02)
+
+The analyses so far have needed the dashboard CSV alongside the `.alog`, aligned
+by cross-correlating `Inlet` against `IN`, because the commanded SV is not in the
+profile. Two routes were checked:
+
+- **Artisan cannot log it as a curve.** The PID source list offers only ET, BT
+  and the extra *device* channels (pid_dialogs.py:1262-1269), and the symbolic
+  expression evaluator's dictionary has no slider or event variable
+  (canvas.py:6740-6870) — so a virtual extra device cannot read slider 3 either.
+  The firmware's Artisan `getData` reply carries `BT`, `ET`, `IN`, `AT` and no
+  SV (airRoaster.ino:1232); `inSV` exists only on the `status` push, which
+  Artisan does not map to a channel. Adding SV to `getData` would be the clean
+  fix and is a firmware change, so out of scope here.
+- **`createEvents=true` does it within Artisan, and is now set.**
+  `setEnergy` passes the flag to `addRawEventSignal` (pid_control.py:1323), and
+  `addEvent_internal` records the slider move into the profile when it is set
+  (main.py:17800-17821). The commanded inlet SV then lands in the `.alog` as
+  **T_inlet events**, in the same file as BT and the background.
+
+Two properties to know: the value recorded is the **integer** slider value
+(`nv = eventsExternal2InternalValue(new_value)`), so ~1 degC resolution on a
+140-300 degC span — the fraction still reaches the wire, it is just not logged;
+and the cadence follows `dutySteps` and `force_duty = 3` (pid.py:210), so an
+event lands every 1-3 s, roughly 200-400 per roast. The profile plot gets busy.
+That is the whole cost, and it makes every future roast self-contained for
+analysis.
+
+### Files for the characterisation runs (2026-09-02)
+
+Both are ordinary background profiles carrying the test's inlet schedule as
+**T_inlet events**, so they serve as an on-screen guide. Precise timing is *not*
+required — the identification uses the recorded SV as its input, so hand-driving
+slider 3 is adequate. (They can also drive slider 3 automatically via event
+playback, but that fights the PID for the same slider, so only with the PID off
+and playback deliberately enabled — see § Background event playback must be off.)
+
+| file | test | schedule |
+|---|---|---|
+| `artisan/charstep_empty.alog` | **A** - empty roaster, no beans | inlet 145 -> 185 at 2:00 -> 145 at 5:00 -> 185 at 7:00 -> 145 at 10:00 |
+| `artisan/chardoublet_loaded.alog` | **B** - loaded doublet, one sacrificial batch | roast 45's own commanded SV replayed, with **+30 degC over 3:00-4:00 and -30 degC over 4:00-5:00** |
+
+**Procedure, both tests: the PID must be OFF.** Press ON, load the file as
+background, do *not* press CHARGE (which would arm `pidOnCHARGE`), press START to
+record, and drive slider 3 to follow the guide curve. Test B is run as a normal
+charge with the PID left off throughout, so the whole roast is open-loop on the
+replayed schedule plus the doublet.
+
+**Why a doublet rather than a step for Test B**: its net energy is ~zero, so the
+batch lands near where it would have; and a 60 s half-period places the peak
+excitation near a 240 s period, inside the loop's 250-330 s crossover band.
+
+Test C is Test B repeated at fan 58 and fan 65, which measures the fan
+sensitivity that is currently one weakly-identified regression coefficient.
+
+### The lookahead-switching config (2026-09-02)
+
+`artisan/airRoaster_cascadePID_lookahead.aset` — the canonical config plus the
+runtime lookahead switch from § Scheduling. **A separate file deliberately**:
+it is an experiment and should not ride along with the `pidKi` and profile_003
+changes on the next roast.
+
+Two new event buttons (indices 21 and 22, user-facing **22** and **23**), action
+20 = Artisan Command, hidden, recording no event:
+
+| button | command |
+|---|---|
+| 22 | `pidLookahead(0)` |
+| 23 | `pidLookahead(6)` |
+
+and two new alarms, both **time-only from CHARGE** (`alarmsource = -3`, so the
+temperature branch never evaluates and the OR'd conditions cannot misfire),
+action **2** = press an event button, whose `alarmstrings` entry is the
+**1-based** button number (canvas.py:5969-5986):
+
+```
+alarm 3: From CHARGE, offset  1 s, source -3 -> button 22 -> pidLookahead(0)
+alarm 4: From CHARGE, offset 90 s, source -3 -> button 23 -> pidLookahead(6)
+```
+
+So the dip runs at lookahead 0 — no manufactured error, no SV floor at turning
+point (§ profile_003) — and the ramp gets 6 s of feedforward, which costs no
+phase margin. 90 s is past turning point and where the background RoR has fallen
+enough that the switch is a ~+3.5 degC target step rather than +4.6.
+
 ### Commissioning order
 
 0. **Every roast: press ON (zeroes the integrator), turn the PID on, preheat
