@@ -151,6 +151,17 @@ during the charge dip — with the range limit unchecked that would have been
 `INLET 0` and a heat kill mid-roast, so the floor is doing real work. Detail in
 state-plan.md § Roast 41.
 
+**Roast 42 (2026-09-02, retuned config + PID-driven preheat): the cascade
+works.** Outer integrator settles at 53-65 and stays, carrying the operating
+point while P trims within +/-5 duty; tracking error +1.6 ... -0.9 degC from
+3:00 on; inner loop rms 2.9 degC; heat never saturated (max 91%); SV touched the
+140 floor for 8 s in the charge dip and never approached the ceiling. The
+PID-driven preheat landed at CHARGE_BT 129.7 against a 129.4 target. The one
+remaining offset is `svLookahead=20`, which makes the roast run 20 s ahead by
+construction (DRYe 2:36 vs 3:00) — a spec error, not tuning; it should come down
+to ~0 now that the cascade is known to be tight. Detail in state-plan.md
+§ Roast 42.
+
 **Delivered so far**: `artisan/airRoaster_cascadePID.aset`, derived from
 `artisan/airRoaster_inletPoints.aset` (the operator's live config saved
 2026-09-02, which supersedes the repo's older `airRoaster.aset`; their

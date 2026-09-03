@@ -558,6 +558,44 @@ integrator is already near 45 by TP (~25 s of large positive error after CHARGE)
 putting SV near 210 rather than collapsing onto the floor. Adequate integral
 action, not a high floor, is what carries the loop through turning point.
 
+### Roast 42 (2026-09-02, 20:09) — the retune works
+
+First run of the retuned config (`.alog` confirms `pidKp=3.0`, `pidKi=0.04`,
+`svLookahead=20` loaded) with a PID-driven preheat. Every failure mode from
+roasts 40 and 41 is resolved.
+
+| | roast 40 | roast 41 | roast 42 |
+|---|---|---|---|
+| outer integral | ~14 (stuck low) | ~90 (railed) | **53-65, settled** |
+| tracking error | +17 degC standing | -3 with railed I | **+1.6 ... -0.9** |
+| inner-loop rms | - | 8.5 degC | **2.9 degC** |
+| heat at 100% | - | 16 s | **0 s** (max 91%) |
+| SV reversals >15 degC | - | 12+, +/-50-60 degC | **4**, all in the charge dip |
+| rails | floor 19 s | floor 19 s | **floor 8 s**, ceiling never (max 276.9) |
+
+The integrator settles at 53-65 and stays there, carrying the operating point
+while P trims within +/-5 duty — exactly the intended division of labour. The
+PID-driven preheat landed too: **CHARGE_BT 129.7** against the 129.4 target
+(§ PID-driven preheat predicted the loop would settle near inlet 148; it settled
+near 153, still trending down at CHARGE).
+
+**Remaining offset is the lookahead, and it is a spec error not a tuning one.**
+The roast ran ahead — DRYe 2:36 vs the background's 3:00, DROP 6:21 vs 7:11 —
+yet the error against the *lookahead-shifted* target is ~0 from 3:00 onward
+(+1.6, +2.6, +1.7, +1.3, +0.3, -0.2, -0.9). `svLookahead=20` targets where the
+profile will be in 20 s, so `BT(t) ~ profile(t+20)`: **the roast runs 20 s ahead
+by construction**, and on a curve rising ~15 degC/min that is also ~+5 degC of
+target at any instant.
+
+Lookahead exists to cancel plant lag. 20 s was chosen before the cascade's
+tightness was known; with the inner loop at rms 2.9 degC the effective lag is
+near zero, so the lead became a pure time advance. To land on the background's
+timeline, `svLookahead` should come down to ~0 (5-10 if some lead is wanted at
+the steepest post-TP RoR).
+
+Unchanged: `FF` still railed at 100 with the inner integrator at -40 to -50
+cancelling it (§ Roast 41, separate finding).
+
 ### Commissioning order
 
 0. **Every roast: press ON (zeroes the integrator), turn the PID on, preheat
