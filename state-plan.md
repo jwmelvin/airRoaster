@@ -1643,16 +1643,42 @@ each saved profile. profile_003 has to be loaded as background per session.
 
 #### 1. Gain scheduling / partitioning
 
-**Error-keyed gains are not expressible in Artisan.** `getParameter` evaluates
-the schedule at `self.target if self.gain_scheduling_on_SV else PV` (pid.py:399)
-— SV or PV, never the error. Nor can gains be set at runtime: the complete list
-of `pid*` Artisan Commands is `pidmode`, `pidDerivativeFilter`,
-`pidDerivativeLimit`, `pidILF`, `pidIWP`, `pidIRoC`, `pidSVbuttons`,
-`pidWeights`, `pidSVC`, `pidSV`, `pidRS`, `pidSource`, `pidLookahead`
-(main.py:9926-10547) — **there is no `pidKp`/`pidKi`/`pidKd` command**. So gains
-can only vary through the built-in SV/PV schedule.
+**Artisan's *built-in* gain scheduling cannot key on error**: `getParameter`
+evaluates the schedule at `self.target if self.gain_scheduling_on_SV else PV`
+(pid.py:399) — SV or PV, never the error.
 
-**And the loop does not need one.** Recomputed against the corrected plant
+> **Correction (operator, from the Artisan help).** An earlier version of this
+> section claimed there is no command to set the gains at runtime. That was
+> wrong — it came from grepping only for command names beginning with `pid`.
+> **`p-i-d(<p>,<i>,<d>)` exists** (main.py:10370). For any device that is not
+> Fuji/Delta it falls through to `self.pidcontrol.confPID(kp,ki,kd)`
+> (main.py:10402), whose last branch — `elif self.aw.qmc.Controlbuttonflag:`
+> (pid_control.py:1951) — calls `self.aw.qmc.pid.setPID(kp,ki,kd)` and updates
+> `pidKp`/`pidKi`/`pidKd`. This is a WebSocket device with `Controlbuttonflag`
+> ticked, so **it reaches the software PID.**
+
+So gains *can* be changed mid-roast, from an event button or an alarm-triggered
+button, and keyed on **time, BT, ET or DeltaBT** through the alarm conditions —
+a superset of the built-in schedule, which only fits a line or parabola in SV/PV.
+
+Four properties of `p-i-d()` worth knowing before using it:
+
+- **It is bumpless in the integrator.** `setPID` (pid.py:571-581) only assigns
+  `Kp`/`Ki`/`Kd` (each clamped to `max(x, 0)`, so no negative gains); `Iterm` is
+  untouched. Changing `Ki` therefore has *no* instantaneous effect at all, only
+  on the rate of climb. Changing `Kp` steps the output by `dKp * err` — at a
+  1 degC error, Kp 3 -> 1.5 moves the SV by 2.4 degC. Small.
+- **It does not call `confSoftwarePID()`**, so filters, IWP, ILF, `Dlimit` and
+  the gain-schedule sets are left alone. `confPID` does re-apply
+  `setLimits(0, 100)`, which is already the running value.
+- **It writes only the base gains**, not `pidKp1/Ki1/Kd1` or the `2` set. If gain
+  scheduling were ever enabled, `p-i-d()` would move only the `Schedule0` anchor.
+- **It is sticky.** The values land on `self.pidcontrol.pidKp/Ki/Kd`, so a
+  **Save Settings after a roast writes whatever the last alarm set** into the
+  `.aset`. An alarm-driven Ki change silently becomes the new default. Same class
+  of trap as the profile stamping settings at save time (§ Correction).
+
+**But the loop still does not need varying gains.** Recomputed against the corrected plant
 (theta 17 s), the fan is the only thing that moves the plant materially through a
 roast — refitting with theta fixed at 17 gives `a = 0.00288 + 0.01168*(fan-60)/60`,
 a 1.55x bandwidth range over the fan settings actually used. The margin barely
@@ -1664,7 +1690,9 @@ notices:
 | phase margin at Ki 0.07 | 28 deg | 29 deg | 30 deg | 31 deg |
 | Ki that would hold PM = 30 deg | 0.066 | 0.068 | 0.070 | **0.074** |
 
-A **+-6% gain trim** across the whole operating range is not worth a schedule.
+A **+-6% gain trim** across the whole operating range is not worth scheduling,
+by either mechanism. The capability is now known to exist; the case for using it
+on the *gains* still does not.
 The reason it is so flat: the plant is nearly integrating in the crossover band
 (tau 260-400 s against a 250-330 s oscillation period), so a change in tau moves
 gain and phase in compensating directions. **The earlier enthusiasm for a Ki
@@ -1684,8 +1712,8 @@ whenever the output clamps. Both are live via `pidIWP=true`. That *is*
 error-keyed windup management; there is nothing to add. `pidIRoC` keys on
 per-sample *setpoint change*, not error, and cannot reach its threshold here.
 
-**But one thing in this family is available, and it is the right one:
-`pidLookahead(<n>)` sets `svLookahead` at runtime** (main.py:10547, gated on
+**The switching that is worth doing is the lookahead, not the gains.**
+`pidLookahead(<n>)` sets `svLookahead` at runtime (main.py:10547, gated on
 `Controlbuttonflag`, which the cascade requires anyway). That resolves the
 profile_003 trade instead of compromising it: lookahead is *harmful* at the dip
 (manufactured error, SV on the floor at TP) and *helpful* on the ramp, and it is
@@ -1697,8 +1725,11 @@ CHARGE button action (buttonactions[0], currently empty) -> a button with pidLoo
 alarm: From CHARGE, offset ~90 s, source -3 (time only)  -> a button with pidLookahead(6)
 ```
 
-Also runtime-settable the same way if ever wanted: `pidILF`, `pidIWP`,
-`pidIRoC`, `pidDerivativeLimit`, `pidDerivativeFilter`, `pidWeights(beta,gamma)`.
+Also runtime-settable the same way if ever wanted: `p-i-d(p,i,d)`, `pidILF`,
+`pidIWP`, `pidIRoC`, `pidDerivativeLimit`, `pidDerivativeFilter`,
+`pidWeights(beta,gamma)`. One good use for `p-i-d()` that is *not* scheduling:
+a panic button carrying a known-safe gain set, for the characterisation runs
+below.
 
 Cautions: alarm time and temperature conditions are **OR'd** (§ Auto-DROP
 detection), so a time-only alarm needs source -3 and the temperature row left
