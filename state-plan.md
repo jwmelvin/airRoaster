@@ -1859,6 +1859,12 @@ The analyses so far have needed the dashboard CSV alongside the `.alog`, aligned
 by cross-correlating `Inlet` against `IN`, because the commanded SV is not in the
 profile. Two routes were checked:
 
+> **Superseded 2026-09-02** once firmware came into scope: **v0.19.0 adds `SV`
+> and `HT` to the Artisan `getData` reply**, so the commanded inlet setpoint and
+> the applied heat duty are logged as 1 Hz *curves* at full resolution. See
+> § Firmware now in scope below. `createEvents` stays on as the fallback until
+> the device is flashed, and can be turned off afterwards.
+
 - **Artisan cannot log it as a curve.** The PID source list offers only ET, BT
   and the extra *device* channels (pid_dialogs.py:1262-1269), and the symbolic
   expression evaluator's dictionary has no slider or event variable
@@ -1937,6 +1943,90 @@ So the dip runs at lookahead 0 — no manufactured error, no SV floor at turning
 point (§ profile_003) — and the ramp gets 6 s of feedforward, which costs no
 phase margin. 90 s is past turning point and where the background RoR has fallen
 enough that the switch is a ~+3.5 degC target step rather than +4.6.
+
+### Firmware now in scope (operator 2026-09-02)
+
+The firmware constraint is lifted. Reassessing what firmware can actually do for
+the outer loop, in order of confidence.
+
+#### Measured first: how much of the 17 s is the probe?
+
+If the BT probe were slow, its lag would be inside the loop and a firmware lead
+filter would recover margin directly. It is not the main term. From the **dump
+transient** — at DROP the beans leave in about a second and the probe is suddenly
+in air alone, which is the closest thing to a step this machine offers:
+
+| roast | 41 | 43 | 44 | 45 |
+|---|---|---|---|---|
+| max \|dBT/dt\| after the dump | -68.4 | -26.3 | -43.5 | -56.1 degC/s |
+
+For a first-order probe the initial rate is `dT/tau_p`, and with a ~150 degC
+excursion those rates imply **tau_p ~ 2-6 s**. (The 63% times, 28-45 s, are much
+longer but meaningless here — the chamber air is cooling too, so the probe is
+tracking a moving target rather than a step.) The inlet thermocouple on the same
+event gives a comparable 5-6 s.
+
+**So roughly 2-6 s of the ~17 s is instrumentation and the remaining 11-15 s is
+genuine process** — air-to-bean heat transfer and bed mixing. A firmware lead
+filter on BT would buy a few seconds at the cost of amplifying noise, and is
+**not worth doing**. The step test should confirm this before it is dismissed
+for good.
+
+#### Done: v0.19.0 — `SV` and `HT` in `getData`
+
+```c
+"{\"id\":%s,\"data\":{\"BT\":%.1f,\"ET\":%.1f,\"IN\":%.1f,\"AT\":%.1f,"
+"\"SV\":%.1f,\"HT\":%u}}"
+```
+
+`SV` is `inletSV` (0 outside `MODE_INLET`), `HT` is `heatLevel`. Buffer 128 ->
+192. Purely additive — Artisan ignores nodes it is not configured for and no
+control path is touched. Compile-verified.
+
+Artisan side, already applied to both `.aset` files:
+`channel_nodes = BT, ET, IN, AT, SV, HT, ...` and
+`channel_modes = 1, 1, 1, 1, 1, 0, ...` (mode 0 marks a non-temperature, which
+is what `HT` is — canvas.py:12750 reads it as `extraNoneTempHint`). **The
+remaining step is manual**: add a further WebSocket extra device in Config >
+Device > Extra Devices so channels 5 and 6 become curves. The device id is not
+guessed here because a wrong one silently mis-maps a curve.
+
+This retires the dashboard-CSV cross-correlation that every analysis in this
+document has depended on, and beats `createEvents` (integer degC, 200-400 events
+a roast). Turn `createEvents` off once the device is flashed.
+
+#### The one big idea, gated on the characterisation runs
+
+**Publish a *predicted* BT as an extra channel and point the PID at it.** The
+loop is deadtime-limited — margin ~30 deg at Ki 0.07 solely because of theta —
+and a Smith predictor is the standard answer. It does **not** require moving the
+outer loop into firmware: the firmware can run the identified model forward from
+the measured inlet and publish `BTP`, and Artisan's `pidSource` can select that
+extra channel instead of BT (the PID input list offers exactly the extra device
+channels, pid_dialogs.py:1262-1269). The loop then sees a fraction of the
+deadtime and Ki could rise several-fold at the same margin.
+
+Two conditions before attempting it:
+
+1. **Trustworthy theta, tau and gain.** The current values come from a flat ridge
+   (§ Scheduling) and are not good enough to predict with. Run Tests A and B
+   first.
+2. **A bound on the correction.** Clamp `|BTP - BT|` to something like 10 degC so
+   a diverging model degrades to plain BT rather than running the roaster open
+   loop on a wrong prediction.
+
+**Not worth doing: moving the outer loop into firmware.** The only reason would
+be to enable the predictor, and the channel route achieves that without it. The
+1 Hz WebSocket link is not a limitation — 1 s against 17 s of deadtime — and the
+background curve authoring belongs in Artisan's Designer.
+
+#### Still wanted, independent of the control problem
+
+**Instrument the dump lever** (already noted in § Auto-DROP detection): expose it
+as an extra channel and alarm on it, turning DROP from an RoR-collapse inference
+into a measured event. The RoR margin is currently ample but roast-dependent
+(-10.4 to +5.4 across the armed windows seen so far), and DROP drives the whole
+heat-off chain.
 
 ### Commissioning order
 

@@ -23,7 +23,7 @@
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.18.0"
+#define FW_VERSION  "0.19.0"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -1227,10 +1227,17 @@ bool handleArtisanRequest(uint8_t clientNum, const String& msg) {
     // AT is the ambient temperature per the selected AMB source — map it to an
     // extra WebSocket channel and pick that channel in Artisan's Config >
     // Device > Ambient tab (sampled at CHARGE into Roast Properties).
-    char buf[128];
+    // SV and HT carry the control effort: the commanded inlet setpoint (the
+    // outer loop's output in a cascade) and the heat duty actually applied.
+    // Mapping them to extra channels puts the loop's input and output in the
+    // same .alog as BT, so a roast is self-contained for analysis. Artisan
+    // ignores nodes it is not configured for, so this is additive.
+    char buf[192];
     snprintf(buf, sizeof(buf),
-             "{\"id\":%s,\"data\":{\"BT\":%.1f,\"ET\":%.1f,\"IN\":%.1f,\"AT\":%.1f}}",
-             idStr, btTemp, etTemp, inTemp, ambientNowC());
+             "{\"id\":%s,\"data\":{\"BT\":%.1f,\"ET\":%.1f,\"IN\":%.1f,\"AT\":%.1f,"
+             "\"SV\":%.1f,\"HT\":%u}}",
+             idStr, btTemp, etTemp, inTemp, ambientNowC(),
+             (ctrlMode == MODE_INLET ? inletSV : 0.0f), heatLevel);
     webSocket.sendTXT(clientNum, buf);
     return true;
 }
@@ -2801,6 +2808,17 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.19.0 2026-09-02  Artisan getData gains SV and HT: the commanded inlet
+//                     setpoint (0 when not in MODE_INLET) and the applied heat
+//                     duty. Map them to spare WebSocket channels so the outer
+//                     loop's output and the inner loop's effort land in the
+//                     .alog beside BT — previously the commanded SV existed
+//                     only in the dashboard CSV and had to be time-aligned by
+//                     cross-correlation, or in the profile as 1 degC-quantised
+//                     T_inlet events via Artisan's createEvents. Response
+//                     buffer 128 -> 192 for the two added fields. Additive:
+//                     Artisan ignores nodes it is not configured for, and no
+//                     control path is touched.
 // v0.18.0 2026-07-10  WebSocket command authentication (AUTH). Connect-time
 //                     challenge–response sessions: the device pushes a random
 //                     nonce ("auth" push) to each new client; the client
