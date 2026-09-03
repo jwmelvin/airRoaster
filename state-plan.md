@@ -718,6 +718,271 @@ Note the two easily-confused pairs: the **Duty Clamp Max/Min (100/0 %)** are dut
 percentages — the original `dutyMin=120` error — while the actual degC floor is
 the **Output Limit Min/Max (140/300)**. And with `kd=0`, DoM / gamma /
 derivative filter / Dlimit are all inert.
+### Roast 44 outer-loop analysis — the droop is integrator-rate-limited (2026-09-02)
+
+**Method.** The outer loop is reconstructed from the two logs.
+`airRoaster_44.alog` gives BT and the CHARGE index; `profile_002.alog` gives the
+target (CHARGE-aligned, as `timealign` does it, canvas.py:5706-5721 — note it
+shifts `timeB` in whole seconds); the firmware CSV gives the commanded `SV`,
+which is the PID's output: `duty = (SV - 140) / 1.6`. The CSV is charge-aligned
+by cross-correlating its `IN` column against the alog's `Inlet` extra channel —
+best offset `roastepoch + 120.5 s`, residual rms 0.96 degC, i.e. `roastepoch` is
+the *recording* start and CHARGE sits 119-121 s into it. Then `P = Kp*err` and
+`I = duty - P`.
+
+**1. The integrator never settles.** It climbs monotonically for the whole
+roast — nothing in roast 44 is a steady state:
+
+| t | 1:15 | 2:00 | 2:45 | 3:30 | 4:15 | 5:15 | 6:00 | 6:45 |
+|---|---|---|---|---|---|---|---|---|
+| err (degC) | +1.2 | +4.3 | +4.2 | +4.1 | +3.8 | +3.2 | +2.4 | +1.8 |
+| Iterm (duty) | 21 | 33 | 45 | 53 | 60 | 65 | 68 | 70 |
+
+`dI/dt` runs 0.10-0.19 duty/s and `e = (dI/dt)/Ki` holds to within 0.2 degC at
+every point. **This is the signature of a type-1 loop tracking a ramp**: the
+operating point the plant demands keeps rising, only the integrator can supply
+it, and the integrator only climbs by integrating error. The error *is* the fuel.
+
+**2. The controlling relation.** Fitting roast 44's body (1:10-6:45) gives a
+first-order plant `dBT/dt = 0.0145*(Inlet - BT) - 0.68 + w(t)`, i.e. **tau =
+69 s**, with `w(t)` the smoothed residual standing in for drying/exotherm/fan.
+Inverting it, the duty required to hold a BT ramp of rate `R` is
+`u_req = (BT + 69*R - 93)/1.6`, so
+
+```
+du_req/dt = (R + 69*dR/dt) / 1.6          and          e_ss = (du_req/dt) / Ki
+```
+
+`Kp does not appear.` Sweeping Kp 2 -> 6 at fixed Ki moves the droop by less
+than 0.3 degC while SV ripple goes 1.6 -> 3.4 degC. **Proportional gain cannot
+fix this error; only Ki or feedforward can.**
+
+**3. The "12 s lag" is not a lag.** Because `du_req/dt` is proportional to `R`,
+the ratio `e/R` is nearly RoR-independent — which is what produced the
+near-constant 12 s in the handoff table. But it decomposes as
+`(du_req/dBT)/Ki = 0.505/0.04 = 12.6 s`: **it is one over the integrator rate,
+not a transport delay.** The real delays in the loop are small and measurable:
+
+| stage | measured |
+|---|---|
+| inner loop (Inlet vs commanded SV, 1:00-6:45) | best fit **1 s**, rms **0.7 degC** |
+| BT smoothing (`curvefilter=3`, weights 1:2:3, canvas.py:4720-4738) | 0.67 s |
+| `pid.update()` at canvas.py:4778 runs *before* the SV update at canvas.py:4946 | 1 s |
+| plant transport delay (open-loop replay best fit) | **0 s** (2 s already doubles the residual) |
+
+Under 3 s of genuine lag against 12-15 s of apparent lag. The inner loop is
+confirmed a non-factor for the third time.
+
+**4. A validated simulator.** Artisan's `PID.update()` was reimplemented
+faithfully (PoE, conditional integration, back-calculation, `[0, 100*ILF]`
+integral limits, the 0.35 Hz first-order duty filter, the 1-sample target
+ordering, decay-averaged PV) and run against the fitted plant.
+
+```
+open-loop replay (measured SV -> BT):        mean -0.42  rms 0.59  max -1.40 degC
+closed-loop replay (Kp 3, Ki 0.04, L 0):     mean -0.13  rms 0.33  max -1.32 degC
+```
+
+Every number below is from that simulator. It reproduces roast 44 to a third of
+a degree, so differences of a degree between tunings are meaningful.
+
+#### The mechanism the earlier notes missed: back-calculation anti-windup
+
+`_back_calculate_integral` (pid.py:330-348) runs on **every clamped cycle**
+whenever `pidIWP` is on — it is not part of the conditional-integration logic
+already recorded, it is a second, separate anti-windup:
+
+```python
+if abs(output_before_clamp - output_after_clamp) > 0.001:
+    excess = output_before_clamp - output_after_clamp
+    self.Iterm -= excess * self.back_calculation_factor   # factor = 0.5, hard-coded
+    self.Iterm = self.applyIntegralLimits(PV, self.Iterm)
+```
+
+At the **low** clamp `excess` is negative, so `Iterm` is driven **up**. The
+recursion `I <- 0.5*I + 0.5*(-Pterm)` converges geometrically on
+`Iterm = -Pterm = Kp*|err|` (capped at `100*ILF`), halving the residual each
+second. Three consequences, all confirmed against roast 44:
+
+- **The charge dip re-seeds the integrator** to `Kp * |worst dip error|`. Roast
+  44: worst dip error -8.4 degC, `3 * 8.4 = 25`, measured `Iterm` at 0:45 was
+  **24.6**. This is why the loop recovers as well as it does after turning point.
+- **Whatever the preheat left in `Iterm` is forgotten** within a few seconds of
+  the floor (half per second). Simulating handovers of `Iterm` = 0, 3, 7, 15 and
+  30 gives *bit-identical* roasts. The ON-button procedure (§ Roast 41) still
+  matters — it protects the **preheat**, where a wound-up integrator rails the
+  SV and lands the wrong CHARGE_BT — but it does not reach into the roast body.
+- **It is what makes a large `svLookahead` dangerous** (below). This, not the
+  DROP-window truncation, is the binding constraint on lookahead.
+
+#### 1. Proposal, inside the current simple-PID structure
+
+| key | now | proposed | why |
+|---|---|---|---|
+| `pidKp` | 3.0 | **3.0** unchanged | absent from `e_ss`; raising it only adds ripple |
+| `pidKi` | 0.04 | **0.10** | `e_ss = (du_req/dt)/Ki`; 2.5x the integrator rate cuts the droop 2.5x |
+| `pidKd` | 0 | **0** unchanged | see below |
+| `svLookahead` | 0 | **3** | ramp feedforward; free in stability terms |
+| `pidIlimitFactor` | 1.0 | **1.0** unchanged | `Iterm` must reach ~70; anything below 0.75 clips the operating point |
+| `pidIWP` | on | **on** unchanged | the charge-dip re-seed above depends on it |
+| `duty_filter` | 1 | **1** unchanged | measured effect on tracking: 0.00 degC; keep for wire noise |
+| `dutySteps` | 1 | **1** unchanged | the value is fractional; this only sets cadence, and `force_duty=3` (pid.py:210) already guarantees an update every 3 s |
+| `sv_filter` | 0 | **0** unchanged | the background is a Designer curve, already smooth; it would cost 1.33 s of the lookahead |
+| `pidDlimit` | 500 | **500** unchanged | inert at `Kd=0`; note it limits `derror` in **degC/s**, before multiplication by Kd (pid.py:275-277), so 500 is effectively infinite against a BT RoR of ~1 degC/s |
+
+Predicted against `profile_002` (target DRYe 3:20, DROP 6:51):
+
+| | roast 44 as run | proposed |
+|---|---|---|
+| tracking error, 2:00-6:50 | mean **+3.42**, rms 3.51 | mean **+0.62**, rms 0.79 |
+| worst error after 1:15 | +4.50 | +1.68 / -0.18 |
+| DRYe | 3:33 *(measured 3:24)* | **3:22** |
+| DROP | 7:13 *(measured 7:04)* | **6:54** |
+| SV max / ripple | 253.8 / 2.1 | 254.2 / 2.7 |
+
+**Is more Ki the right lever for velocity lag?** Yes — it is the *only* lever
+inside a plain PID, because `e_ss = (du_req/dt)/Ki` and neither Kp nor Kd
+appears in it. Sweep at `L=0`:
+
+| `pidKi` | 0.04 | 0.06 | 0.08 | 0.10 | 0.12 | 0.16 | 0.24 |
+|---|---|---|---|---|---|---|---|
+| mean error (degC) | +3.42 | +2.46 | +1.88 | +1.50 | +1.23 | +0.90 | +0.60 |
+| rms | 3.51 | 2.63 | 2.07 | 1.69 | 1.41 | 1.05 | 0.71 |
+| rms at +10 s deadtime | 3.53 | 2.60 | 2.02 | 1.65 | 1.49 | 2.07 | **8.02** |
+| SV ripple at +10 s deadtime | 3.1 | 3.7 | 4.4 | 5.3 | 6.8 | 11.7 | **43.1** |
+
+Pure-Ki tuning is monotone and never overshoots — the residual is one-sided all
+the way to Ki 0.24. What it costs is **stability margin**: the plant's measured
+deadtime is ~0 s, but batch size, bean moisture and fan setting all move the
+plant, so the +10 s column is the margin being spent. Ki 0.10 keeps a factor of
+two in hand; 0.24 does not.
+
+**What it costs on the charge transient: nothing.** This is the useful surprise.
+Through the dip the output is on its floor with a negative error, and
+`_should_integrate` (pid.py:301-316) blocks Ki-driven integration in exactly
+that case (`output_before_clamp < outMin and error < 0`), while back-calculation
+takes over and drives `Iterm` to `Kp*|err|` — a path with **no Ki in it**. The
+simulated handover value only moves from 20.1 (Ki 0.04) to 22.8 (Ki 0.10), and
+floor time from 19 s to 26 s. The BT 128 -> 64 plunge is absorbed by the floor,
+not by the integrator.
+
+**`svLookahead` as ramp feedforward.** With lead `L` the target becomes
+`tgt(t) + L*R`, so the standing error is cancelled when `L = e_ss/R =
+(du_req/dBT)/Ki` — the same 12.6 s, and *RoR-independent*, which is why one
+constant works across the whole curve. Lookahead is **pure feedforward: it
+changes the reference, not the loop gain, so it costs no stability margin at
+all.** That makes the handoff's "natural value is the loop's own lag (~12 s)"
+arithmetically right and operationally wrong, for a reason that only shows up
+in the source:
+
+| `svLookahead` | 0 | 2 | 3 | **4** | 5 | 6 | 9 | 12 |
+|---|---|---|---|---|---|---|---|---|
+| worst charge-dip error (degC) | -10.0 | -11.2 | -15.9 | -20.4 | -24.7 | -28.7 | -39.7 | -49.4 |
+| `Iterm` handed to the roast | 20.1 | 17.3 | 16.4 | 22.8 | **33.3** | **43.6** | **60.8** | **70.3** |
+| worst *early* error, 1:15 on | +3.11 | +2.15 | +1.68 | -1.60 | **-4.61** | -8.3 | -13.8 | -19.8 |
+
+The background falls at up to **5.5 degC/s** through the charge dip, so every
+second of lead adds ~4 degC to the dip error, back-calculation converts that
+into integrator preload, and past `L=4` the roast starts with the integrator
+already near its mid-roast value and **overshoots the profile by 5-20 degC in
+the first two minutes**. `L=3` sits below the cliff with margin; `L=4` is the
+best single number on paper (mean +0.31, rms 0.48) but is one second from it.
+**Take 3.**
+
+The truncation cost the handoff asked about is real but negligible at this
+value. `calcSV` returns `None` once `tx + svLookahead > timeB[timeindexB[6]]`
+(pid_control.py:1750), i.e. at 6:48 for a 6:51 background DROP, and canvas.py:4946
+only calls `setSV` when `sv is not None`, so **the target simply freezes at its
+last value — which is `tgt(6:48 + 3) = tgt(6:51) = 201.2 degC, the profile's DROP
+BT.** The loop spends its last ~5 s holding exactly the right final target. At
+`L=12` the freeze would start at 6:39 with 25 s to coast; even that is benign
+for the same reason. The lookahead cliff, not the window, is what caps `L`.
+
+**Why derivative is not useful here.**
+
+- **DoM (`gamma=0`, current).** `_calculate_derivative` (pid.py:264-274) computes
+  `derror = ((gamma*SP - PV) - (gamma*lastSP - lastPV))/dt`, which at `gamma=0`
+  is `-dPV/dt = -RoR`. On a rising PV that is a **constant brake proportional to
+  the ramp**: at RoR 16 degC/min and Artisan's default `Kd=20` it is -5.3 duty
+  = -8.5 degC of inlet, held all roast, which the integrator must cancel — so it
+  *raises* `du_req` and makes the velocity error worse, not better. The
+  simulator does show `Kd=20` DoM improving rms 0.79 -> 0.44, but the improvement
+  comes entirely from a larger charge-dip preload (I0 16.4 -> 26.4), not from D's
+  action, and with 0.35 degC of BT noise the SV ripple goes 2.8 -> 6.0 and mean
+  |dSV| triples. Not a trade worth making.
+- **DoE (`gamma=1`).** `derror` becomes `d(err)/dt`, which is **zero in steady
+  ramp-following** — D contributes nothing to the standing error by
+  construction. It is genuine damping, and it does buy margin: at Ki 0.24 with
+  10 s of deadtime, `Kd=30` DoE turns rms 7.84 (oscillating, ripple 43) into rms
+  0.47. But it also differentiates BT noise, and at `Kd=20` DoE the charge dip
+  preloads `Iterm` to 63.9 and the roast undershoots by 8.6 degC. **D is the
+  right tool only if you want Ki above ~0.15, and lookahead gets the same
+  tracking without it.** Keep `Kd=0`.
+
+#### 2. Artisan's other control options, and the alternative strategy
+
+Every row checked in source; the middle column is the question the brief asks —
+does it address **ramp-following lag specifically**.
+
+| option | addresses ramp lag? | finding |
+|---|---|---|
+| **Gain scheduling** (`pidGainScheduling`, `...SV`, `...Quadratic`, `pidSchedule0/1/2`, Kp/Ki/Kd sets 1 and 2) | **yes, indirectly** | `getParameter` (pid.py:387-404) fits a line through `(Schedule0, Kp)` and `(Schedule1, Kp1)` — the *base* gains are the value at `Schedule0` — evaluates it at `self.target` when `pidGainSchedulingSV` (the default), and clamps to `[min, max]` of the two. Since `e_ss = (du_req/dt)/Ki` and `du_req/dt` is not constant over the roast, a Ki schedule can flatten the error where a single Ki cannot. Simulated, `Ki 0.18 @ SV 130 -> 0.06 @ SV 200` gives mean **+0.23**, rms **0.31**, max +0.54, min -0.57 — better than any flat Ki. The reverse slope is worse (rms 1.37), so the direction matters. **Gotcha: one schedule serves all three gains**, so `pidKp1` must be set equal to `pidKp` and `pidKd1` to `pidKd` or Kp and Kd get scheduled too. |
+| **PoE/PoM, `beta`** (`pidPsetpointWeight`) | **no** | `Pterm = Kp*(beta*SP - PV)`. `beta < 1` leaves a standing `Kp*(beta-1)*SP` offset — at `beta=0.9` and SP 130 that is **-39 duty** the integrator must cancel — and `applyIntegralLimits` (pid.py:377-382) only partly compensates by raising the integral ceiling. It changes the offset, never the velocity error. **Must stay 1.0.** |
+| **DoE/DoM, `gamma`** (`pidDsetpointWeight`) | **no** | Inert at `Kd=0`; see above for both settings. |
+| **`pidDlimit`, `derivative_filter`** | **no** | Inert at `Kd=0`. `Dlimit` clamps `derror` in degC/s **before** the Kd multiply (pid.py:275-277) — 500 is unreachable. `derivative_filter` is a boolean, not a level: `_calculate_derivative` only tests `> 0`, and the filter is a fixed 0.1 Hz first-order lowpass (pid.py:657-661). |
+| **`pidIRoC` + `pidIRoCthreshold`** | **no, and it would misfire** | `_handle_setpoint_change_integral` (pid.py:318-328) compares the **per-sample** target change, not a cumulative one. The background's largest per-sample step is **5.48 degC** (in the charge dip), so at threshold 30 it can never fire — the setting is inert, correctly. Lowering the threshold to reach it would zero `Iterm` in the middle of the charge dip, destroying the useful re-seed. Leave off. |
+| **`pidIlimitFactor` (ILF)** | **no** | Caps `Iterm` at `100*ILF` (pid.py:52-70). `Iterm` legitimately reaches ~70 mid-roast, so anything below ~0.75 would clip the operating point and reintroduce roast 40's standing deficit. It is a safety cap, not a tuning knob. Keep 1.0. |
+| **`pidIWP`** | **no, but load-bearing** | Two mechanisms in one flag: conditional integration *and* back-calculation. Turning it off drains `Iterm` to 0 through the charge dip (simulated I0 = 0.0) and costs 1.6 degC of early tracking. **Keep on.** |
+| **`sv_filter` / `duty_filter`** | **no** | `smooth_sv` (pid_control.py:1690-1702) is a 5-tap decay average = **1.33 s of group delay on the target**, i.e. it subtracts 1.33 s from the effective lookahead. `duty_filter` is a 0.35 Hz first-order lowpass on P+I+D, ~0.25 s — measurably nil (rms 0.48 either way). Useful only as a way to blunt the charge dip if a larger lookahead were ever wanted. |
+| **Ramp/Soak (`svMode=1`)** vs Follow Background | **no** | `svRampSoak` (pid_control.py:1640-1685) is 8 linear ramp/soak segments starting from `source_reading_pidON`. Same type-1 loop, same velocity error, and it loses charge alignment, the Designer curve's shape, and any representation of the charge dip. Its only structural advantage — no DROP-bounded control window — is worth nothing at `L=3`. **Stay on Follow Background.** |
+| **Outer loop on BT RoR** | would remove it, but **not reachable in configuration** | `getCurveNames` (pid_dialogs.py:1262-1269) populates the Input list with ET, BT and the *extra device channel names* only — delta/RoR curves are not offered, and `canvas.py:4762-4777` reads `pidSource` from the raw channel arrays. Controlling RoR needs the firmware to publish RoR as an extra channel (out of scope), plus an RoR background curve for `backgroundXTat`. And on its own it is the wrong control: zero *rate* error leaves BT *position* free to drift, so it would need a BT trim on top — a three-level cascade. Not now. |
+
+**Recommended strategy: keep the structure, take the two changes above, then a
+Ki gain schedule as a second step.**
+
+The cascade's architecture is not the problem — a validated simulator says the
+existing structure reaches mean +0.6 degC and DRYe within 2 s of the profile
+with two number changes. Nothing in the alternatives justifies restructuring.
+The one option that beats a flat retune is gain scheduling on Ki, and it is a
+refinement of the same loop, not a replacement.
+
+*Step one (one roast).* `pidKi = 0.10`, `svLookahead = 3`, everything else
+untouched.
+
+*Step two, only if step one validates and the residual still bothers.*
+`pidGainScheduling=true`, `pidGainSchedulingSV=true`,
+`pidGainSchedulingQuadratic=false`, `pidSchedule0=130`, `pidSchedule1=200`,
+`pidKi=0.18`, `pidKi1=0.06`, **`pidKp1=3.0`**, **`pidKd1=0`**.
+
+**Risks.** (1) Ki 0.10 spends stability margin: the failure mode is SV ringing
+with a 30-60 s period, as in roast 41 — visible immediately in the SV trace, and
+the CONTROL button is the escape. (2) `svLookahead` is 1 s from a cliff; if the
+background's charge dip is ever re-authored steeper, re-check the table above
+before keeping 3. (3) The simulator's plant is fitted to *one* roast at one batch
+size; ±25% plant gain, ±30% tau, +10 s deadtime and 1.0 degC of BT noise were all
+tested and the proposal holds (worst case mean +0.72, rms 0.94, max +4.60), but a
+much smaller or larger charge is outside that envelope.
+
+**How to validate in a single roast.** Same procedure as roast 44 — ON, PID on,
+PID-driven preheat, CHARGE, no intervention — with the dashboard CSV captured
+alongside the `.alog` (the CSV is what carries `SV`; without it the outer loop
+cannot be reconstructed). Then check, in order:
+
+1. **DRYe within ~5 s of 3:20 and DROP within ~5 s of 6:51.** These are the
+   headline numbers; roast 44 was +4 s and +13 s.
+2. **Tracking error under +1.5 degC from 2:00 on**, and *not* one-sided —
+   if it is still monotone positive, Ki is still short.
+3. **`Iterm` reaching ~70 by 6:45 but flattening**, from `I = (SV-140)/1.6 - 3*err`.
+   Still climbing linearly at DROP means the loop never caught up.
+4. **`Iterm` at 0:45 near 16** (`Kp * |worst dip error|` at `L=3`). Much above 30
+   means the lookahead cliff was hit and the early roast will overshoot.
+5. **No SV direction reversal over 15 degC after 2:00.** That is the Ki-too-high
+   signature.
+6. Inner loop unchanged: heat below 100%, tracking rms of a few degC.
+
+Failure responses, in order of preference: overshoot early -> `svLookahead` to 2;
+ringing -> `pidKi` to 0.07; still droopy and one-sided -> `pidKi` to 0.13 before
+touching anything else.
 
 ### Commissioning order
 

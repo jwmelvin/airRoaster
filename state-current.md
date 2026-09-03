@@ -162,15 +162,48 @@ construction (DRYe 2:36 vs 3:00) — a spec error, not tuning; it should come do
 to ~0 now that the cascade is known to be tight. Detail in state-plan.md
 § Roast 42.
 
-**Roast 44 (2026-09-02) is the clean validation run and the phase is
+**Roast 44 (2026-09-02) is the clean validation run and the cascade is
 functionally complete.** Config loaded from file, PID-driven preheat, no
 intervention: CHARGE_BT 128.3 against a 127.8 target, DRYe 3:23 vs the
 profile's 3:20, DROP 7:03 vs 6:51 at BT 200.7 vs 201.2, tracking error
 converging +4.0 -> +1.7 degC. The auto-DROP alarm fired (operator-confirmed in
-roast 43; roast 44 shows the same signature). Residual is a small positive
-droop, still shrinking at DROP — no change made, watch it over a few roasts
-before touching Ki. Control settings verified field-by-field against the PID
-dialog. Detail in state-plan.md § Roast 44.
+roast 43; roast 44 shows the same signature). Control settings verified
+field-by-field against the PID dialog. Detail in state-plan.md § Roast 44.
+
+**The residual droop is now diagnosed, and there is a proposal on the table
+(2026-09-02).** Reconstructing the outer loop from roast 44 (`.alog` + the
+firmware CSV, charge-aligned by cross-correlating Inlet against IN) shows the
+integrator **never settles** — it climbs monotonically 21 -> 70 duty at
+~0.135 duty/s for the whole roast. That is a type-1 loop tracking a ramp:
+`e_ss = (du_req/dt) / Ki`, in which **Kp does not appear at all**. The handoff's
+"~12 s of velocity lag" is not a lag; it decomposes as `(du_req/dBT)/Ki =
+0.505/0.04 = 12.6 s`, one over the integrator rate. Genuine loop delay is under
+3 s in total (inner loop 1 s / rms 0.7 degC, BT smoothing 0.67 s, the
+canvas.py:4778-before-4946 ordering 1 s, plant transport delay ~0).
+
+A faithful reimplementation of `PID.update()` against a plant fitted to roast 44
+(`dBT/dt = 0.0145*(Inlet-BT) - 0.68 + w(t)`, tau 69 s) reproduces the roast to
+**rms 0.33 degC**, so tuning options are now testable rather than arguable.
+**Proposal: `pidKi` 0.04 -> 0.10 and `svLookahead` 0 -> 3; nothing else.**
+Predicted mean tracking error +3.4 -> +0.6 degC, DRYe 3:22 and DROP 6:54 against
+a 3:20 / 6:51 profile. Not yet run on the roaster — this is the next roast.
+
+**A source mechanism the earlier notes missed underpins all of it**:
+`_back_calculate_integral` (pid.py:330-348) runs on every clamped cycle whenever
+`pidIWP` is on, and at the *low* clamp it drives `Iterm` **up**, converging
+geometrically (half per second) on `Kp*|err|`. So the charge dip re-seeds the
+integrator to `Kp * |worst dip error|` (roast 44: 3 x 8.4 = 25 against a measured
+24.6), whatever the preheat left is forgotten within seconds of the floor, and
+**raising Ki costs nothing on the charge transient** — the dip runs on a path
+with no Ki in it. The same mechanism is why `svLookahead` cannot go to the
+"natural" 12 s: the background falls at 5.5 degC/s through the dip, so each
+second of lead adds ~4 degC to the dip error and hence to the preload, and past
+`L=4` the roast starts wound up and overshoots by 5-20 degC in the first two
+minutes. The DROP-window truncation the handoff worried about is the *lesser*
+constraint. Full analysis, the option-by-option review of Artisan's other
+control modes (gain scheduling, beta/gamma, Dlimit, IRoC, ILF, Ramp/Soak,
+sv/duty filters, BT-RoR control) and the single-roast validation checklist are
+in state-plan.md § Roast 44 outer-loop analysis.
 
 **Canonical config is `artisan/airRoaster_cascadePID.aset`** (one file; the
 brief `_edit` variant used while adding the alarms was folded back in and
