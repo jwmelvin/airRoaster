@@ -167,7 +167,7 @@ open, and corrects two earlier assumptions.
 
 1. **`pidSource` numbering is 1=BT, 2=ET, >2=extra curves** with
    `n = pidSource-3`, `c = n//2`, even `n` = channel A / odd = channel B
-   (`pid_control.py:1447`). So BT is **1**, not 2. The earlier inference of
+   (`pid_control.py:1432`). So BT is **1**, not 2. The earlier inference of
    1=ET/2=BT was backwards. The identification of `pidSource=3` as extra1A
    ("Inlet") was right, since extras start at 3 either way.
 2. **The PID output is a duty in [0,100] that is linearly mapped onto the
@@ -201,25 +201,25 @@ chatter: a full inner-loop reset plus a heat kill, once per tick. The output
 must therefore be structurally unable to reach 0.
 
 **`dutyMin=120` was the wrong mechanism and would have been dangerous.**
-`dutyMin`/`dutyMax` are *duty percentages*, not degC: `pid.py:490` clamps
+`dutyMin`/`dutyMax` are *duty percentages*, not degC: `pid.py:473` clamps
 `final_output = min(dutyMax, max(dutyMin, output))` where `output` is already
 bounded by `outMin=0`/`outMax=100`. Setting `dutyMin=120` would pin
 `final_output` at 120 every cycle, and `numpy.interp(120, [0,100], ...)` clamps
 above the input range and returns `heat_max` — i.e. **the inlet setpoint would
 sit at its maximum permanently, with the outer loop having no effect at all.**
-A runaway-heat configuration. (`pid_control.py:1525` separately re-clamps
+A runaway-heat configuration. (`pid_control.py:1502` separately re-clamps
 `dutyMin/Max` into 0-100 on the ArduinoTC4 path, confirming the intended
 domain.)
 
 The correct mechanism is the one Artisan documents for exactly this:
 `positiveTargetRangeLimit=true` with `positiveTargetMin=140`,
 `positiveTargetMax=300` — "the duty is mapped to the target slider subrange"
-(`pid_control.py:1211`). Duty 0% -> 140 degC, duty 100% -> 300 degC. (120 until
+(`pid_control.py:1196`). Duty 0% -> 140 degC, duty 100% -> 300 degC. (120 until
 roast 40, briefly 170, then 140 to allow a PID-driven preheat; see below.)
 
 **`[Sliders]` is deliberately left alone.** Artisan's own stated assumption is
 `slider_min < positiveTargetMin < positiveTargetMax < slider_max`
-(`pid_control.py:1317`). Slider 3's existing 0-320 satisfies
+(`pid_control.py:1302`). Slider 3's existing 0-320 satisfies
 `0 < 140 < 300 < 320`. The earlier plan to tighten `slidermax` to 300 would
 violate it — so the 320/300 mismatch against `INLET_SV_MAX_C` stays, and
 remains harmless (the firmware clamps, and the cascade never asks above 300).
@@ -233,7 +233,7 @@ PID off, which is also what `pidOffDROP` does at the drop.
 **This is already configured in `airRoaster_inletPoints.aset`** and needs no new
 work. `buttonactions=0,0,0,0,0,0,20,0` with
 `buttonactionstrings[6]="16,15,11"`: index 6 is DROP (canvas.py `markDrop` calls
-`eventactionx(self.buttonactions[6], ...)` at canvas.py:15130), and stored 20
+`eventactionx(self.buttonactions[6], ...)` at canvas.py:15542), and stored 20
 maps through `eventactionx` to action 3 = Multiple Event, which presses extra
 event buttons 16, 15 and 11:
 
@@ -247,17 +247,17 @@ event buttons 16, 15 and 11:
 `requestedHeatLevel = 0`, `applyInterlock()`.
 
 **The ordering against `pidOffDROP` is safe.** In `markDrop`,
-`pidcontrol.pidOff()` runs at canvas.py:15012, *before* the button action at
-canvas.py:15130 — so the PID is already stopped when `INLET 0` is sent and
+`pidcontrol.pidOff()` runs at canvas.py:15424, *before* the button action at
+canvas.py:15542 — so the PID is already stopped when `INLET 0` is sent and
 cannot re-command a setpoint afterwards. (CHARGE mirrors this: `pidOn()` at
-canvas.py:14206 precedes `eventactionx(buttonactions[0])`.)
+canvas.py:14656 precedes `eventactionx(buttonactions[0])`.)
 
 **An earlier draft of this plan was wrong twice here** and both errors are
 retracted: first that `PID_OFF_action` could carry `INLET 0` (it fires only for
-external MODBUS/S7 PID control, `pid_control.py:1570-1580`; this is a WebSocket
+external MODBUS/S7 PID control, `pid_control.py:1538-1545`; this is a WebSocket
 device so `externalPIDControl()` returns 0), and then that an Artisan **alarm**
 should send the WebSocket command instead — alarm actions have their own
-numbering that tops out at 25 (`canvas.py:5928-6110`: 0=popup, 2=event button,
+numbering that tops out at 25 (`canvas.py:6153-6335`: 0=popup, 2=event button,
 3-6=sliders, 13=DROP, 22=Playback ON, 23=Playback OFF, 24/25=canvas colour) and
 include **no** WebSocket or Artisan Command action at all. An alarm could only
 have reached the firmware indirectly via action 2 (press an event button). None
@@ -298,11 +298,11 @@ config.
 
 `Controlbuttonflag` (Config > Device > "Control") gates the software PID
 itself, not just the visibility of the CONTROL button. `pidOn()`'s software-PID
-branch is `elif self.aw.qmc.Controlbuttonflag:` (pid_control.py:1548), so with
+branch is `elif self.aw.qmc.Controlbuttonflag:` (pid_control.py:1519), so with
 the flag false `pidOn()` falls through and never activates the PID — meaning
 `pidOnCHARGE` would silently do nothing. Monitor start likewise skips
 `confSoftwarePID(reset=True)` unless `externalPIDControl() == 0 and
-Controlbuttonflag` (canvas.py:12962), so the PID would never even be configured
+Controlbuttonflag` (canvas.py:13438), so the PID would never even be configured
 with the current gains and sampling rate.
 
 The live config has it **false**, so this is a required change, not a
@@ -313,8 +313,8 @@ control; left as-is.)
 
 **CHARGE still arms the outer loop**, without a button action:
 `pidOnCHARGE=true` makes `markCharge` call `pidcontrol.pidOn()` directly
-(canvas.py:14206), before any button action runs — mirroring `pidOffDROP` at
-canvas.py:15012. This is also the moment the charge-aligned background SV curve
+(canvas.py:14656), before any button action runs — mirroring `pidOffDROP` at
+canvas.py:15424. This is also the moment the charge-aligned background SV curve
 becomes meaningful. The remaining `[DefaultButtons]` rows (DRY, FCs, FCe, SCs,
 SCe, COOL) are all action 0 with empty strings and need nothing.
 
@@ -384,7 +384,7 @@ subrange, 1 duty unit = 1.3 degC of inlet SV):
 Raising the floor to 170 degC is a crude feedforward: duty 0 becomes a working
 inlet temperature, so the integrator covers ~40 duty instead of ~60 and the TP
 collapse cannot recur. `duty_filter` stays 1 (enabled; it is a boolean,
-`int(dutyFilterFlag.isChecked())`, pid_dialogs.py:1650). `dutyMin`/`dutyMax`
+`int(dutyFilterFlag.isChecked())`, pid_dialogs.py:1639). `dutyMin`/`dutyMax`
 stay 0/100 — they are duty percentages and are *not* the floor mechanism.
 
 **Caveat on Ki = 0.02**: the replay above is open-loop against the *recorded*
@@ -435,7 +435,7 @@ recovers the integral term:
 The integrator sat at **83-95 the whole roast**, against a clamp of **[0, 100]**:
 `_calculate_integral_limits` sets `integral_min = 0.0` whenever `outMin >= 0`,
 and `integral_max` stays 100 because `beta = pidPsetpointWeight = 1` zeroes the
-adjustment term (pid.py:52-66, 377-382). Two independent derivations agree — the
+adjustment term (pid.py:43-57, 377-382). Two independent derivations agree — the
 0:40 row comes from the output hitting its floor, the others from mid-roast
 setpoints.
 
@@ -452,23 +452,23 @@ left it and P does all the work. This is the strongest argument for the Ki raise
 preheat): Artisan's software PID keeps integrating while switched off.** Three
 source facts in a chain:
 
-1. The target keeps updating when inactive. `canvas.py:4946` gates on
+1. The target keeps updating when inactive. `canvas.py:5184` gates on
    `(pidActive and svMode == 1) or svMode == 2` — comment: *"in BackgroundFollow
    mode we update the SV even if not active, just we do not move the SV
    slider."* This config is `svMode=2`.
 2. `update()` integrates unconditionally. Pterm, Iterm, clamping and
    `final_output` are all computed before the only `if self.active:` guard,
-   which merely gates dispatching the output to the slider (pid.py:497-500).
+   which merely gates dispatching the output to the slider (pid.py:480-483).
 3. `on()` deliberately does not reset: *"we keep the PID running always, even if
    inactive, and do not disturb it with an init on switching it active"*
-   (pid.py:355).
+   (pid.py:338).
 
 So through the manual preheat the PID silently integrated against the
 background's CHARGE temperature (129.4 degC) while BT was still cold.
 
 **Why it parks near 90 instead of running away.** `pidIWP=true` gives
 conditional integration: integration stops once the *unclamped* output exceeds
-`outMax` (pid.py:313). Iterm therefore rises until `P + I ~ 100`, i.e.
+`outMax` (pid.py:296). Iterm therefore rises until `P + I ~ 100`, i.e.
 `I ~ 100 - Kp*err` — about 89 at err ~ +1.3 with Kp=8.5. The integrator fills
 quickly through saturation and drains only at `Ki*err`: at Ki=0.003 with
 err ~ -3 that is 0.009/s, roughly three hours to unwind. **That asymmetry —
@@ -476,9 +476,9 @@ fast fill, glacial drain — is the actual defect**, and it is a further argumen
 for the Ki raise.
 
 **The only thing that clears Iterm** is `confSoftwarePID(reset=True)` ->
-`pid.reset()` -> `init()` -> `Iterm = 0.0` (pid_control.py:1487, pid.py:515,
+`pid.reset()` -> `init()` -> `Iterm = 0.0` (pid_control.py:1472, pid.py:498,
 532). That is called from exactly one place: **monitor start, the ON button**
-(canvas.py:12962). `pidOn()` calls `confSoftwarePID()` with the default
+(canvas.py:13438). `pidOn()` calls `confSoftwarePID()` with the default
 `reset=False`, so arming the PID does *not* clear it; neither does DROP, RESET,
 nor loading a settings file. Iterm therefore persists across roasts for the
 whole Artisan session.
@@ -523,7 +523,7 @@ rather than driving the slider by hand, so the integrator always reflects a
 closed loop instead of accumulating with its output disconnected.
 
 Artisan supplies the preheat target automatically: before CHARGE, `calcSV`
-returns the background profile's **CHARGE BT** (pid_control.py:1731-1740) —
+returns the background profile's **CHARGE BT** (pid_control.py:1687-1740) —
 129.4 degC for `profile_001.alog`. No "default temperature" setting is needed.
 
 The operator's manual 150 degC preheat was already calibrated to almost exactly
@@ -549,18 +549,18 @@ wound-up start, which is no longer the starting condition.
 
 **SV slider / SV buttons** (`svSlider=true`, `svButtons=true`, `svSliderMax`
 316 -> 250; the "SV Slider"/"SV Buttons" checkboxes in the PID dialog,
-pid_dialogs.py:1979-1983). Note **the PID SV is a BT target in this cascade, not
+pid_dialogs.py:1968-1972). Note **the PID SV is a BT target in this cascade, not
 an inlet temperature** — the PID's *output* is the inlet setpoint. The
 equivalent of the old manual "preheat at inlet 150" is an SV of ~130, not 150.
-The Artisan Command **`pidSV(<n>)`** (main.py:10431) sets it from any event
+The Artisan Command **`pidSV(<n>)`** (main.py:10820) sets it from any event
 button or slider; the existing button 9 ("SV off") already uses `pidSV(0)`.
 
-Both are overridden within ~1 s in Follow Background: canvas.py:4946 recomputes
+Both are overridden within ~1 s in Follow Background: canvas.py:5184 recomputes
 the SV every sample and calls `setSV` whenever it differs, so a manual SV only
 sticks in `svMode=0`. For preheat this does not matter — `calcSV` already
 returns the background's CHARGE BT automatically. The slider's real value here
 is as a **live readout of the BT target** (with `svSlider` true, `setSV` moves
-it, pid_control.py:1816-1818), plus a manual escape in Manual SV mode.
+it, pid_control.py:1769-1771), plus a manual escape in Manual SV mode.
 
 **This also removes the reason the floor was raised.** With Ki=0.04 the
 integrator is already near 45 by TP (~25 s of large positive error after CHARGE),
@@ -620,7 +620,7 @@ loop and `buttonactions[6]` sends `INLET 0` — so a missed DROP leaves the heat
 running. The operator wants it detected from the lever pull, which is plainly
 visible in the traces (BT falls, RoR plummets).
 
-**Artisan's built-in auto-DROP cannot do it.** `canvas.py:4913-4915` gates the
+**Artisan's built-in auto-DROP cannot do it.** `canvas.py:5151-5153` gates the
 BT-break detector on `(sample_timex[-1] - sample_timex[timeindex[0]]) > 7*60` —
 **auto-DROP cannot fire until 7:00 after CHARGE**, and these roasts drop at
 6:20-6:31. `7*60` is a literal, so the Standard/Sensitive `autoDropMode` switch
@@ -628,9 +628,9 @@ is never consulted. (For the record, at 1 s sampling Sensitive only changes
 `d_drop` from -0.34 to 0.00; `offset_drop` is identical at 0.2.)
 
 **The background path is a scheduled drop, not detection.** `playbackdrop()`
-(canvas.py:6120-6131) has a 4-minute gate (`playbackdrop_min_roasttime = 4*60`)
+(canvas.py:6345-6356) has a 4-minute gate (`playbackdrop_min_roasttime = 4*60`)
 and its own flag `backgroundPlaybackDROP`, independent of event playback
-(canvas.py:5146) — so it could be enabled without reintroducing the slider
+(canvas.py:5384) — so it could be enabled without reintroducing the slider
 conflict, via the Artisan Command `playbackdropmode(<n>)` (0 off, 1 by time,
 2 by BT, 3 by ET). But it fires on the profile's schedule: by BT it needs the
 background's DROP BT to sit *below* where the operator actually pulls (roast 42
@@ -638,7 +638,7 @@ peaked at 201.0 against a 202.0 background DROP, so it would never have fired),
 and by time it fires at the profile's DROP regardless of the lever. Left off.
 
 **The solution: an alarm on the RoR collapse.** Alarm action 13 = DROP
-(canvas.py:6035-6038) with no time gate. Threshold sized from the traces
+(canvas.py:6260-6263) with no time gate. Threshold sized from the traces
 (10 s RoR span, degC/min):
 
 | | roast 41 | roast 42 |
@@ -660,7 +660,7 @@ alarm 2: ON   From=DRY END  offset=0s  Source=DeltaBT      below  -25  -> DROP
 ```
 
 **`Time` must be 00:00.** The alarm's time and temperature conditions are OR'd,
-not AND'd — `if alarm_time >= alarmoffset: alarm_ready = True` (canvas.py:5048)
+not AND'd — `if alarm_time >= alarmoffset: alarm_ready = True` (canvas.py:5286)
 and the temperature block each set the flag independently. A non-zero offset
 makes the alarm fire on the clock alone, ignoring the RoR entirely.
 
@@ -722,7 +722,7 @@ derivative filter / Dlimit are all inert.
 
 **Method.** The outer loop is reconstructed from the two logs.
 `airRoaster_44.alog` gives BT and the CHARGE index; `profile_002.alog` gives the
-target (CHARGE-aligned, as `timealign` does it, canvas.py:5706-5721 — note it
+target (CHARGE-aligned, as `timealign` does it, canvas.py:5931-5946 — note it
 shifts `timeB` in whole seconds); the firmware CSV gives the commanded `SV`,
 which is the PID's output: `duty = (SV - 140) / 1.6`. The CSV is charge-aligned
 by cross-correlating its `IN` column against the alog's `Inlet` extra channel —
@@ -766,8 +766,8 @@ not a transport delay.** The real delays in the loop are small and measurable:
 | stage | measured |
 |---|---|
 | inner loop (Inlet vs commanded SV, 1:00-6:45) | best fit **1 s**, rms **0.7 degC** |
-| BT smoothing (`curvefilter=3`, weights 1:2:3, canvas.py:4720-4738) | 0.67 s |
-| `pid.update()` at canvas.py:4778 runs *before* the SV update at canvas.py:4946 | 1 s |
+| BT smoothing (`curvefilter=3`, weights 1:2:3, canvas.py:4958-4976) | 0.67 s |
+| `pid.update()` at canvas.py:5016 runs *before* the SV update at canvas.py:5184 | 1 s |
 | plant transport delay (open-loop replay best fit) | **0 s** (2 s already doubles the residual) |
 
 Under 3 s of genuine lag against 12-15 s of apparent lag. The inner loop is
@@ -796,7 +796,7 @@ a degree, so differences of a degree between tunings are meaningful.
 
 #### The mechanism the earlier notes missed: back-calculation anti-windup
 
-`_back_calculate_integral` (pid.py:330-348) runs on **every clamped cycle**
+`_back_calculate_integral` (pid.py:314-333) runs on **every clamped cycle**
 whenever `pidIWP` is on — it is not part of the conditional-integration logic
 already recorded, it is a second, separate anti-windup:
 
@@ -834,9 +834,9 @@ second. Three consequences, all confirmed against roast 44:
 | `pidIlimitFactor` | 1.0 | **1.0** unchanged | `Iterm` must reach ~70; anything below 0.75 clips the operating point |
 | `pidIWP` | on | **on** unchanged | the charge-dip re-seed above depends on it |
 | `duty_filter` | 1 | **1** unchanged | measured effect on tracking: 0.00 degC; keep for wire noise |
-| `dutySteps` | 1 | **1** unchanged | the value is fractional; this only sets cadence, and `force_duty=3` (pid.py:210) already guarantees an update every 3 s |
+| `dutySteps` | 1 | **1** unchanged | the value is fractional; this only sets cadence, and `force_duty=3` (pid.py:197) already guarantees an update every 3 s |
 | `sv_filter` | 0 | **0** unchanged | the background is a Designer curve, already smooth; it would cost 1.33 s of the lookahead |
-| `pidDlimit` | 500 | **500** unchanged | inert at `Kd=0`; note it limits `derror` in **degC/s**, before multiplication by Kd (pid.py:275-277), so 500 is effectively infinite against a BT RoR of ~1 degC/s |
+| `pidDlimit` | 500 | **500** unchanged | inert at `Kd=0`; note it limits `derror` in **degC/s**, before multiplication by Kd (pid.py:265-267), so 500 is effectively infinite against a BT RoR of ~1 degC/s |
 
 Predicted against `profile_002` (target DRYe 3:20, DROP 6:51):
 
@@ -867,7 +867,7 @@ two in hand; 0.24 does not.
 
 **What it costs on the charge transient: nothing.** This is the useful surprise.
 Through the dip the output is on its floor with a negative error, and
-`_should_integrate` (pid.py:301-316) blocks Ki-driven integration in exactly
+`_should_integrate` (pid.py:286) blocks Ki-driven integration in exactly
 that case (`output_before_clamp < outMin and error < 0`), while back-calculation
 takes over and drives `Iterm` to `Kp*|err|` — a path with **no Ki in it**. The
 simulated handover value only moves from 20.1 (Ki 0.04) to 22.8 (Ki 0.10), and
@@ -899,7 +899,7 @@ best single number on paper (mean +0.31, rms 0.48) but is one second from it.
 
 The truncation cost the handoff asked about is real but negligible at this
 value. `calcSV` returns `None` once `tx + svLookahead > timeB[timeindexB[6]]`
-(pid_control.py:1750), i.e. at 6:48 for a 6:51 background DROP, and canvas.py:4946
+(pid_control.py:1703), i.e. at 6:48 for a 6:51 background DROP, and canvas.py:5184
 only calls `setSV` when `sv is not None`, so **the target simply freezes at its
 last value — which is `tgt(6:48 + 3) = tgt(6:51) = 201.2 degC, the profile's DROP
 BT.** The loop spends its last ~5 s holding exactly the right final target. At
@@ -908,7 +908,7 @@ for the same reason. The lookahead cliff, not the window, is what caps `L`.
 
 **Why derivative is not useful here.**
 
-- **DoM (`gamma=0`, current).** `_calculate_derivative` (pid.py:264-274) computes
+- **DoM (`gamma=0`, current).** `_calculate_derivative` (pid.py:249-259) computes
   `derror = ((gamma*SP - PV) - (gamma*lastSP - lastPV))/dt`, which at `gamma=0`
   is `-dPV/dt = -RoR`. On a rising PV that is a **constant brake proportional to
   the ramp**: at RoR 16 degC/min and Artisan's default `Kd=20` it is -5.3 duty
@@ -934,16 +934,16 @@ does it address **ramp-following lag specifically**.
 
 | option | addresses ramp lag? | finding |
 |---|---|---|
-| **Gain scheduling** (`pidGainScheduling`, `...SV`, `...Quadratic`, `pidSchedule0/1/2`, Kp/Ki/Kd sets 1 and 2) | **yes, indirectly** | `getParameter` (pid.py:387-404) fits a line through `(Schedule0, Kp)` and `(Schedule1, Kp1)` — the *base* gains are the value at `Schedule0` — evaluates it at `self.target` when `pidGainSchedulingSV` (the default), and clamps to `[min, max]` of the two. Since `e_ss = (du_req/dt)/Ki` and `du_req/dt` is not constant over the roast, a Ki schedule can flatten the error where a single Ki cannot. Simulated, `Ki 0.18 @ SV 130 -> 0.06 @ SV 200` gives mean **+0.23**, rms **0.31**, max +0.54, min -0.57 — better than any flat Ki. The reverse slope is worse (rms 1.37), so the direction matters. **Gotcha: one schedule serves all three gains**, so `pidKp1` must be set equal to `pidKp` and `pidKd1` to `pidKd` or Kp and Kd get scheduled too. |
+| **Gain scheduling** (`pidGainScheduling`, `...SV`, `...Quadratic`, `pidSchedule0/1/2`, Kp/Ki/Kd sets 1 and 2) | **yes, indirectly** | `getParameter` (pid.py:370-387) fits a line through `(Schedule0, Kp)` and `(Schedule1, Kp1)` — the *base* gains are the value at `Schedule0` — evaluates it at `self.target` when `pidGainSchedulingSV` (the default), and clamps to `[min, max]` of the two. Since `e_ss = (du_req/dt)/Ki` and `du_req/dt` is not constant over the roast, a Ki schedule can flatten the error where a single Ki cannot. Simulated, `Ki 0.18 @ SV 130 -> 0.06 @ SV 200` gives mean **+0.23**, rms **0.31**, max +0.54, min -0.57 — better than any flat Ki. The reverse slope is worse (rms 1.37), so the direction matters. **Gotcha: one schedule serves all three gains**, so `pidKp1` must be set equal to `pidKp` and `pidKd1` to `pidKd` or Kp and Kd get scheduled too. |
 | **PoE/PoM, `beta`** (`pidPsetpointWeight`) | **yes — and the wrong way** | `Pterm = Kp*(beta*SP - PV)`. Correcting the first version of this row: beta does *not* merely shift the offset, it enters the velocity error directly as `e_ss = [du_req/dt + Kp*(1-beta)*R] / Ki`, so **any beta below 1 makes ramp lag worse**, and beta above 1 — the direction that would help — is blocked by the integral limits. Derivation, sweep and source in § Proportional on Measurement below. **Must stay 1.0.** |
 | **DoE/DoM, `gamma`** (`pidDsetpointWeight`) | **no** | Inert at `Kd=0`; see above for both settings. |
-| **`pidDlimit`, `derivative_filter`** | **no** | Inert at `Kd=0`. `Dlimit` clamps `derror` in degC/s **before** the Kd multiply (pid.py:275-277) — 500 is unreachable. `derivative_filter` is a boolean, not a level: `_calculate_derivative` only tests `> 0`, and the filter is a fixed 0.1 Hz first-order lowpass (pid.py:657-661). |
-| **`pidIRoC` + `pidIRoCthreshold`** | **no, and it would misfire** | `_handle_setpoint_change_integral` (pid.py:318-328) compares the **per-sample** target change, not a cumulative one. The background's largest per-sample step is **5.48 degC** (in the charge dip), so at threshold 30 it can never fire — the setting is inert, correctly. Lowering the threshold to reach it would zero `Iterm` in the middle of the charge dip, destroying the useful re-seed. Leave off. |
-| **`pidIlimitFactor` (ILF)** | **no** | Caps `Iterm` at `100*ILF` (pid.py:52-70). `Iterm` legitimately reaches ~70 mid-roast, so anything below ~0.75 would clip the operating point and reintroduce roast 40's standing deficit. It is a safety cap, not a tuning knob. Keep 1.0. |
+| **`pidDlimit`, `derivative_filter`** | **no** | Inert at `Kd=0`. `Dlimit` clamps `derror` in degC/s **before** the Kd multiply (pid.py:265-267) — 500 is unreachable. `derivative_filter` is a boolean, not a level: `_calculate_derivative` only tests `> 0`, and the filter is a fixed 0.1 Hz first-order lowpass (pid.py:640-644). |
+| **`pidIRoC` + `pidIRoCthreshold`** | **no, and it would misfire** | `_handle_setpoint_change_integral` (pid.py:301-311) compares the **per-sample** target change, not a cumulative one. The background's largest per-sample step is **5.48 degC** (in the charge dip), so at threshold 30 it can never fire — the setting is inert, correctly. Lowering the threshold to reach it would zero `Iterm` in the middle of the charge dip, destroying the useful re-seed. Leave off. |
+| **`pidIlimitFactor` (ILF)** | **no** | Caps `Iterm` at `100*ILF` (pid.py:43). `Iterm` legitimately reaches ~70 mid-roast, so anything below ~0.75 would clip the operating point and reintroduce roast 40's standing deficit. It is a safety cap, not a tuning knob. Keep 1.0. |
 | **`pidIWP`** | **no, but load-bearing** | Two mechanisms in one flag: conditional integration *and* back-calculation. Turning it off drains `Iterm` to 0 through the charge dip (simulated I0 = 0.0) and costs 1.6 degC of early tracking. **Keep on.** |
-| **`sv_filter` / `duty_filter`** | **no** | `smooth_sv` (pid_control.py:1690-1702) is a 5-tap decay average = **1.33 s of group delay on the target**, i.e. it subtracts 1.33 s from the effective lookahead. `duty_filter` is a 0.35 Hz first-order lowpass on P+I+D, ~0.25 s — measurably nil (rms 0.48 either way). Useful only as a way to blunt the charge dip if a larger lookahead were ever wanted. |
-| **Ramp/Soak (`svMode=1`)** vs Follow Background | **no** | `svRampSoak` (pid_control.py:1640-1685) is 8 linear ramp/soak segments starting from `source_reading_pidON`. Same type-1 loop, same velocity error, and it loses charge alignment, the Designer curve's shape, and any representation of the charge dip. Its only structural advantage — no DROP-bounded control window — is worth nothing at `L=3`. **Stay on Follow Background.** |
-| **Outer loop on BT RoR** | would remove it, but **not reachable in configuration** | `getCurveNames` (pid_dialogs.py:1262-1269) populates the Input list with ET, BT and the *extra device channel names* only — delta/RoR curves are not offered, and `canvas.py:4762-4777` reads `pidSource` from the raw channel arrays. Controlling RoR needs the firmware to publish RoR as an extra channel (out of scope), plus an RoR background curve for `backgroundXTat`. And on its own it is the wrong control: zero *rate* error leaves BT *position* free to drift, so it would need a BT trim on top — a three-level cascade. Not now. |
+| **`sv_filter` / `duty_filter`** | **no** | `smooth_sv` (pid_control.py:1643-1655) is a 5-tap decay average = **1.33 s of group delay on the target**, i.e. it subtracts 1.33 s from the effective lookahead. `duty_filter` is a 0.35 Hz first-order lowpass on P+I+D, ~0.25 s — measurably nil (rms 0.48 either way). Useful only as a way to blunt the charge dip if a larger lookahead were ever wanted. |
+| **Ramp/Soak (`svMode=1`)** vs Follow Background | **no** | `svRampSoak` (pid_control.py:1593-1638) is 8 linear ramp/soak segments starting from `source_reading_pidON`. Same type-1 loop, same velocity error, and it loses charge alignment, the Designer curve's shape, and any representation of the charge dip. Its only structural advantage — no DROP-bounded control window — is worth nothing at `L=3`. **Stay on Follow Background.** |
+| **Outer loop on BT RoR** | would remove it, but **not reachable in configuration** | `getCurveNames` (pid_dialogs.py:1251-1258) populates the Input list with ET, BT and the *extra device channel names* only — delta/RoR curves are not offered, and `canvas.py:5000-5015` reads `pidSource` from the raw channel arrays. Controlling RoR needs the firmware to publish RoR as an extra channel (out of scope), plus an RoR background curve for `backgroundXTat`. And on its own it is the wrong control: zero *rate* error leaves BT *position* free to drift, so it would need a BT trim on top — a three-level cascade. Not now. |
 
 **Recommended strategy: keep the structure, take the two changes above, then a
 Ki gain schedule as a second step.**
@@ -1006,7 +1006,7 @@ loop's gain.
 
 **Read the marks with care — they are not profile crossings.** DRYe and FCs are
 fired by `autoDRY`/`autoFCs` on the fixed BT thresholds in the Phases dialog
-(`phases=[38, 149, 196, 218]`, canvas.py:4920-4926), while `profile_002`'s own
+(`phases=[38, 149, 196, 218]`, canvas.py:5158-5164), while `profile_002`'s own
 DRYe sits at **BT 152.0** and its FCs at **BT 197.9**. Comparing mark time to
 mark time therefore compares two different temperatures and always reads early.
 **The valid yardstick is the time to reach the same BT:**
@@ -1204,12 +1204,12 @@ which is the reference Artisan itself cites. Two separate things have to be
 answered: what Artisan's PoM button actually does, and whether the real
 algorithm would help.
 
-**Artisan no longer has PoM.** `pid_control.py:1252-1253` carries that exact URL
+**Artisan no longer has PoM.** `pid_control.py:1237-1238` carries that exact URL
 followed by `=> PoM removed in v3.1.2`. What survives is the **PoE/PoM radio
 pair in the PID dialog, which only writes `pidPsetpointWeight` (beta)** — PoE
-sets beta 1, PoM sets beta 0 (pid_dialogs.py:1199-1210), and the beta spin box
+sets beta 1, PoM sets beta 0 (pid_dialogs.py:1188-1199), and the beta spin box
 takes anything in `[0, pidPsetpointWeightMax=2]`. Beta feeds plain **setpoint
-weighting**, `Pterm = getKp(i) * (beta*target - i)` (pid.py:459), evaluated fresh
+weighting**, `Pterm = getKp(i) * (beta*target - i)` (pid.py:442), evaluated fresh
 each cycle. Beauregard's PoM is not that: it *accumulates*
 `outputSum -= Kp*(PV - lastPV)` into the same variable as the integral, making
 the proportional path an integrator of measurement change. **The button labelled
@@ -1241,11 +1241,11 @@ Simulated on roast 45's plant at Ki 0.15, `svLookahead` 3:
 beta 0 is *worse than roast 44's original tuning*. And the direction that would
 help — **beta above 1, which subtracts `Kp*(beta-1)*R` from the velocity error
 and at beta ~1.15 would cancel it exactly — is structurally blocked.**
-`applyIntegralLimits` (pid.py:377-382) sets
+`applyIntegralLimits` (pid.py:360-365) sets
 `integral_max = 100*ILF + getKp(PV)*(1-beta)*target`, so for beta > 1 the ceiling
 *shrinks* (to 19 at SP 180, beta 1.15) at precisely the moment the required
 `Iterm` turns negative — and `integral_min` is pinned at **0** whenever
-`outMin >= 0` (pid.py:59-63). The integrator rails at zero and the roast runs
+`outMin >= 0` (pid.py:50-54). The integrator rails at zero and the roast runs
 27 s fast. **beta = 1.0 is therefore not merely the safe default, it is the
 unique optimum in this structure.**
 
@@ -1366,7 +1366,7 @@ This is the same conclusion the earlier `Kd`/DoE sweep reached empirically
 stress) — now with the reason attached. It needs `pidDsetpointWeight = 1` (DoE);
 under DoM it would brake the ramp instead. Affordable on noise: measured BT
 high-frequency residual is **0.064 degC rms**, so Kd 40 costs ~3.6 duty = 5.8 degC
-of SV jitter, and `derivative_filter` (a fixed 0.1 Hz lowpass, pid.py:657-661)
+of SV jitter, and `derivative_filter` (a fixed 0.1 Hz lowpass, pid.py:640-644)
 cuts that roughly fivefold.
 
 #### Tested and not upheld: the early floor / minimum inlet temperature
@@ -1489,7 +1489,7 @@ Note the last row: **sliding the window without changing its width changes the
 gain not at all.** And since the gain effect is redundant with `pidKp`/`pidKi`,
 the *only* reasons to move these keys are the saturation limits themselves.
 
-**2. The floor is not the saturation point.** `pid_control.py:1469` calls
+**2. The floor is not the saturation point.** `pid_control.py:1454` calls
 `setLimits((-100 if pidNegativeTarget else 0), (100 if pidPositiveTarget else 0))`
 — with no negative target the PID clamps the **duty** at 0 and 100 *regardless*
 of `positiveTargetMin`, and `_calculate_integral_limits(0, 100, ILF)` gives
@@ -1645,15 +1645,15 @@ each saved profile. profile_003 has to be loaded as background per session.
 
 **Artisan's *built-in* gain scheduling cannot key on error**: `getParameter`
 evaluates the schedule at `self.target if self.gain_scheduling_on_SV else PV`
-(pid.py:399) — SV or PV, never the error.
+(pid.py:382) — SV or PV, never the error.
 
 > **Correction (operator, from the Artisan help).** An earlier version of this
 > section claimed there is no command to set the gains at runtime. That was
 > wrong — it came from grepping only for command names beginning with `pid`.
-> **`p-i-d(<p>,<i>,<d>)` exists** (main.py:10370). For any device that is not
+> **`p-i-d(<p>,<i>,<d>)` exists** (main.py:10759). For any device that is not
 > Fuji/Delta it falls through to `self.pidcontrol.confPID(kp,ki,kd)`
-> (main.py:10402), whose last branch — `elif self.aw.qmc.Controlbuttonflag:`
-> (pid_control.py:1951) — calls `self.aw.qmc.pid.setPID(kp,ki,kd)` and updates
+> (main.py:10791), whose last branch — `elif self.aw.qmc.Controlbuttonflag:`
+> (pid_control.py:1914) — calls `self.aw.qmc.pid.setPID(kp,ki,kd)` and updates
 > `pidKp`/`pidKi`/`pidKd`. This is a WebSocket device with `Controlbuttonflag`
 > ticked, so **it reaches the software PID.**
 
@@ -1663,7 +1663,7 @@ a superset of the built-in schedule, which only fits a line or parabola in SV/PV
 
 Four properties of `p-i-d()` worth knowing before using it:
 
-- **It is bumpless in the integrator.** `setPID` (pid.py:571-581) only assigns
+- **It is bumpless in the integrator.** `setPID` (pid.py:554-564) only assigns
   `Kp`/`Ki`/`Kd` (each clamped to `max(x, 0)`, so no negative gains); `Iterm` is
   untouched. Changing `Ki` therefore has *no* instantaneous effect at all, only
   on the rate of climb. Changing `Kp` steps the output by `dKp * err` — at a
@@ -1705,15 +1705,15 @@ target = 128 occurs twice and gets the same gains both times); and one schedule
 serves all three gains, so `pidKp1`/`pidKd1` must be set equal to their bases.
 
 **The windup half of the question is already done, automatically and
-error-dependently.** `_should_integrate` (pid.py:301-316) blocks integration
+error-dependently.** `_should_integrate` (pid.py:286) blocks integration
 whenever the unclamped output is saturated in the direction the error would
-worsen, and `_back_calculate_integral` (pid.py:330-348) bleeds the integrator
+worsen, and `_back_calculate_integral` (pid.py:314-333) bleeds the integrator
 whenever the output clamps. Both are live via `pidIWP=true`. That *is*
 error-keyed windup management; there is nothing to add. `pidIRoC` keys on
 per-sample *setpoint change*, not error, and cannot reach its threshold here.
 
 **The switching that is worth doing is the lookahead, not the gains.**
-`pidLookahead(<n>)` sets `svLookahead` at runtime (main.py:10547, gated on
+`pidLookahead(<n>)` sets `svLookahead` at runtime (main.py:10936, gated on
 `Controlbuttonflag`, which the cascade requires anyway). That resolves the
 profile_003 trade instead of compromising it: lookahead is *harmful* at the dip
 (manufactured error, SV on the floor at TP) and *helpful* on the ramp, and it is
@@ -1866,23 +1866,23 @@ profile. Two routes were checked:
 > the device is flashed, and can be turned off afterwards.
 
 - **Artisan cannot log it as a curve.** The PID source list offers only ET, BT
-  and the extra *device* channels (pid_dialogs.py:1262-1269), and the symbolic
+  and the extra *device* channels (pid_dialogs.py:1251-1258), and the symbolic
   expression evaluator's dictionary has no slider or event variable
-  (canvas.py:6740-6870) — so a virtual extra device cannot read slider 3 either.
+  (canvas.py:6967-7090) — so a virtual extra device cannot read slider 3 either.
   The firmware's Artisan `getData` reply carries `BT`, `ET`, `IN`, `AT` and no
   SV (airRoaster.ino:1232); `inSV` exists only on the `status` push, which
   Artisan does not map to a channel. Adding SV to `getData` would be the clean
   fix and is a firmware change, so out of scope here.
 - **`createEvents=true` does it within Artisan, and is now set.**
-  `setEnergy` passes the flag to `addRawEventSignal` (pid_control.py:1323), and
+  `setEnergy` passes the flag to `addRawEventSignal` (pid_control.py:1308), and
   `addEvent_internal` records the slider move into the profile when it is set
-  (main.py:17800-17821). The commanded inlet SV then lands in the `.alog` as
+  (main.py:17976-17997). The commanded inlet SV then lands in the `.alog` as
   **T_inlet events**, in the same file as BT and the background.
 
 Two properties to know: the value recorded is the **integer** slider value
 (`nv = eventsExternal2InternalValue(new_value)`), so ~1 degC resolution on a
 140-300 degC span — the fraction still reaches the wire, it is just not logged;
-and the cadence follows `dutySteps` and `force_duty = 3` (pid.py:210), so an
+and the cadence follows `dutySteps` and `force_duty = 3` (pid.py:197), so an
 event lands every 1-3 s, roughly 200-400 per roast. The profile plot gets busy.
 That is the whole cost, and it makes every future roast self-contained for
 analysis.
@@ -1921,22 +1921,30 @@ runtime lookahead switch from § Scheduling. **A separate file deliberately**:
 it is an experiment and should not ride along with the `pidKi` and profile_003
 changes on the next roast.
 
-Two new event buttons (indices 21 and 22, user-facing **22** and **23**), action
-20 = Artisan Command, hidden, recording no event:
+Two new event buttons appended after the existing ones — as of 2026-09-02 that
+is indices 22 and 23, user-facing **23** and **24** — action 20 = Artisan
+Command, hidden, recording no event:
 
 | button | command |
 |---|---|
-| 22 | `pidLookahead(0)` |
-| 23 | `pidLookahead(6)` |
+| 23 | `pidLookahead(0)` |
+| 24 | `pidLookahead(6)` |
+
+> **The button numbers are positional and will drift.** They were 22/23 until a
+> "Fan Mid" button was added to the canonical config, which shifted everything
+> after it. `alarmstrings` holds the **1-based index**, so adding or removing an
+> event button silently re-points these alarms. **Regenerate this variant from
+> the canonical file rather than hand-editing it**, and re-derive the numbers
+> from the length of `extraeventslabels`.
 
 and two new alarms, both **time-only from CHARGE** (`alarmsource = -3`, so the
 temperature branch never evaluates and the OR'd conditions cannot misfire),
 action **2** = press an event button, whose `alarmstrings` entry is the
-**1-based** button number (canvas.py:5969-5986):
+**1-based** button number (canvas.py:6194-6211):
 
 ```
-alarm 3: From CHARGE, offset  1 s, source -3 -> button 22 -> pidLookahead(0)
-alarm 4: From CHARGE, offset 90 s, source -3 -> button 23 -> pidLookahead(6)
+alarm 3: From CHARGE, offset  1 s, source -3 -> button 23 -> pidLookahead(0)
+alarm 4: From CHARGE, offset 90 s, source -3 -> button 24 -> pidLookahead(6)
 ```
 
 So the dip runs at lookahead 0 — no manufactured error, no SV floor at turning
@@ -1986,7 +1994,7 @@ control path is touched. Compile-verified.
 Artisan side, already applied to both `.aset` files:
 `channel_nodes = BT, ET, IN, AT, SV, HT, ...` and
 `channel_modes = 1, 1, 1, 1, 1, 0, ...` (mode 0 marks a non-temperature, which
-is what `HT` is — canvas.py:12750 reads it as `extraNoneTempHint`). **The
+is what `HT` is — canvas.py:13220 reads it as `extraNoneTempHint`). **The
 remaining step is manual**: add a further WebSocket extra device in Config >
 Device > Extra Devices so channels 5 and 6 become curves. The device id is not
 guessed here because a wrong one silently mis-maps a curve.
@@ -2003,7 +2011,7 @@ and a Smith predictor is the standard answer. It does **not** require moving the
 outer loop into firmware: the firmware can run the identified model forward from
 the measured inlet and publish `BTP`, and Artisan's `pidSource` can select that
 extra channel instead of BT (the PID input list offers exactly the extra device
-channels, pid_dialogs.py:1262-1269). The loop then sees a fraction of the
+channels, pid_dialogs.py:1251-1258). The loop then sees a fraction of the
 deadtime and Ki could rise several-fold at the same margin.
 
 Two conditions before attempting it:

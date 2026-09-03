@@ -31,6 +31,50 @@ Compile after every meaningful edit; the script surfaces sketch-local warnings.
 - DimmerLink I2C protocol: https://www.rbdimmer.com/docs/dimmerlink-I2CCommunication
   (registers: 0x00 status, 0x01 command [RESET=0x01], 0x02 error, 0x03 version,
   0x10 level, 0x11 curve, 0x20 freq, 0x30 address).
+- **Artisan source: `~/src/artisan`, checked out at tag `v4.2.0`.** The shipped
+  `.app` is compiled, so every claim about Artisan's behaviour in these documents
+  is cited as `<file>:<line>` into
+  `~/src/artisan/src/artisanlib/{pid,pid_control,main,canvas,pid_dialogs}.py`.
+  **Do not re-download it and do not read `master`** — see the box below.
+
+**Referencing the Artisan source.** A local clone lives at **`~/src/artisan`**,
+checked out at **`v4.2.0`** — the version installed at `/Applications/Artisan.app`
+(`CFBundleShortVersionString` 4.2.0). Read it directly; there is no need to fetch
+anything.
+
+```
+~/src/artisan/src/artisanlib/{pid,pid_control,main,canvas,pid_dialogs}.py
+```
+
+**The version matters and has already bitten this project once.** The analysis
+through 2026-09-02 was written against GitHub `master`, which by then was ahead
+of 4.2.0 and heading for 4.2.1 — **every `file:line` citation was wrong for the
+installed build**, by hundreds of lines in `main.py` and `canvas.py`. All 85
+citations in `state-plan.md` and `state-current.md` were remapped to v4.2.0 on
+2026-09-02 and spot-checked. So:
+
+- **Cite line numbers only from `~/src/artisan` at `v4.2.0`.** If the operator
+  upgrades Artisan, `git checkout` the new tag *and* re-verify the citations
+  before trusting them.
+- When quoting behaviour, prefer naming the function as well as the line, so a
+  version drift is recoverable (`_back_calculate_integral`, pid.py:314-333).
+- Grep by **function name**, not by a name prefix. Two findings in this project
+  were missed by over-narrow greps: `p-i-d(<p>,<i>,<d>)` was missed by searching
+  only for commands starting with `pid`, and the `.alog` PID fields were trusted
+  when they record settings at *save* time.
+
+**The mechanisms the control analysis rests on were checked function-by-function
+against v4.2.0 and are byte-identical to what was read on master**:
+`_back_calculate_integral`, `_should_integrate`, `applyIntegralLimits`,
+`update`, `setPID`, `calcSV`, `setEnergy`, `smooth_sv`. Two differ and neither
+matters here: `_calculate_derivative` only lazy-inits its filter on master, and
+`getParameter` on master adds a guard rejecting an all-zero gain schedule that
+4.2.0 lacks — so on 4.2.0, enabling `pidGainScheduling` with `pidSchedule0` and
+`pidSchedule1` both at 0 attempts a degenerate fit. Scheduling is off.
+
+**Licensing.** Artisan is AGPL-3.0 and this repository is MIT and public
+(`github.com/jwmelvin/airRoaster`). The clone is deliberately **outside** the
+repo — do not vendor Artisan source into it.
 
 **Conventions.**
 - Single `.ino` plus small local headers when a component earns isolation
@@ -134,13 +178,13 @@ slow at Ki=0.003 to serve as the operating-point supplier.
 
 **Why the integrator was already wound up at CHARGE**: Artisan's software PID
 keeps integrating while switched off — in `svMode=2` the target updates even
-when inactive (canvas.py:4946), `update()` accumulates Iterm before the only
-`if self.active:` guard (pid.py:497), and `on()` deliberately does not
-re-initialise (pid.py:355). So a manual preheat silently winds it against the
+when inactive (canvas.py:5184), `update()` accumulates Iterm before the only
+`if self.active:` guard (pid.py:480), and `on()` deliberately does not
+re-initialise (pid.py:338). So a manual preheat silently winds it against the
 background's CHARGE temperature. Conditional integration (`pidIWP`) stops the
 fill at `P + I ~ 100`, which is why it parks near 90; it then drains only at
 `Ki*err`. **The only thing that zeroes Iterm is the ON button** (monitor start
--> `confSoftwarePID(reset=True)`, canvas.py:12962) — not `pidOn`, not DROP, not
+-> `confSoftwarePID(reset=True)`, canvas.py:13438) — not `pidOn`, not DROP, not
 RESET, not loading settings. Required procedure: press ON (clears Iterm), turn the PID on,
 **preheat under PID control**, then CHARGE — the preheat target is supplied
 automatically as the background's CHARGE BT. That forced the floor back down to
@@ -179,7 +223,7 @@ integrator **never settles** — it climbs monotonically 21 -> 70 duty at
 "~12 s of velocity lag" is not a lag; it decomposes as `(du_req/dBT)/Ki =
 0.505/0.04 = 12.6 s`, one over the integrator rate. Genuine loop delay is under
 3 s in total (inner loop 1 s / rms 0.7 degC, BT smoothing 0.67 s, the
-canvas.py:4778-before-4946 ordering 1 s, plant transport delay ~0).
+canvas.py:5016-before-4946 ordering 1 s, plant transport delay ~0).
 
 A faithful reimplementation of `PID.update()` against a plant fitted to roast 44
 (`dBT/dt = 0.0145*(Inlet-BT) - 0.68 + w(t)`, tau 69 s) reproduces the roast to
@@ -237,7 +281,7 @@ retracted is that it shapes roast 45's error trace. Detail in state-plan.md
 § Correction: roast 45's error is the loop, not the air.
 
 **A source mechanism the earlier notes missed underpins all of it**:
-`_back_calculate_integral` (pid.py:330-348) runs on every clamped cycle whenever
+`_back_calculate_integral` (pid.py:314-333) runs on every clamped cycle whenever
 `pidIWP` is on, and at the *low* clamp it drives `Iterm` **up**, converging
 geometrically (half per second) on `Kp*|err|`. So the charge dip re-seeds the
 integrator to `Kp * |worst dip error|` (roast 44: 3 x 8.4 = 25 against a measured
@@ -258,7 +302,7 @@ brief `_edit` variant used while adding the alarms was folded back in and
 removed), with background
 **`artisan/profile_002.alog`**. It adds the auto-DROP alarm — `From DRY END,
 offset 0, Source DeltaBT, below -25 -> DROP` — because Artisan's built-in
-auto-DROP is gated on 7 minutes after CHARGE (canvas.py:4913) and these roasts
+auto-DROP is gated on 7 minutes after CHARGE (canvas.py:5151) and these roasts
 drop at 6:20-6:31, so no sensitivity setting can reach it. DROP matters beyond
 bookkeeping: it drives `pidOffDROP` and the `INLET 0` button chain, so a missed
 DROP leaves the heater running. `svLookahead` is now **0**, which also matters
