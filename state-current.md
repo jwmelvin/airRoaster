@@ -176,18 +176,28 @@ what produced the +/-50-60 degC ringing. This is the mirror of roast 40, where
 I ~ 14 and the loop could not push up; one root cause, an integrator far too
 slow at Ki=0.003 to serve as the operating-point supplier.
 
-**Why the integrator was already wound up at CHARGE**: Artisan's software PID
-keeps integrating while switched off — in `svMode=2` the target updates even
-when inactive (canvas.py:5184), `update()` accumulates Iterm before the only
-`if self.active:` guard (pid.py:480), and `on()` deliberately does not
-re-initialise (pid.py:338). So a manual preheat silently winds it against the
-background's CHARGE temperature. Conditional integration (`pidIWP`) stops the
-fill at `P + I ~ 100`, which is why it parks near 90; it then drains only at
-`Ki*err`. **The only thing that zeroes Iterm is the ON button** (monitor start
--> `confSoftwarePID(reset=True)`, canvas.py:13438) — not `pidOn`, not DROP, not
-RESET, not loading settings. Required procedure: press ON (clears Iterm), turn the PID on,
-**preheat under PID control**, then CHARGE — the preheat target is supplied
-automatically as the background's CHARGE BT. That forced the floor back down to
+**Why the integrator was already wound up at CHARGE** (corrected 2026-09-03 —
+this previously read *"the PID keeps integrating while switched off"*, which is
+wrong): the integrator **cannot** wind while the PID is off in this config.
+`update()` snaps the target to the PV on every inactive sample (bumpless
+transfer, pid.py:406-408), so `err = 0` and the Ki path adds nothing; at
+`beta = 1` and `Kd = 0` the P and D terms are zero too, the output never clamps,
+and `Iterm` is simply **frozen**. What put it near 90 is back-calculation at the
+output **floor**: `_back_calculate_integral` converges on `Iterm = Kp*|err|`
+(8.5 x 10.5 = 89.3, the derived value) in seconds, with no Ki in the path — then
+drains only at `Ki*err`, 0.009/s at Ki=0.003. Fast fill, glacial drain.
+
+The guarantee is config-specific: with `beta < 1` or `Kd > 0` the output rails
+while off and back-calculation *does* wind it. **The only thing that zeroes
+Iterm is the ON button** (`OnMonitor` -> `confSoftwarePID(reset=True)`,
+canvas.py:13439) — not `pidOn`, not DROP, not **RESET**, not the PID dialog, not
+loading settings, and there is no `pidReset()` command. Required procedure:
+press ON (clears Iterm), turn the PID on, **preheat under PID control**, then
+CHARGE — the preheat target is supplied automatically as the background's CHARGE
+BT — and keep it to **one PID on/off cycle per monitor ON/OFF cycle**, since
+RESET between roasts silently carries the previous integrator over.
+
+**That procedure** forced the floor back down to
 140 (the loop needs inlet ~148 to hold 129.4 degC, which a 170 floor forbids)
 and Ki up to 0.04 (a correctly-started integrator sits at the empty-roaster
 operating point ~5 duty and must climb to ~55 during the roast). SV also sat at its 120 degC floor for 19 s

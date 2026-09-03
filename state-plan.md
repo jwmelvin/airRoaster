@@ -448,46 +448,94 @@ I ~ 90 and it could not come down. One root cause: at Ki=0.003 the integrator is
 far too slow to be the operating-point supplier, so it parks wherever history
 left it and P does all the work. This is the strongest argument for the Ki raise.
 
-**Resolved (operator confirmed the PID was *not* enabled during a manual 150 degC
-preheat): Artisan's software PID keeps integrating while switched off.** Three
-source facts in a chain:
+**Corrected 2026-09-03 — the earlier attribution was wrong.** This section
+previously read *"Artisan's software PID keeps integrating while switched off"*
+and blamed the manual 150 degC preheat. That mechanism does not exist at
+`beta = 1`, and it could not have produced 89 in any case. The real path is
+back-calculation at the **low** clamp — a path with no `Ki` in it
+(§ The mechanism the earlier notes missed).
 
-1. The target keeps updating when inactive. `canvas.py:5184` gates on
-   `(pidActive and svMode == 1) or svMode == 2` — comment: *"in BackgroundFollow
-   mode we update the SV even if not active, just we do not move the SV
-   slider."* This config is `svMode=2`.
-2. `update()` integrates unconditionally. Pterm, Iterm, clamping and
-   `final_output` are all computed before the only `if self.active:` guard,
-   which merely gates dispatching the output to the slider (pid.py:480-483).
-3. `on()` deliberately does not reset: *"we keep the PID running always, even if
-   inactive, and do not disturb it with an init on switching it active"*
-   (pid.py:338).
+**1. The integrator cannot wind while the PID is off — not in this config.**
+`update()` opens with a bumpless-transfer snap:
 
-So through the manual preheat the PID silently integrated against the
-background's CHARGE temperature (129.4 degC) while BT was still cold.
+```python
+if i is not None and not self.isActive():
+    # bumpless transfer
+    self.target = i                      # pid.py:406-408
+```
 
-**Why it parks near 90 instead of running away.** `pidIWP=true` gives
-conditional integration: integration stops once the *unclamped* output exceeds
-`outMax` (pid.py:296). Iterm therefore rises until `P + I ~ 100`, i.e.
-`I ~ 100 - Kp*err` — about 89 at err ~ +1.3 with Kp=8.5. The integrator fills
-quickly through saturation and drains only at `Ki*err`: at Ki=0.003 with
-err ~ -3 that is 0.009/s, roughly three hours to unwind. **That asymmetry —
-fast fill, glacial drain — is the actual defect**, and it is a further argument
-for the Ki raise.
+While inactive the target is slammed to the PV on *every* sample, so `err = 0`
+identically and `Iterm += Ki*err*dt` adds exactly zero. With `beta = 1` the P
+term is `Kp*(beta*target - i) = 0`; with `Kd = 0` the D term is 0; so
+`output = Iterm`, which sits inside `[0, 100]` and never clamps, so
+back-calculation does not fire either. **`Iterm` is frozen while off, not
+growing.** The two facts the old text leaned on are individually true and
+jointly harmless: `update()` does run regardless of `pidActive` (canvas.py:5016;
+the `if self.active:` guard at pid.py:480 gates only *dispatch* of the duty),
+and the SV does keep updating in `svMode=2` (canvas.py:5191) — but the snap
+overwrites that SV before the error is formed.
+
+*The caveat that makes this config-specific.* With `beta < 1` the P term while
+off is `Kp*(beta-1)*PV` — at `beta=0.5, Kp=8.5, PV=150` that is **-637** — and
+with `Kd > 0` the D term while off is `-Kd*RoR` (gamma=0 makes the snapped
+target drop out). Either rails the output at the low clamp, and back-calculation
+then drives `Iterm` **up** while the PID is off, to the `applyIntegralLimits`
+cap. The freeze guarantee holds only while **`beta = 1` and `Kd = 0`**, which is
+the committed config (`pidPsetpointWeight=1.0` confirmed in both
+`airRoaster_41.alog` and `airRoaster_44.alog`). Revisit if either changes —
+and note the `.alog` does **not** record `pidKd` at all, only `pidKd1`/`pidKd2`.
+
+**2. `Ki = 0.003` is far too slow to have built 89 anyway.** At `err = +10` the
+Ki path supplies `0.003*10 = 0.03` duty/s — about 50 minutes to reach 89.
+Whatever filled the integrator was not integration.
+
+**What actually filled it: back-calculation at the output floor.** The 0:40 row
+in the table above *is* the floor — `err = -10.5`, `duty = 0.0`. With
+`Pterm = -89.3` the unclamped output is -89.3, clamped to 0, so
+`excess = -89.3` and `Iterm -= 0.5*excess` drives `Iterm` **up**, converging
+geometrically on `Iterm = -Pterm = Kp*|err| = 89.3` — the derived value,
+exactly. Same mechanism, same arithmetic as the roast 44 charge-dip re-seed
+(`3 * 8.4 = 25` against a measured 24.6). It simply had not been found when this
+section was first written.
+
+**Once there it drains only at `Ki*err`**: at Ki=0.003 with err ~ -3 that is
+0.009/s, roughly three hours to unwind. **That asymmetry — a `Kp`-scaled fill in
+seconds, a `Ki`-scaled drain over hours — is the actual defect**, and it is a
+further argument for the Ki raise. `pidIWP`'s conditional integration caps the
+*Ki* path at `P + I ~ 100` (pid.py:296) but is not what put the 89 there.
 
 **The only thing that clears Iterm** is `confSoftwarePID(reset=True)` ->
 `pid.reset()` -> `init()` -> `Iterm = 0.0` (pid_control.py:1472, pid.py:498,
-532). That is called from exactly one place: **monitor start, the ON button**
-(canvas.py:13438). `pidOn()` calls `confSoftwarePID()` with the default
-`reset=False`, so arming the PID does *not* clear it; neither does DROP, RESET,
-nor loading a settings file. Iterm therefore persists across roasts for the
-whole Artisan session.
+532). It is called from exactly one place: `OnMonitor()`, **the ON button**
+(canvas.py:13439). Everything else leaves it alone:
 
-**Operating procedure (required, not optional):** **press ON to start
-monitoring — that zeroes the integrator — then turn the PID on and preheat under
-its control, then CHARGE.** See § PID-driven preheat. Without the ON, every
-roast inherits whatever the previous one left in the integrator; without the PID
-on during preheat, the integrator winds blind.
+| path | clears Iterm? |
+|---|---|
+| monitor **ON** | **yes** — the only one |
+| PID ON / `pidOn()` | no — `confSoftwarePID()` with the default `reset=False`, then `setTarget(svValue, init=False)` (pid_control.py:1519-1526); `on()` says so outright: *"we keep the PID running always ... and do not disturb it with an init on switching it active"* (pid.py:335-341) |
+| **RESET** | no |
+| DROP / `pidOffDROP` | no |
+| OK/Apply in the PID dialog | no — `confSoftwarePID()` without `reset` (pid_dialogs.py:1599, 1685) |
+| loading a settings file | no |
+| `pidSV()`, `pidSVC()`, `p-i-d()` | no — `setSV(..., init=False)`; `setPID()` touches gains only |
+
+There is no `pidReset()` Artisan command and no reset control in the PID dialog.
+`Iterm` therefore persists for the whole monitor session.
+
+**Operating procedure (required, not optional):** press **ON** to start
+monitoring — that zeroes the integrator — then turn the PID on, preheat under
+its control, then CHARGE. **One PID on/off cycle per monitor ON/OFF cycle.**
+
+The trap is **RESET**: it is the natural between-roasts button and it does not
+clear `Iterm`, so a second roast started that way inherits whatever the first
+left — and `pidOffDROP` guarantees the first ended with the integrator at its
+mid-roast value, 55-70. Cycle OFF -> ON between roasts. `pidOnCHARGE` adds no
+second cycle: both it (canvas.py:14656) and `pidOn()`'s software branch are
+guarded by `not pidActive`, so arming the PID during preheat makes the CHARGE
+trigger a no-op. See § PID-driven preheat — which is still the right procedure,
+now for the positive reason that it hands the roast an integrator already at the
+empty-roaster operating point (~5 duty) rather than at zero, not because an
+idle PID would otherwise wind blind.
 
 **The outer loop rings.** SV direction reversals over 15 degC: 2:08 (257->185),
 2:09 (185->228), 2:43 (245->123), 3:08 (123->225), 3:36 (225->184), 4:19
@@ -796,6 +844,9 @@ a degree, so differences of a degree between tunings are meaningful.
 
 #### The mechanism the earlier notes missed: back-calculation anti-windup
 
+This also supersedes the roast-41 root cause as first written; see the
+correction there.
+
 `_back_calculate_integral` (pid.py:314-333) runs on **every clamped cycle**
 whenever `pidIWP` is on — it is not part of the conditional-integration logic
 already recorded, it is a second, separate anti-windup:
@@ -818,8 +869,9 @@ second. Three consequences, all confirmed against roast 44:
 - **Whatever the preheat left in `Iterm` is forgotten** within a few seconds of
   the floor (half per second). Simulating handovers of `Iterm` = 0, 3, 7, 15 and
   30 gives *bit-identical* roasts. The ON-button procedure (§ Roast 41) still
-  matters — it protects the **preheat**, where a wound-up integrator rails the
-  SV and lands the wrong CHARGE_BT — but it does not reach into the roast body.
+  matters — it protects the **preheat**, where an integrator carried over from a
+  previous ON cycle rails the SV and lands the wrong CHARGE_BT — but it does not
+  reach into the roast body.
 - **It is what makes a large `svLookahead` dangerous** (below). This, not the
   DROP-window truncation, is the binding constraint on lookahead.
 
@@ -2043,8 +2095,8 @@ can slot in anywhere after step 1.
 
 **Step 1 — validate `pidKi` 0.07 + profile_003. Next roast, no other changes.**
 Load `artisan/airRoaster_cascadePID.aset`, background `artisan/profile_003.alog`.
-Normal procedure: **ON** (zeroes the integrator), PID on, PID-driven preheat,
-CHARGE, no intervention. Capture the dashboard CSV as well — this is the last
+Normal procedure: **ON** (zeroes the integrator — RESET does not, so start from
+a fresh OFF -> ON), PID on, PID-driven preheat, CHARGE, no intervention. Capture the dashboard CSV as well — this is the last
 roast that needs it. What to read afterwards:
 
 1. Time to reach BT 120 / 150 / 180 / 196.5 against the profile. Ignore DRYe and
@@ -2125,9 +2177,11 @@ open and LOW when the lever closes it to GND. Specifics for this board:
 ### Commissioning order
 
 0. **Every roast: press ON (zeroes the integrator), turn the PID on, preheat
-   under PID control, then CHARGE.** ON is the only thing that clears Iterm
-   (§ Roast 41); preheating under the PID stops it winding blind
-   (§ PID-driven preheat).
+   under PID control, then CHARGE — one PID on/off cycle per monitor ON/OFF
+   cycle.** ON is the only thing that clears Iterm; **RESET does not**, so cycle
+   OFF -> ON between roasts rather than reusing a session (§ Roast 41).
+   Preheating under the PID hands the roast an integrator already at the
+   empty-roaster operating point (§ PID-driven preheat).
 1. **Bench, heater cold.** Load `airRoaster_cascadePID.aset`. PID on -> confirm
    `INLET` traffic on the dashboard, that the commanded value floors at 140 and
    never reaches 0, that it carries a fraction, and that firmware `mode` reads
