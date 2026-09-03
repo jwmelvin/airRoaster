@@ -773,6 +773,14 @@ not a transport delay.** The real delays in the loop are small and measurable:
 Under 3 s of genuine lag against 12-15 s of apparent lag. The inner loop is
 confirmed a non-factor for the third time.
 
+> **Corrected.** That table counts the *instrumentation* delay and misses the
+> process: between inlet air temperature and what the BT probe reads sits the
+> bean mass, worth ~15-20 s. The "plant transport delay 0 s" row is an artefact
+> of a circular fit and is retracted — see § Correction: roast 45's error is the
+> loop, not the air. The velocity-error derivation and the roast 44 tuning
+> conclusions are unaffected; the *stability margins* quoted later in that
+> section are far too optimistic.
+
 **4. A validated simulator.** Artisan's `PID.update()` was reimplemented
 faithfully (PoE, conditional integration, back-calculation, `[0, 100*ILF]`
 integral limits, the 0.35 Hz first-order duty filter, the 1-sample target
@@ -983,7 +991,13 @@ cannot be reconstructed). Then check, in order:
 Failure responses, in order of preference: overshoot early -> `svLookahead` to 2;
 ringing -> `pidKi` to 0.07; still droopy and one-sided -> `pidKi` to 0.13 before
 touching anything else.
-### Roast 45 (2026-09-02, 21:53) — step 1 applied; the droop is gone, the air schedule is what is left
+### Roast 45 (2026-09-02, 21:53) — step 1 applied; the droop is gone
+
+> **Partly superseded.** The tracking findings below stand. The attribution of
+> the error *shape* to the air schedule, and the Ki 0.15 step-2 recommendation,
+> are **retracted** — see § Correction: roast 45's error is the loop, not the
+> air. Note also that this roast ran at **Ki 0.10**, not the 0.15 the re-saved
+> alog now records.
 
 First run of `pidKi=0.10`, `svLookahead=3` (both confirmed in the alog), same
 background `profile_002`, same procedure. Operator's reading: "better again but
@@ -1264,6 +1278,130 @@ error that does exist is a ramp-following error, which PoM structurally worsens.
 **Verdict: leave `pidPsetpointWeight` at 1.0.** Nothing in the PoM family
 addresses ramp lag; `svLookahead` is the feedforward that does, and Ki is the
 gain that does.
+### Correction: roast 45's error is the loop, not the air (operator challenge 2026-09-02)
+
+The operator's objection: *"BT was low before the second change and got worse
+after it. Right before the change should have been the minimal error if the loop
+were recovering from the first air change."* **Checked and upheld.** The
+air-change attribution in § Roast 45 above is **retracted**, and the Ki 0.15
+recommendation with it.
+
+**The objection, verified.** The error minimum is at **3:26**, not just before
+the 4:26 cut, and the error was already climbing for a full minute before the
+cut — slightly *faster* before it than after:
+
+| window | 3:20-3:50 | 3:50-4:26 | *air cut 4:26-4:32* | 4:26-5:00 | 5:00-5:30 |
+|---|---|---|---|---|---|
+| error slope (degC/s) | +0.0117 | +0.0130 | | +0.0176 | -0.0046 |
+
+A disturbance response would start at the step. This one was 60 s underway
+before it.
+
+**What it actually is: a lightly-damped loop.** The error's extrema are
+2:12 (+2.61), 3:26 (-0.21), 5:10 (+1.50), 6:22 (-0.36) — a **177 s period** with
+peak-to-peak decaying 2.82 -> 1.86 degC. Log decrement 0.42, so
+**zeta ~ 0.07**, a phase margin in the single digits to low twenties. Entirely
+model-free, and it explains both excursions with one mechanism instead of two
+coincidences. (The first cut at 1:31 happens to land on the first zero crossing,
+which is what made the air story look convincing.)
+
+**The plant identification was circular, and that is the root error.** The
+original fit modelled the disturbance as `w(t)`, a *free per-sample time-domain
+residual*. Such a term absorbs precisely the mismatch a transport delay creates,
+so the "plant deadtime ~0 s, each 2 s doubles the residual" result could not have
+found a delay even if one were there. Refitting with the disturbance restricted
+to a **low-order polynomial in t**, which cannot absorb a lag, and letting the
+delay float:
+
+```
+dBT/dt = a*(Inlet(t - theta) - BT) + slow(t)
+   roast 45:  theta = 17 s   (a = 0.00364, tau 275 s)   resid 0.0160 degC/s
+   roast 44:  theta = 17 s   (a = 0.00829, tau 121 s)   resid 0.0131 degC/s
+```
+
+**Two independent roasts land on the same 17 s.** The minimum is shallow (0.019
+at theta 0 falling to 0.016 at 17) and tau is poorly separated between the two
+fits — the classic theta/tau trade in a first-order-plus-deadtime fit — so treat
+17 s as "of order 15 s", not a precise figure. The direction, though, is not in
+doubt, and the model-free 177 s oscillation corroborates it.
+
+Physically this is not surprising: the inner loop is genuinely fast (Inlet
+tracks SV within 1 s at 0.9 degC rms), but between *inlet air temperature* and
+*what the BT probe reads* sits the bean mass and its mixing — 15-20 s of it.
+The earlier claim that "genuine loop delay is under 3 s in total" counted the
+instrumentation and ignored the process.
+
+**Phase margin against the identified plant** (`L = 1.6*a/(s+a)*e^-17s * (Kp + Ki/s)`):
+
+| `pidKi` | 0.04 | 0.06 | 0.08 | **0.10** | 0.12 | **0.15** | 0.20 |
+|---|---|---|---|---|---|---|---|
+| PM, roast 45 fit | 47 deg | 36 deg | 27 deg | **20 deg** | 15 deg | **8 deg** | **negative** |
+| PM, roast 44 fit | 44 deg | 34 deg | 26 deg | **18 deg** | 12 deg | **4 deg** | **negative** |
+| predicted period | 307/153 s | 275/146 | 250/139 | **230/132 s** | 214/125 | 196/117 | 173/106 |
+
+Roast 45 at Ki 0.10 measured **zeta 0.07 at a 177 s period** against a predicted
+18-20 deg margin at 132-230 s. The model and the roast agree. Roasts 42/44 at
+Ki 0.04 sat at 44-47 deg, which is why their error traces are smooth and
+monotone — the droop was large but there was nothing oscillatory in them.
+
+**So Ki 0.10 was already at the edge, and 0.15 is past it.** The step-2
+recommendation is withdrawn. Note the alog currently on disk records
+`pidKi = 0.15`, so if that is what is loaded, the next roast should be expected
+to ring at a ~2-3 minute period with several degC of swing.
+
+**Lowering Kp makes it worse, not better** — Kp 2.0 at Ki 0.10 gives PM 10 deg,
+Kp 1.5 gives 5 deg. Counterintuitive but standard for a delay-limited loop: near
+crossover the proportional term is what supplies phase lead, and removing it
+leaves the integrator's -90 deg exposed. **Do not respond to ringing by dropping
+Kp.**
+
+**What does buy margin: derivative on error.**
+
+| | Ki 0.10, Kd 0 | Ki 0.10, **Kd 40** | Ki 0.15, Kd 40 | Ki 0.15, Kd 60 |
+|---|---|---|---|---|
+| PM (roast 45 / roast 44 fit) | 20 / 18 deg | **29 / 46 deg** | 16 / 29 deg | 19 / 40 deg |
+
+This is the same conclusion the earlier `Kd`/DoE sweep reached empirically
+(§ Roast 44 outer-loop analysis: Kd 30 DoE rescued Ki 0.24 under a 10 s deadtime
+stress) — now with the reason attached. It needs `pidDsetpointWeight = 1` (DoE);
+under DoM it would brake the ramp instead. Affordable on noise: measured BT
+high-frequency residual is **0.064 degC rms**, so Kd 40 costs ~3.6 duty = 5.8 degC
+of SV jitter, and `derivative_filter` (a fixed 0.1 Hz lowpass, pid.py:657-661)
+cuts that roughly fivefold.
+
+#### Revised recommendation
+
+1. **Set `pidKi` to 0.07 and leave `svLookahead` at 3.** PM ~30 deg on both
+   fits. Expect roughly half of roast 44's droop with none of roast 45's swing.
+   Treat **Ki 0.10 as the measured stability edge**, not a target.
+2. **`pidKp` stays 3.0.** Do not lower it.
+3. **`svLookahead` is now the *only* free tracking lever** — it is feedforward,
+   so it costs no phase margin, whereas Ki is margin-limited. It is still capped
+   near 4 s by the charge-dip preload (that analysis used measured BT, so it
+   stands). If more lead is wanted, `sv_filter=1` blunts the dip at the cost of
+   1.33 s of its own delay — worth one roast's experiment, but only after the
+   gain is safe.
+4. **If roast 45's tracking is wanted back, the route is `pidKd`, not `pidKi`:**
+   `pidKd = 40`, `pidDsetpointWeight = 1.0` (DoE), `derivative_filter = 1`,
+   with `pidKi` at 0.10. Predicted PM 29-46 deg. This is a genuine experiment,
+   not a settled recommendation — change it on its own roast.
+
+**What survives of the air-change finding.** The fan sensitivity is a real
+measurement — a fan term halves the plant-model residual and implies ~49% of
+plant gain per 10 fan units, so the 65 -> 60 cut does remove about a quarter of
+the gain. What is retracted is the claim that it *shapes roast 45's error trace*.
+It is a real disturbance riding on a loop that was too lightly damped to reject
+it cleanly, and the loop is the thing to fix first. Whether moving the cut helps
+is now an open question, not a finding.
+
+**Method note for future work.** Two traps caught here, both worth remembering:
+never let a disturbance term be a free function of time when a plant delay is
+also in question, and check identified delays on more than one roast. Also:
+**Artisan stamps the PID settings into a profile at *save* time, not roast time.**
+`airRoaster_45.alog` was re-saved at 23:24 and now reads `pidKi = 0.15` although
+the roast ran at 0.10; the roast data is byte-identical. The reliable check is
+empirical — `dI/dt = Ki*err` while the output is unclamped, which recovers
+**Ki = 0.101 (r = 0.97, n = 311)** for roast 45.
 
 ### Commissioning order
 

@@ -203,14 +203,38 @@ That is load-disturbance rejection, not a limit cycle — no SV reversal over
 10 degC after 1:00, SV ripple rms 1.19 degC, inner loop rms 0.91, heat 46-59%
 off both rails.
 
-**Step 2: `pidKi` 0.10 -> 0.15, `svLookahead` stays 3, nothing else in the PID**
-(Ki 0.20 triples the ripple under a 10 s deadtime stress; 0.26 breaks). The
-larger win is a roast decision rather than a control one — move the 65 -> 60 air
-cut into the charge dip where the floored output absorbs it for free (simulated
-rms 1.11 -> 0.72, better than any Ki), or re-author the background from a real
-roast so the air schedule's effect is part of the target instead of an error.
-Detail, the option table and the next roast's checklist are in state-plan.md
-§ Roast 45.
+**That air-change reading was wrong, and the operator caught it.** The error
+minimum sits at 3:26 and the error was already climbing for a full minute before
+the 4:26 cut — faster before it (+0.0130 degC/s) than after (+0.0176 then
+reversing). It is one lightly-damped oscillation, not two disturbance responses:
+extrema at 2:12 / 3:26 / 5:10 / 6:22, **period 177 s**, peak-to-peak decaying
+2.82 -> 1.86 degC, log decrement 0.42, **zeta ~ 0.07**.
+
+**The root error was a circular plant fit.** The disturbance had been modelled as
+`w(t)`, a free per-sample time-domain residual, which absorbs exactly the
+mismatch a transport delay creates — so the "plant deadtime ~0 s" result could
+not have found a delay. Refitting with the disturbance restricted to a low-order
+polynomial in t and the delay floating gives **theta = 17 s on roasts 44 and 45
+independently**. Physically that is the bean mass between inlet air and the BT
+probe; the earlier "under 3 s of lag" counted only instrumentation.
+
+Against that plant the margins are **Ki 0.04 -> 44-47 deg, Ki 0.10 -> 18-20 deg
+(predicted period 132-230 s, measured 177 s), Ki 0.15 -> 4-8 deg, Ki 0.20 ->
+negative.** So **roast 45's Ki 0.10 was already the stability edge and the
+step-2 recommendation of 0.15 is withdrawn.** The alog on disk records 0.15
+because Artisan stamps PID settings at *save* time, not roast time — roast 45
+actually ran at Ki 0.10, recovered empirically from `dI/dt = Ki*err`
+(0.101, r 0.97).
+
+**Revised: `pidKi` 0.07, `svLookahead` stays 3, `pidKp` stays 3.0** (lowering Kp
+makes a delay-limited loop *worse*: PM 10 deg at Kp 2, 5 deg at Kp 1.5).
+`svLookahead` is now the only free tracking lever, being feedforward. If roast
+45's tracking is wanted back the route is `pidKd = 40` with DoE
+(`pidDsetpointWeight = 1`) and `derivative_filter = 1`, predicted PM 29-46 deg —
+an experiment for its own roast, not a settled recommendation. The fan
+sensitivity measurement survives (~49% of plant gain per 10 fan units); what is
+retracted is that it shapes roast 45's error trace. Detail in state-plan.md
+§ Correction: roast 45's error is the loop, not the air.
 
 **A source mechanism the earlier notes missed underpins all of it**:
 `_back_calculate_integral` (pid.py:330-348) runs on every clamped cycle whenever
