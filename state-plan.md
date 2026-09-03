@@ -675,6 +675,50 @@ lever as an extra channel in `handleArtisanRequest()` (README § adding a
 channel), then an alarm with Source = that channel, condition above 0.5, action
 DROP. Same alarm mechanism, a measured event instead of an inferred one.
 
+### Roast 44 (2026-09-02) — clean validation run; phase complete
+
+First fully clean run: config loaded from the file (alog confirms `pidKp=3.0`,
+`pidKi=0.04`, `svLookahead=0`), background `profile_002`, PID-driven preheat, no
+mid-roast intervention.
+
+```
+CHARGE_BT  128.3   (target = profile_002 CHARGE BT 127.8)
+DRYe  3:23  vs profile 3:20      <- 3 seconds
+FCs   6:39  vs 6:30
+DROP  7:03  vs 6:51   at BT 200.7 vs 201.2
+```
+
+Tracking error against the background, converging throughout:
+`+0.9, +3.7, +4.0, +3.8, +3.5, +3.0, +2.4, +1.7`.
+
+**DRYe within 3 s of the profile confirms the lookahead diagnosis** — roast 42
+with `svLookahead=20` was 24 s early. The residual is a small positive error
+(BT ~2-4 degC under the curve mid-roast, finishing ~12 s late) — ordinary
+proportional droop, and still shrinking at DROP, so the integrator was still
+catching up rather than having settled short. No change made; watch it over a
+few more roasts before touching Ki.
+
+**The auto-DROP alarm works** (operator confirmed it fired in roast 43). Roast 44
+shows the same signature: BT peaks 201.0 at 7:01, DROP marked 7:03, RoR crosses
+-25 at 7:04 — the mark lands just after the peak, where a manual press had
+consistently landed *before* it (roast 42: 8 s early; roast 41: ~47 s early).
+Margin was ample: minimum RoR in the armed window was **+1.2**, against -10.4 in
+roast 43 and -4.9/+5.4 in roasts 41/42. That spread (-10.4 to +5.4) is the
+number to watch; a roast that dips near -25 while still roasting would
+false-trigger.
+
+**Control settings verified against the PID dialog** (2026-09-02): Input BT;
+Scheduling off; kp 3.000 / ki 0.040 / kd 0.000; Output Positive -> slider
+T_inlet with Limit ticked at 140/300, Negative none, Invert off; Mode Back,
+Lookahead 0 s, SV slider 0-250; Duty Filter on, Steps 1%, Clamp 100/0 %;
+PoE (beta 1.00), DoM (gamma 0.00), derivative filter 0, ILF 1.00, Dlimit 500,
+IWP on, IRoC off.
+
+Note the two easily-confused pairs: the **Duty Clamp Max/Min (100/0 %)** are duty
+percentages — the original `dutyMin=120` error — while the actual degC floor is
+the **Output Limit Min/Max (140/300)**. And with `kd=0`, DoM / gamma /
+derivative filter / Dlimit are all inert.
+
 ### Commissioning order
 
 0. **Every roast: press ON (zeroes the integrator), turn the PID on, preheat

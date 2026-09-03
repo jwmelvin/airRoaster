@@ -162,6 +162,16 @@ construction (DRYe 2:36 vs 3:00) — a spec error, not tuning; it should come do
 to ~0 now that the cascade is known to be tight. Detail in state-plan.md
 § Roast 42.
 
+**Roast 44 (2026-09-02) is the clean validation run and the phase is
+functionally complete.** Config loaded from file, PID-driven preheat, no
+intervention: CHARGE_BT 128.3 against a 127.8 target, DRYe 3:23 vs the
+profile's 3:20, DROP 7:03 vs 6:51 at BT 200.7 vs 201.2, tracking error
+converging +4.0 -> +1.7 degC. The auto-DROP alarm fired (operator-confirmed in
+roast 43; roast 44 shows the same signature). Residual is a small positive
+droop, still shrinking at DROP — no change made, watch it over a few roasts
+before touching Ki. Control settings verified field-by-field against the PID
+dialog. Detail in state-plan.md § Roast 44.
+
 **Canonical config is `artisan/airRoaster_cascadePID.aset`** (one file; the
 brief `_edit` variant used while adding the alarms was folded back in and
 removed), with background
