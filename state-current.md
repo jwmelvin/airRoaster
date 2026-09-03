@@ -162,7 +162,20 @@ construction (DRYe 2:36 vs 3:00) — a spec error, not tuning; it should come do
 to ~0 now that the cascade is known to be tight. Detail in state-plan.md
 § Roast 42.
 
-**Delivered so far**: `artisan/airRoaster_cascadePID.aset`, derived from
+**Canonical config is now `artisan/airRoaster_cascadePID_edit.aset`** (saved
+from a live session 2026-09-02 20:48, so it carries the alarms in plain-list
+form and a current batch counter), with background
+**`artisan/profile_002.alog`**. It adds the auto-DROP alarm — `From DRY END,
+offset 0, Source DeltaBT, below -25 -> DROP` — because Artisan's built-in
+auto-DROP is gated on 7 minutes after CHARGE (canvas.py:4913) and these roasts
+drop at 6:20-6:31, so no sensitivity setting can reach it. DROP matters beyond
+bookkeeping: it drives `pidOffDROP` and the `INLET 0` button chain, so a missed
+DROP leaves the heater running. `svLookahead` is now **0**, which also matters
+more with `profile_002`: the background's DROP bounds the control window, and at
+lookahead 20 the SV would have stopped updating at 6:31 against a 6:51 DROP.
+See state-plan.md § Auto-DROP detection.
+
+*Superseded:* `artisan/airRoaster_cascadePID.aset`, derived from
 `artisan/airRoaster_inletPoints.aset` (the operator's live config saved
 2026-09-02, which supersedes the repo's older `airRoaster.aset`; their
 `[ArduinoPID]` and `[Sliders]` sections are byte-identical). 17 `[ArduinoPID]`

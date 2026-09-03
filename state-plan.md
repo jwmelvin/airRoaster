@@ -123,7 +123,17 @@ profile following against a background curve.
   provenance; they are overwritten to match the new single set.
   `pidGainScheduling` stays false.
 
-**Deliverable.** `artisan/airRoaster_cascadePID.aset`, derived from
+**Deliverable.** **`artisan/airRoaster_cascadePID_edit.aset` is the canonical
+config from 2026-09-02 20:48** — saved by the operator from a live Artisan
+session, so it carries the alarms in plain-list form and a current
+`batchcounter`. `airRoaster_cascadePID.aset` is superseded; keep it only as the
+record of the pre-alarm state. The background is now
+**`artisan/profile_002.alog`** (CHARGE BT 127.8, DRYe 3:20, FCs 6:30, DROP 6:51
+at BT 201.2 — a gentler middle ramp than `profile_001` to the same endpoint,
+reached sooner). Both backgrounds carry zero special events, so neither can
+conflict with the PID over slider 3.
+
+*Superseded:* `artisan/airRoaster_cascadePID.aset`, derived from
 **`artisan/airRoaster_inletPoints.aset`** (the operator's live config as saved
 2026-09-02, which supersedes the older `airRoaster.aset` in the repo). Both
 originals are left untouched so the playback setup stays loadable.
@@ -589,12 +599,82 @@ target at any instant.
 
 Lookahead exists to cancel plant lag. 20 s was chosen before the cascade's
 tightness was known; with the inner loop at rms 2.9 degC the effective lag is
-near zero, so the lead became a pure time advance. To land on the background's
-timeline, `svLookahead` should come down to ~0 (5-10 if some lead is wanted at
-the steepest post-TP RoR).
+near zero, so the lead became a pure time advance. **`svLookahead` is now 0**
+(operator decision 2026-09-02).
+
+That change became urgent rather than cosmetic with `profile_002`, because the
+background's DROP also bounds the control window — `calcSV` returns None once
+`tx + svLookahead > timeB[timeindexB[6]]`, deactivating follow-background. With
+a 6:51 DROP and a 20 s lookahead the SV would have stopped updating at **6:31**,
+while the lookahead simultaneously pushed the roast ~20 s early, so the loop
+would have coasted on a stale target through the end of the roast.
+`profile_001`'s 7:11 DROP had 40 s of slack absorbing this; `profile_002` does
+not.
 
 Unchanged: `FF` still railed at 100 with the inner integrator at -40 to -50
 cancelling it (§ Roast 41, separate finding).
+
+### Auto-DROP detection (operator requirement 2026-09-02)
+
+DROP is the trigger for the whole heat-off chain — `pidOffDROP` stops the outer
+loop and `buttonactions[6]` sends `INLET 0` — so a missed DROP leaves the heater
+running. The operator wants it detected from the lever pull, which is plainly
+visible in the traces (BT falls, RoR plummets).
+
+**Artisan's built-in auto-DROP cannot do it.** `canvas.py:4913-4915` gates the
+BT-break detector on `(sample_timex[-1] - sample_timex[timeindex[0]]) > 7*60` —
+**auto-DROP cannot fire until 7:00 after CHARGE**, and these roasts drop at
+6:20-6:31. `7*60` is a literal, so the Standard/Sensitive `autoDropMode` switch
+is never consulted. (For the record, at 1 s sampling Sensitive only changes
+`d_drop` from -0.34 to 0.00; `offset_drop` is identical at 0.2.)
+
+**The background path is a scheduled drop, not detection.** `playbackdrop()`
+(canvas.py:6120-6131) has a 4-minute gate (`playbackdrop_min_roasttime = 4*60`)
+and its own flag `backgroundPlaybackDROP`, independent of event playback
+(canvas.py:5146) — so it could be enabled without reintroducing the slider
+conflict, via the Artisan Command `playbackdropmode(<n>)` (0 off, 1 by time,
+2 by BT, 3 by ET). But it fires on the profile's schedule: by BT it needs the
+background's DROP BT to sit *below* where the operator actually pulls (roast 42
+peaked at 201.0 against a 202.0 background DROP, so it would never have fired),
+and by time it fires at the profile's DROP regardless of the lever. Left off.
+
+**The solution: an alarm on the RoR collapse.** Alarm action 13 = DROP
+(canvas.py:6035-6038) with no time gate. Threshold sized from the traces
+(10 s RoR span, degC/min):
+
+| | roast 41 | roast 42 |
+|---|---|---|
+| min during DRYe..DROP (armed window) | -4.9 | **+5.4** |
+| after the dump | -24.6 | **-43.6** |
+| **charge dip** (for contrast) | **-266.7** | **-267.0** |
+
+`-25` never occurs while roasting (tightest margin ~20 degC/min) and is crossed
+within ~3 s of the BT peak at the dump. The charge dip at -267 is why the alarm
+**must not be armed from CHARGE** — it would fire at turning point every roast.
+DRYe (~2:36-3:20) is safely past TP (~0:30).
+
+As entered and verified in `airRoaster_cascadePID_edit.aset`:
+
+```
+alarm 1: off  From=CHARGE   offset=1s  Source=(none/time)  above    0  -> Playback ON
+alarm 2: ON   From=DRY END  offset=0s  Source=DeltaBT      below  -25  -> DROP
+```
+
+**`Time` must be 00:00.** The alarm's time and temperature conditions are OR'd,
+not AND'd — `if alarm_time >= alarmoffset: alarm_ready = True` (canvas.py:5048)
+and the temperature block each set the flag independently. A non-zero offset
+makes the alarm fire on the clock alone, ignoring the RoR entirely.
+
+Safe alongside a manual press: the DROP action is guarded by
+`timeindex[6] == 0`, so whichever comes first wins and there is no double-mark.
+Artisan's own `autoDrop` can stay on; its 7-minute gate makes it inert at these
+roast lengths.
+
+**Still wanted eventually** (operator): instrument the dump lever so the pull
+sends a real signal. The clean path needs no new Artisan capability — expose the
+lever as an extra channel in `handleArtisanRequest()` (README § adding a
+channel), then an alarm with Source = that channel, condition above 0.5, action
+DROP. Same alarm mechanism, a measured event instead of an inferred one.
 
 ### Commissioning order
 
