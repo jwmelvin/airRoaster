@@ -1639,6 +1639,131 @@ and not CHARGE (§ Auto-DROP detection).
 `backgroundpath` key in `airRoaster_cascadePID.aset` — the reference lives in
 each saved profile. profile_003 has to be loaded as background per session.
 
+### Scheduling, characterisation runs, and the fan (operator questions 2026-09-02)
+
+#### 1. Gain scheduling / partitioning
+
+**Error-keyed gains are not expressible in Artisan.** `getParameter` evaluates
+the schedule at `self.target if self.gain_scheduling_on_SV else PV` (pid.py:399)
+— SV or PV, never the error. Nor can gains be set at runtime: the complete list
+of `pid*` Artisan Commands is `pidmode`, `pidDerivativeFilter`,
+`pidDerivativeLimit`, `pidILF`, `pidIWP`, `pidIRoC`, `pidSVbuttons`,
+`pidWeights`, `pidSVC`, `pidSV`, `pidRS`, `pidSource`, `pidLookahead`
+(main.py:9926-10547) — **there is no `pidKp`/`pidKi`/`pidKd` command**. So gains
+can only vary through the built-in SV/PV schedule.
+
+**And the loop does not need one.** Recomputed against the corrected plant
+(theta 17 s), the fan is the only thing that moves the plant materially through a
+roast — refitting with theta fixed at 17 gives `a = 0.00288 + 0.01168*(fan-60)/60`,
+a 1.55x bandwidth range over the fan settings actually used. The margin barely
+notices:
+
+| fan | 58 | 60 | 62 | 65 |
+|---|---|---|---|---|
+| `a_eff` (tau) | 0.00249 (402 s) | 0.00288 (347 s) | 0.00327 (306 s) | 0.00385 (260 s) |
+| phase margin at Ki 0.07 | 28 deg | 29 deg | 30 deg | 31 deg |
+| Ki that would hold PM = 30 deg | 0.066 | 0.068 | 0.070 | **0.074** |
+
+A **+-6% gain trim** across the whole operating range is not worth a schedule.
+The reason it is so flat: the plant is nearly integrating in the crossover band
+(tau 260-400 s against a 250-330 s oscillation period), so a change in tau moves
+gain and phase in compensating directions. **The earlier enthusiasm for a Ki
+schedule (§ Roast 44 outer-loop analysis) is retracted** — it was computed on the
+discredited theta = 0 plant.
+
+Two further obstacles if it were ever wanted: the schedule variable is
+**non-monotone in time** (target 128 at preheat, 67 at TP, 201 at DROP, so
+target = 128 occurs twice and gets the same gains both times); and one schedule
+serves all three gains, so `pidKp1`/`pidKd1` must be set equal to their bases.
+
+**The windup half of the question is already done, automatically and
+error-dependently.** `_should_integrate` (pid.py:301-316) blocks integration
+whenever the unclamped output is saturated in the direction the error would
+worsen, and `_back_calculate_integral` (pid.py:330-348) bleeds the integrator
+whenever the output clamps. Both are live via `pidIWP=true`. That *is*
+error-keyed windup management; there is nothing to add. `pidIRoC` keys on
+per-sample *setpoint change*, not error, and cannot reach its threshold here.
+
+**But one thing in this family is available, and it is the right one:
+`pidLookahead(<n>)` sets `svLookahead` at runtime** (main.py:10547, gated on
+`Controlbuttonflag`, which the cascade requires anyway). That resolves the
+profile_003 trade instead of compromising it: lookahead is *harmful* at the dip
+(manufactured error, SV on the floor at TP) and *helpful* on the ramp, and it is
+feedforward, so it costs no phase margin — which matters now that Ki is
+margin-limited. Wiring:
+
+```
+CHARGE button action (buttonactions[0], currently empty) -> a button with pidLookahead(0)
+alarm: From CHARGE, offset ~90 s, source -3 (time only)  -> a button with pidLookahead(6)
+```
+
+Also runtime-settable the same way if ever wanted: `pidILF`, `pidIWP`,
+`pidIRoC`, `pidDerivativeLimit`, `pidDerivativeFilter`, `pidWeights(beta,gamma)`.
+
+Cautions: alarm time and temperature conditions are **OR'd** (§ Auto-DROP
+detection), so a time-only alarm needs source -3 and the temperature row left
+inert. And the switch is a step in the target of `L * RoR` — at 1:00 the
+background runs ~46 degC/min, so 6 s of lead is a +4.6 degC target step and about
++22 degC of SV. Apply it at 1:30-2:00 where the RoR is lower, or in two steps
+(0 -> 3 -> 6). **Introduce on its own roast.**
+
+#### 2. Characterisation runs — yes, and this is the highest-value thing available
+
+**The accumulating roasts are not sufficient, and more of the same will not
+help.** Everything so far is closed-loop against a smooth reference, where the
+input is a deterministic function of the output, so there is no independent
+excitation. The consequence is visible directly — the theta/tau ridge on roast 45:
+
+| theta | 0 s | 5 | 10 | 15 | **17** | 20 | 25 | 30 |
+|---|---|---|---|---|---|---|---|---|
+| best-fit tau | 1071 s | 426 | 310 | 286 | **275** | 293 | 327 | 402 |
+| residual (degC/s) | 0.0186 | 0.0178 | 0.0168 | 0.0163 | **0.0160** | 0.0162 | 0.0165 | 0.0170 |
+
+**tau moves fourfold while the residual moves 14%.** That is a flat ridge: the
+parameters are not separately identifiable from this data, which is exactly why
+roasts 44 and 45 agreed on theta = 17 s but gave tau 121 s and 275 s. **What is
+missing is excitation, not data.**
+
+Signal-to-noise is not the obstacle. Measured BT high-frequency residual is
+**0.064 degC rms**, and a 30 degC inlet step changes `dBT/dt` by 0.075-0.116
+degC/s — **3.4 to 5.2 degC of BT deflection over 45 s, SNR 50-80.**
+
+**Test A — preheat plateau step. Free, no beans, ~10 minutes.** PID off, SV
+manual at 145, let BT settle near 129. Step SV to 185, hold 180 s, step back,
+hold 180 s. Gives theta and the empty-roaster bandwidth cleanly. It will not give
+the *loaded* tau, but it anchors theta — the parameter the closed-loop data
+cannot resolve and the one the stability margin depends on.
+
+**Test B — mid-roast doublet. One degraded (not ruined) batch.** Normal roast on
+profile_003. At 3:00 press CONTROL to drop the PID out, leaving SV frozen near
+215. Settle 15 s. Then SV +30 for 60 s, SV -30 (i.e. 30 below the frozen value)
+for 60 s, back to the frozen value, PID back on around 5:30. **A doublet rather
+than a step** for two reasons: its net energy is ~zero, so the roast lands near
+where it would have; and a 60 s half-period puts the peak excitation near a 240 s
+period, right in the loop's 250-330 s crossover band.
+
+**Test C — the fan, properly.** Repeat Test B at fan 58 and at fan 65. The fan
+sensitivity is currently a single weakly-identified regression coefficient from
+one roast; two doublets would measure it.
+
+#### 3. The fan
+
+**From the loop's point of view the fan level is nearly free** — 28 deg to 31 deg
+of phase margin across 58-65 (table above). What disturbs the loop is the *step*,
+not the level. So there is no control-side reason to abandon choosing fan by bean
+circulation; the useful discipline is to make the changes at repeatable times, or
+to ramp them, so the disturbance is the same roast to roast.
+
+On predicting the setting from load: the operator is right that mass is not
+sufficient. Minimum fluidisation velocity is set by particle diameter, density
+and shape (Ergun / Wen-Yu), while charge mass sets bed pressure drop and hence
+where the fan sits on its own curve — two different dependencies. No closed form
+will beat an empirical fit on this machine. The practical route is to log, per
+batch, the fan setting judged adequate together with charge mass, bean screen
+size and density; 15-20 batches gives a usable regression and a defensible
+automation rule. That is a data-collection project rather than an analysis one,
+and it is independent of the control work.
+
 ### Commissioning order
 
 0. **Every roast: press ON (zeroes the integrator), turn the PID on, preheat
