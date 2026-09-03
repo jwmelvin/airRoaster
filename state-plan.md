@@ -1466,6 +1466,96 @@ the roast ran at 0.10; the roast data is byte-identical. The reliable check is
 empirical — `dI/dt = Ki*err` while the output is unclamped, which recovers
 **Ki = 0.101 (r = 0.97, n = 311)** for roast 45.
 
+### The output floor / range analysed (operator request 2026-09-02)
+
+`positiveTargetMin` / `positiveTargetMax` are **two things at once**, and only
+one of them is a clamp.
+
+**1. They set the actuator gain.** `setEnergy` maps duty onto the subrange
+linearly, so `SV = min + (max-min)*duty/100` and **1 duty unit = (max-min)/100
+degC**, currently 1.60. Moving either endpoint rescales the loop's actuator gain
+and is *exactly equivalent* to scaling `pidKp` and `pidKi` together:
+
+| min/max | span | degC per duty | equivalent gains at the present physical loop gain | PM at Kp 3 / Ki 0.07 (r45 fit / r44 fit) |
+|---|---|---|---|---|
+| **140/300** *(current)* | 160 | **1.60** | Kp 3.00, Ki 0.0700 | **31 / 30 deg** |
+| 120/300 | 180 | 1.80 | Kp 2.67, Ki 0.0622 | 31 / 27 deg |
+| 100/300 | 200 | 2.00 | Kp 2.40, Ki 0.0560 | 30 / 23 deg |
+| 160/300 | 140 | 1.40 | Kp 3.43, Ki 0.0800 | 31 / 33 deg |
+| 140/270 | 130 | 1.30 | Kp 3.69, Ki 0.0862 | 31 / 34 deg |
+| 130/290 or 150/310 | 160 | 1.60 | unchanged | 31 / 30 deg |
+
+Note the last row: **sliding the window without changing its width changes the
+gain not at all.** And since the gain effect is redundant with `pidKp`/`pidKi`,
+the *only* reasons to move these keys are the saturation limits themselves.
+
+**2. The floor is not the saturation point.** `pid_control.py:1469` calls
+`setLimits((-100 if pidNegativeTarget else 0), (100 if pidPositiveTarget else 0))`
+— with no negative target the PID clamps the **duty** at 0 and 100 *regardless*
+of `positiveTargetMin`, and `_calculate_integral_limits(0, 100, ILF)` gives
+`[0, 100]` with it. So moving the floor changes neither **when** nor **for how
+long** the loop saturates, nor the back-calculation behaviour that sets the
+integrator handover (§ Correction). It changes only what inlet temperature
+"duty 0" *means* — how much heat still flows while saturated.
+
+**Raising it is blocked by the preheat, and there is less room than assumed.**
+Measured on roast 45's PID-driven preheat, the loop settles at **SV 145** to hold
+BT ~128-129 against the background's 127.8 CHARGE BT:
+
+```
+t -70  SV 159.8   t -50  SV 151.4   t -30  SV 147.0   t -10  SV 144.2
+settled over the last 30 s before CHARGE: SV 145.0, floor 140
+```
+
+That is **5 degC of downward authority at the charge point**, not the 8 degC
+§ PID-driven preheat assumed. A floor above ~142 puts the preheat on its own
+floor and charges hot — the failure that killed the 170 experiment.
+
+**And it would buy very little.** Over the ~40 s the floor binds, the TP
+sensitivity is `a * dIN * 40`:
+
+| floor change | -20 | -10 | +10 | +20 |
+|---|---|---|---|---|
+| TP moves (roast 45 fit, a=0.00364) | -2.9 | -1.5 | +1.5 | +2.9 degC |
+| TP moves (roast 44 fit, a=0.00829) | -6.6 | -3.3 | +3.3 | +6.6 degC |
+
+With only ~2 degC of usable headroom (140 -> 142) that is **+0.3 to +0.7 degC of
+TP**. Not worth a config change.
+
+**Lowering it goes the wrong way** — deeper TP by 1.5-3.3 degC per 10 degC, the
+opposite of what is wanted, while raising the actuator gain (180 span = 1.8
+degC/duty, i.e. Kp 3.38 / Ki 0.079 in present-range terms) and costing up to
+7 deg of phase margin on the roast 44 fit.
+
+**The ceiling should stay at 300.** It has never bound — in-roast maximum SV was
+**251.2** (roast 45) and **251.9** (roast 44), about 48 degC spare — and 300 is
+exactly the firmware clamp `INLET_SV_MAX_C = 300.0f` (airRoaster.ino:192), so the
+two agree by construction. Narrowing to 270 is merely `Kp 2.44 / Ki 0.057` by
+another name, and it would remove the headroom that a cold start or a heavy
+batch needs.
+
+**`positiveTargetRangeLimit` must stay ticked.** Unticked, `heat_min` reverts to
+the slider minimum of 0 (`slidermin=0, 0, 0, 0`), the loop commands `INLET 0`,
+and the firmware disengages with heat off mid-roast (§ The floor).
+
+**Conclusion: leave `positiveTargetMin` at 140 and `positiveTargetMax` at 300.**
+The floor is already within 5 degC of the preheat operating point, so it is
+close to its ceiling; the range's only other effect is a gain rescale better
+done with `pidKp`/`pidKi` directly.
+
+**Interaction with raising the profile's TP — they work together.** A shallower
+background dip shrinks the dip error (roast 45 bottomed at -15.3 degC against the
+profile), and a smaller error means the loop commands *more* inlet through the
+dip, moving **away** from the floor: roast 45's 39 s of saturation should shrink
+or disappear. So the TP fix reduces the floor's relevance rather than requiring
+it to be co-tuned. Two cautions: set the profile's TP to what the roaster
+actually reaches rather than above it, or the loop will add heat to meet it and
+warm the whole early roast; and the achieved minimum is batch-dependent —
+**58.8 / 60.2 / 67.3 degC in roasts 43 / 44 / 45**, an 8.5 degC spread with
+`last_batchsize` moving 400 -> 345 g — so no single value fits every batch.
+Match the size roasted most often and expect a residual dip error of a few degC
+rather than fifteen.
+
 ### Commissioning order
 
 0. **Every roast: press ON (zeroes the integrator), turn the PID on, preheat
