@@ -1556,6 +1556,89 @@ warm the whole early roast; and the achieved minimum is batch-dependent —
 Match the size roasted most often and expect a residual dip error of a few degC
 rather than fifteen.
 
+### profile_003 — the TP correction, and what it does to the lookahead (2026-09-02)
+
+New background, TP raised to match what the roaster actually reaches.
+
+| | profile_002 | **profile_003** |
+|---|---|---|
+| CHARGE BT | 127.83 | **128.02** |
+| TP minimum | 51.96 at 0:32 | **67.39 at 0:37** |
+| steepest dip fall | 5.48 degC/s | **3.74 degC/s** |
+| DRYe | 3:20 at BT 151.95 | **3:12 at BT 149.55** |
+| FCs | 6:30 at BT 197.90 | 6:39 at BT 197.54 |
+| DROP | 6:51 at BT 201.18 | **7:05 at BT 201.45** |
+
+The TP now matches roast 45's achieved 67.3 degC almost exactly, and CHARGE BT is
+unchanged, so the preheat operating point (SV ~145) and the 5 degC of floor
+headroom from § The output floor stand as analysed.
+
+**The saturation is gone.** Replaying roast 45's measured BT against the new
+background at `svLookahead=0`: worst dip error **-3.1 degC** (was -15.8),
+`Iterm` handed to the roast **13.0** (was 34.2), floor time **0 s** (was 39 s).
+The 40 s of open-loop operation every roast is eliminated, and the loop enters
+the ramp in linear control with a state set by integration rather than by an
+anti-windup side effect.
+
+**But it tightens the lookahead trade rather than relaxing it — the opposite of
+what § The output floor predicted.** The earlier reasoning was that a gentler dip
+means each second of lead injects less error. That is true per second, but it
+misses the dominant term: with profile_002 the target and BT disagreed by 15 degC
+at the dip *anyway*, so the lead was a small addition to a large existing error.
+Now that they agree, **every second of lead is pure manufactured error**:
+
+| `svLookahead` | 0 | 1 | 2 | **3** *(current)* | 4 |
+|---|---|---|---|---|---|
+| worst dip error (degC) | -3.1 | -4.8 | -8.3 | **-11.6** | -14.8 |
+| `Iterm` handed to the roast | 13.0 | 18.7 | 26.0 | **33.4** | 40.7 |
+| floor time | 0 s | 3 s | 4 s | **5 s** | 6 s |
+| droop at Ki 0.07, mid-roast (degC) | +1.34 | +1.09 | +0.84 | **+0.59** | +0.34 |
+
+So `L=3` re-creates about -11.6 degC of exactly the dip error the new profile just
+removed, and puts the SV on its floor for 5 s at turning point — worth roughly
+1-2.5 degC of extra TP depth by the sensitivity in § The output floor, partly
+undoing the change. What it buys is 0.75 degC of droop.
+
+**Recommendation: keep `svLookahead` at 3 for the next roast anyway.** Two
+things already change — `pidKi` 0.10 -> 0.07 and profile_002 -> profile_003 — and
+a third would make the result unreadable. **`L=2` is the likely follow-up** once
+the pair has been seen; L=0 is the choice if a completely clean dip is worth
++1.34 degC of droop.
+
+**Two things improve for free.**
+
+- **The control window is healthier.** `calcSV` deactivates at background DROP
+  minus lookahead: 7:02 with profile_003 at `L=3`, against 6:48 with
+  profile_002. Roasts have been dropping at 6:49-7:04, so the old margin was
+  negative on a fast roast and is now positive.
+- **Mark times become meaningful again.** profile_003's DRYe sits at BT 149.55
+  against the Phases DRY threshold of 149 (`phases=[38, 149, 196, 218]`), so
+  `autoDRY` will now fire within ~0.5 degC of the profile's own DRYe. With
+  profile_002's DRYe at BT 151.95 the two were 2.4 degC apart, which is what made
+  roast 45's marks read 9-11 s early (§ Roast 45). Still prefer the
+  time-to-reach-a-given-BT comparison, but the mark is no longer misleading.
+
+**Caveat: the TP match is batch-specific.** profile_003 is matched to roast 45
+(345 g, TP 67.3). Roasts 43/44 at 400 g bottomed at 58.8/60.2. Replaying a 7 degC
+lower BT against profile_003 at `L=0` flips the dip error positive (-1.7 becomes
+BT *below* target), the loop adds heat through the dip, and the handover rises to
+39 by ordinary integration. Not harmful — but a heavier charge will run the early
+roast warmer against this background, and the dip error will not be near zero the
+way it is for a 345 g batch.
+
+**Also a real roast change beyond TP**: the back half is 0.4-1.8 degC cooler from
+4:00 on and DROP is 14 s later at the same BT, so profile_003 is a slightly
+gentler finish, not only a shallower dip.
+
+**Auto-DROP alarm margin is ample.** profile_003's RoR over the armed window
+(DRYe 3:12 to DROP 7:05) runs +8.6 to +19.6 degC/min against the -25 threshold;
+the charge dip reaches -220, which is why the alarm must stay armed from DRY END
+and not CHARGE (§ Auto-DROP detection).
+
+**The background is not carried in the settings file.** There is no
+`backgroundpath` key in `airRoaster_cascadePID.aset` — the reference lives in
+each saved profile. profile_003 has to be loaded as background per session.
+
 ### Commissioning order
 
 0. **Every roast: press ON (zeroes the integrator), turn the PID on, preheat
