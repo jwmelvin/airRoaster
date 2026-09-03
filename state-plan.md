@@ -927,7 +927,7 @@ does it address **ramp-following lag specifically**.
 | option | addresses ramp lag? | finding |
 |---|---|---|
 | **Gain scheduling** (`pidGainScheduling`, `...SV`, `...Quadratic`, `pidSchedule0/1/2`, Kp/Ki/Kd sets 1 and 2) | **yes, indirectly** | `getParameter` (pid.py:387-404) fits a line through `(Schedule0, Kp)` and `(Schedule1, Kp1)` — the *base* gains are the value at `Schedule0` — evaluates it at `self.target` when `pidGainSchedulingSV` (the default), and clamps to `[min, max]` of the two. Since `e_ss = (du_req/dt)/Ki` and `du_req/dt` is not constant over the roast, a Ki schedule can flatten the error where a single Ki cannot. Simulated, `Ki 0.18 @ SV 130 -> 0.06 @ SV 200` gives mean **+0.23**, rms **0.31**, max +0.54, min -0.57 — better than any flat Ki. The reverse slope is worse (rms 1.37), so the direction matters. **Gotcha: one schedule serves all three gains**, so `pidKp1` must be set equal to `pidKp` and `pidKd1` to `pidKd` or Kp and Kd get scheduled too. |
-| **PoE/PoM, `beta`** (`pidPsetpointWeight`) | **no** | `Pterm = Kp*(beta*SP - PV)`. `beta < 1` leaves a standing `Kp*(beta-1)*SP` offset — at `beta=0.9` and SP 130 that is **-39 duty** the integrator must cancel — and `applyIntegralLimits` (pid.py:377-382) only partly compensates by raising the integral ceiling. It changes the offset, never the velocity error. **Must stay 1.0.** |
+| **PoE/PoM, `beta`** (`pidPsetpointWeight`) | **yes — and the wrong way** | `Pterm = Kp*(beta*SP - PV)`. Correcting the first version of this row: beta does *not* merely shift the offset, it enters the velocity error directly as `e_ss = [du_req/dt + Kp*(1-beta)*R] / Ki`, so **any beta below 1 makes ramp lag worse**, and beta above 1 — the direction that would help — is blocked by the integral limits. Derivation, sweep and source in § Proportional on Measurement below. **Must stay 1.0.** |
 | **DoE/DoM, `gamma`** (`pidDsetpointWeight`) | **no** | Inert at `Kd=0`; see above for both settings. |
 | **`pidDlimit`, `derivative_filter`** | **no** | Inert at `Kd=0`. `Dlimit` clamps `derror` in degC/s **before** the Kd multiply (pid.py:275-277) — 500 is unreachable. `derivative_filter` is a boolean, not a level: `_calculate_derivative` only tests `> 0`, and the filter is a fixed 0.1 Hz first-order lowpass (pid.py:657-661). |
 | **`pidIRoC` + `pidIRoCthreshold`** | **no, and it would misfire** | `_handle_setpoint_change_integral` (pid.py:318-328) compares the **per-sample** target change, not a cumulative one. The background's largest per-sample step is **5.48 degC** (in the charge dip), so at threshold 30 it can never fire — the setting is inert, correctly. Lowering the threshold to reach it would zero `Iterm` in the middle of the charge dip, destroying the useful re-seed. Leave off. |
@@ -1182,6 +1182,88 @@ what carries `SV`). Check, in order:
 4. **No SV reversal over 10 degC after 1:00**, and SV ripple against a 61 s mean
    under ~6 degC (roast 45: max 4.5, rms 1.19). Above that, Ki has gone too far.
 5. Inner loop rms of ~1 degC and heat off both rails, as in roast 45.
+### Proportional on Measurement (operator question 2026-09-02)
+
+Raised against Beauregard's article
+(`brettbeauregard.com/blog/2017/06/introducing-proportional-on-measurement/`),
+which is the reference Artisan itself cites. Two separate things have to be
+answered: what Artisan's PoM button actually does, and whether the real
+algorithm would help.
+
+**Artisan no longer has PoM.** `pid_control.py:1252-1253` carries that exact URL
+followed by `=> PoM removed in v3.1.2`. What survives is the **PoE/PoM radio
+pair in the PID dialog, which only writes `pidPsetpointWeight` (beta)** — PoE
+sets beta 1, PoM sets beta 0 (pid_dialogs.py:1199-1210), and the beta spin box
+takes anything in `[0, pidPsetpointWeightMax=2]`. Beta feeds plain **setpoint
+weighting**, `Pterm = getKp(i) * (beta*target - i)` (pid.py:459), evaluated fresh
+each cycle. Beauregard's PoM is not that: it *accumulates*
+`outputSum -= Kp*(PV - lastPV)` into the same variable as the integral, making
+the proportional path an integrator of measurement change. **The button labelled
+PoM in the dialog is not the algorithm in the blog.**
+
+**Both make this loop worse, for one structural reason.** PoM's premise is a
+regulation problem where the PV settles, so `sum(Kp*dPV)` stays near zero. A
+roast is the opposite: BT rises monotonically by ~136 degC, so that term
+integrates to `-3 * 136 = -408 duty` which the integrator has to claw back — and
+it can only do that by running a standing error. Setpoint weighting reaches the
+same place analytically. Redoing the § Roast 44 derivation with beta:
+
+```
+u  = Kp*(beta*SP - PV) + I = Kp*(beta-1)*PV + Kp*beta*e + I
+du/dt = Kp*(beta-1)*R + Ki*e      =>    e_ss = [ du_req/dt + Kp*(1-beta)*R ] / Ki
+```
+
+So **beta below 1 adds `Kp*(1-beta)*R/Ki` of velocity error** — at beta 0,
+Kp 3, R 0.25 degC/s, Ki 0.15 that is **+5.0 degC** on top of the existing lag.
+Simulated on roast 45's plant at Ki 0.15, `svLookahead` 3:
+
+| beta | 0.00 *(the PoM button)* | 0.50 | 0.90 | **1.00** *(PoE, current)* | 1.15 | 1.50 |
+|---|---|---|---|---|---|---|
+| quiet droop (degC) | +4.90 | +2.28 | +0.19 | **-0.34** | -6.54 | -53.90 |
+| rms (degC) | 7.87 | 4.41 | 1.37 | **0.82** | 6.37 | 49.61 |
+| behind at 5:00 | +23.9 s | +13.6 s | +5.2 s | **+3.0 s** | -27.1 s | -111 s |
+| `Iterm` at DROP | 666 | 366 | 125 | **65** | 0 (railed) | 0 (railed) |
+
+beta 0 is *worse than roast 44's original tuning*. And the direction that would
+help — **beta above 1, which subtracts `Kp*(beta-1)*R` from the velocity error
+and at beta ~1.15 would cancel it exactly — is structurally blocked.**
+`applyIntegralLimits` (pid.py:377-382) sets
+`integral_max = 100*ILF + getKp(PV)*(1-beta)*target`, so for beta > 1 the ceiling
+*shrinks* (to 19 at SP 180, beta 1.15) at precisely the moment the required
+`Iterm` turns negative — and `integral_min` is pinned at **0** whenever
+`outMin >= 0` (pid.py:59-63). The integrator rails at zero and the roast runs
+27 s fast. **beta = 1.0 is therefore not merely the safe default, it is the
+unique optimum in this structure.**
+
+**True PoM, implemented properly, behaves the same way** (simulated as
+`sum += Ki*err - Kp*dPV`, clamped `[0,100]`):
+
+| | Kp 3 / Ki 0.15 | Kp 3 / Ki 0.40 | Kp 3 / Ki 1.00 | Kp 0.5 / Ki 0.15 |
+|---|---|---|---|---|
+| quiet droop | +4.91 | +1.42 | +0.19 | +0.53 |
+| rms | 7.73 | 2.63 | **0.66** | 3.78 |
+| behind at 5:00 | +23.9 s | +7.4 s | +1.0 s | +2.1 s |
+
+At the current gains it lands within 0.15 degC of beta 0 — same cause, same
+result. It *can* be made to track (Kp 3 / Ki 1.00, rms 0.66, comparable to the
+best flat tuning) but only with Ki **seven times** the current value, and at that
+point the `-Kp*dPV` term is doing the stabilising, not the proportional job:
+**`-Kp*dPV` is derivative-on-measurement folded into the accumulator.** That is
+the same result as the Kd/DoE test in § Roast 44 outer-loop analysis — D buys
+margin for a larger Ki — reached by a more obscure route. If that trade is ever
+wanted, take it explicitly with `pidKd` under DoE, where `Dlimit` and
+`derivative_filter` still apply, rather than by moving beta.
+
+**Why the instinct is still reasonable.** PoM is the right tool for the problem
+it was invented for: proportional kick and overshoot on a *setpoint step*. This
+loop does not have that problem — the background is a smooth Designer curve whose
+largest per-sample step is **5.48 degC**, and that one occurs inside the charge
+dip where the output is floored anyway. There is no kick to suppress, and the
+error that does exist is a ramp-following error, which PoM structurally worsens.
+
+**Verdict: leave `pidPsetpointWeight` at 1.0.** Nothing in the PoM family
+addresses ramp lag; `svLookahead` is the feedforward that does, and Ki is the
+gain that does.
 
 ### Commissioning order
 
