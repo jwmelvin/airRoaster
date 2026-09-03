@@ -2028,6 +2028,92 @@ into a measured event. The RoR margin is currently ample but roast-dependent
 (-10.4 to +5.4 across the armed windows seen so far), and DROP drives the whole
 heat-off chain.
 
+### Runbook — the agreed order of work (2026-09-02)
+
+One variable per roast. Steps 1-4 are the critical path; 5-7 are independent and
+can slot in anywhere after step 1.
+
+**Step 1 — validate `pidKi` 0.07 + profile_003. Next roast, no other changes.**
+Load `artisan/airRoaster_cascadePID.aset`, background `artisan/profile_003.alog`.
+Normal procedure: **ON** (zeroes the integrator), PID on, PID-driven preheat,
+CHARGE, no intervention. Capture the dashboard CSV as well — this is the last
+roast that needs it. What to read afterwards:
+
+1. Time to reach BT 120 / 150 / 180 / 196.5 against the profile. Ignore DRYe and
+   FCs mark times; they are Phases thresholds (§ Roast 45).
+2. Quiet-window error (3:10-4:20, 5:40-6:40) — expect under ~1 degC.
+3. **Is the 177 s ring still there?** Extrema in the error trace, and their
+   spacing. At Ki 0.07 the model says ~30 deg of margin, so the swing should be
+   markedly smaller and slower than roast 45's.
+4. No SV reversal over 10 degC after 1:00; SV ripple against a 61 s mean under
+   ~6 degC.
+5. Floor time at the charge dip — profile_003 predicts **0 s** (§ profile_003).
+6. Inner loop rms ~1 degC, heat off both rails.
+
+**Step 2 — flash v0.19.0 and wire up the new channels.** After step 1, so that
+roast stays clean. `./verify.sh upload`, then in Artisan **Config > Device >
+Extra Devices** add a further WebSocket device so channel slots 5 and 6 become
+curves, and name them `SV` and `HT`. The `channel_nodes`/`channel_modes` entries
+are already in both `.aset` files. Confirm the two curves appear and track, then
+set **`createEvents` back to false** — it is only the fallback. From here every
+roast is self-contained and no CSV is needed.
+
+**Step 3 — Test A, empty roaster. No beans, ~12 minutes, free.** Same `.aset`,
+background `artisan/charstep_empty.alog`. **PID OFF** (CONTROL button). Press ON,
+then START to record — **do not press CHARGE**, which would arm `pidOnCHARGE`.
+Drive slider 3 by hand along the guide: 145 -> **185 at 2:00** -> **145 at 5:00**
+-> **185 at 7:00** -> **145 at 10:00**. Timing precision does not matter; the
+identification uses the recorded SV. Save the profile.
+
+**Step 4 — Test B, loaded doublet. One sacrificial batch.** Background
+`artisan/chardoublet_loaded.alog`, **PID OFF throughout**. Charge normally and
+drive slider 3 along the guide curve, which is roast 45's own commanded SV plus
+**+30 degC over 3:00-4:00 and -30 degC over 4:00-5:00**. Net energy is ~zero so
+the batch lands near a normal roast. Save.
+
+**Step 5 — Test C, the fan.** Test B repeated at **fan 58** and at **fan 65**.
+Two batches. This is what turns the fan sensitivity from one weakly-identified
+coefficient into a measurement.
+
+After 3-5 the theta/tau ridge (§ Scheduling) collapses to real numbers, and only
+then are these worth deciding: a Ki retune against true margin, and whether the
+**predicted-BT channel** (§ Firmware now in scope) is worth building.
+
+**Step 6 — the lookahead experiment, independent.** Load
+`artisan/airRoaster_cascadePID_lookahead.aset` with background profile_003 and
+roast normally. Only after step 1 has produced a clean baseline to compare
+against. Watch for a target step at 1:30 when the switch fires.
+
+**Step 7 — a fixed fan, independent.** § Fan vs batch size says the level does
+not depend on charge mass and the loop barely notices the level, only the step.
+One roast at a flat **fan 60** with no changes tests whether the ramp is
+earning its disturbance.
+
+#### The dump-lever switch
+
+**Yes — ground against a pin with `INPUT_PULLUP` is exactly right.** The ESP32-S3
+has ~45 kOhm internal pull-ups, so `pinMode(pin, INPUT_PULLUP)` reads HIGH when
+open and LOW when the lever closes it to GND. Specifics for this board:
+
+- **Pin: GPIO 14 (A4).** From [hardware/pins.md](hardware/pins.md) § Free GPIOs.
+  It avoids the ESP32-S3 strapping pins (0, 3, 45, 46 — none are on the free
+  list anyway), leaves GPIO 38/39 for Serial1 and 42 for SPI SS, and keeps
+  GPIO 5/6 (A8/A9) together for the planned BME688 pump driver.
+- **Add an external 10 kOhm pull-up to 3V3** rather than relying on the internal
+  one. A metre of wire to a mechanical switch beside two AC dimmers is an
+  antenna, and this project has an EMI history worth respecting
+  ([hardware/emi.md](hardware/emi.md)). A 100 nF capacitor across the switch
+  terminals at the *board* end damps the rest. Route the wire away from the
+  dimmer AC leads.
+- **Debounce in firmware**, 20-50 ms, and act on the **edge** (open -> closed),
+  not the level, so a lever left down does not re-trigger.
+- **Publish it as `DL`** (0 or 1) in the `getData` reply beside `SV` and `HT`,
+  and map it to `channel_nodes` slot 7 with `channel_modes` 0 (not a
+  temperature). Then the DROP alarm becomes **Source = that channel, condition
+  above 0.5, action DROP** — the same alarm mechanism as today, on a measured
+  event instead of an inferred RoR collapse (§ Auto-DROP detection). Keep the
+  RoR alarm as a backstop until the switch has proven itself over several roasts.
+
 ### Commissioning order
 
 0. **Every roast: press ON (zeroes the integrator), turn the PID on, preheat
