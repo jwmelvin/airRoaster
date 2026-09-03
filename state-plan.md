@@ -1973,21 +1973,23 @@ runtime lookahead switch from § Scheduling. **A separate file deliberately**:
 it is an experiment and should not ride along with the `pidKi` and profile_003
 changes on the next roast.
 
-Two new event buttons appended after the existing ones — as of 2026-09-02 that
-is indices 22 and 23, user-facing **23** and **24** — action 20 = Artisan
-Command, hidden, recording no event:
+Two new event buttons appended after the existing ones — action 20 = Artisan
+Command, hidden, recording no event — the first running `pidLookahead(0)` and
+the second `pidLookahead(6)`. As of 2026-09-03 the canonical config has 19 event
+buttons, so they are user-facing **20** and **21**.
 
-| button | command |
-|---|---|
-| 23 | `pidLookahead(0)` |
-| 24 | `pidLookahead(6)` |
+> **The button numbers are positional and will drift.** They were 22/23, then
+> 23/24 when a "Fan Mid" button was added, then 20/21 when the canonical config
+> was reworked from 22 buttons down to 19. `alarmstrings` holds the **1-based
+> index**, so adding or removing an event button silently re-points these
+> alarms. **Never hand-edit this variant.** Regenerate it with
+> [tools/gen_lookahead_aset.py](tools/gen_lookahead_aset.py), which derives the
+> button numbers from `len(extraeventslabels)` in the canonical file and appends
+> the buttons and alarms to a fresh copy of it.
 
-> **The button numbers are positional and will drift.** They were 22/23 until a
-> "Fan Mid" button was added to the canonical config, which shifted everything
-> after it. `alarmstrings` holds the **1-based index**, so adding or removing an
-> event button silently re-points these alarms. **Regenerate this variant from
-> the canonical file rather than hand-editing it**, and re-derive the numbers
-> from the length of `extraeventslabels`.
+```bash
+python3 tools/gen_lookahead_aset.py
+```
 
 and two new alarms, both **time-only from CHARGE** (`alarmsource = -3`, so the
 temperature branch never evaluates and the OR'd conditions cannot misfire),
@@ -1995,8 +1997,8 @@ action **2** = press an event button, whose `alarmstrings` entry is the
 **1-based** button number (canvas.py:6194-6211):
 
 ```
-alarm 3: From CHARGE, offset  1 s, source -3 -> button 23 -> pidLookahead(0)
-alarm 4: From CHARGE, offset 90 s, source -3 -> button 24 -> pidLookahead(6)
+alarm 3: From CHARGE, offset  1 s, source -3 -> button 20 -> pidLookahead(0)
+alarm 4: From CHARGE, offset 90 s, source -3 -> button 21 -> pidLookahead(6)
 ```
 
 So the dip runs at lookahead 0 — no manufactured error, no SV floor at turning
