@@ -1110,6 +1110,64 @@ Separately, and as a roast decision rather than a control one, **one of**:
 Do **not** chase the bumps with more Ki past 0.16 — the sweep shows what that
 buys and what it costs.
 
+#### The Ki 0.15-0.20 band, examined (operator question 2026-09-02)
+
+Nothing qualitative happens anywhere in that band — no ringing onset, no new
+overshoot, SV traces nearly identical after 2:30. Tracking improves monotonically
+and modestly:
+
+| `pidKi` | 0.10 | 0.12 | 0.14 | **0.15** | 0.16 | 0.18 | **0.20** | 0.22 | 0.24 |
+|---|---|---|---|---|---|---|---|---|---|
+| quiet droop (degC) | +0.04 | -0.19 | -0.30 | **-0.33** | -0.36 | -0.38 | **-0.39** | -0.39 | -0.40 |
+| first air bump (degC) | +2.08 | +1.90 | +1.74 | **+1.70** | +1.66 | +1.56 | **+1.43** | +1.28 | +1.14 |
+| rms (degC) | 1.11 | 0.95 | 0.84 | **0.80** | 0.76 | 0.70 | **0.67** | 0.64 | 0.62 |
+| time behind at 5:00 | +5.1 s | +4.2 s | +3.4 s | **+3.0 s** | +2.7 s | +2.1 s | **+1.6 s** | +1.2 s | +0.9 s |
+| SV ripple (nominal) | 2.2 | 2.4 | 2.4 | **2.3** | 2.3 | 2.1 | **1.9** | 2.0 | 2.1 |
+
+**But the error changes character, and it works against the complaint.** At Ki
+0.10 the trace is one-sided — BT behind the profile, decaying back to zero after
+each air cut. From ~0.14 up it starts crossing zero and the loop **overshoots
+after each bump**:
+
+| t | 1:40 | 1:55 | 2:10 | 2:25 | 2:40 | 2:55 | 3:10 | 5:10 | 5:55 | 6:10 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Ki 0.10 | +0.36 | +1.62 | +2.06 | +1.92 | +1.30 | +0.52 | -0.06 | +1.25 | +0.33 | -0.15 |
+| Ki 0.15 | +1.15 | +1.68 | +1.40 | +0.79 | -0.01 | -0.67 | -0.95 | +0.70 | -0.25 | -0.61 |
+| Ki 0.20 | +1.20 | +1.18 | +0.51 | -0.18 | -0.77 | -1.11 | -1.08 | +0.35 | -0.49 | -0.74 |
+
+Peak-to-peak across the first air cut goes **3.35 -> 2.63 -> 2.31 degC** for
+Ki 0.10 / 0.15 / 0.20. The *mean* and rms improve substantially; the **swing
+barely does — the loop mostly re-centres around the disturbance rather than
+rejecting it.** If the objection is "wandering" rather than "slow", Ki past
+~0.15 does not answer it. The air schedule does (see the option table above).
+
+**Margin cost, expressed as the extra plant lag at which SV ripple reaches
+5 degC:**
+
+| `pidKi` | 0.10 | 0.13 | **0.15** | 0.16 | 0.18 | **0.20** | 0.22 | 0.24 |
+|---|---|---|---|---|---|---|---|---|
+| tolerable extra deadtime | 13.7 s | 11.7 s | **10.5 s** | 10.0 s | 9.0 s | **8.0 s** | 7.2 s | 6.5 s |
+
+No cliff separates 0.15 from 0.20 — the cliff is at 12-16 s for both, and the
+measured plant deadtime is **under 2 s** (2 s of assumed deadtime already
+doubles the open-loop replay residual). So 0.20 keeps a factor of four.
+
+**Read the gain-stress result with care.** Scaling plant gain x0.8 ... x1.5 does
+not raise ripple at any Ki in this band — it lowers it. That is a *property of
+the model*, not evidence of safety: an integrator plus a first-order lag cannot
+be destabilised by gain alone. The only stability information this model carries
+is the deadtime column, and deadtime is a proxy for the high-order dynamics a
+two-roast fit cannot resolve. Treat the margin numbers as ordinal, not absolute.
+
+**Conclusion.** 0.15-0.16 is the sensible stopping point: it takes the bulk of
+the available improvement (rms 1.11 -> 0.80) while keeping five times the
+measured lag in hand, and beyond it the returns are ~0.15 degC of rms and ~1.4 s
+of time-behind for a third of the margin. **0.20 is not dangerous**, and if the
+question is worth settling empirically it settles in one roast: run 0.20 and read
+the SV ripple against a 61 s mean. If it stays at 2-3 degC the plant has under
+8 s of lag and 0.20 can be kept with confidence; if it reaches 5-6 degC, fall
+back to 0.15 and the margin question is answered for good.
+
 #### Validation for the next roast
 
 Same procedure and capture as roast 45 (the dashboard CSV is required — it is
