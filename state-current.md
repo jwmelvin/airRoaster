@@ -184,9 +184,33 @@ canvas.py:4778-before-4946 ordering 1 s, plant transport delay ~0).
 A faithful reimplementation of `PID.update()` against a plant fitted to roast 44
 (`dBT/dt = 0.0145*(Inlet-BT) - 0.68 + w(t)`, tau 69 s) reproduces the roast to
 **rms 0.33 degC**, so tuning options are now testable rather than arguable.
-**Proposal: `pidKi` 0.04 -> 0.10 and `svLookahead` 0 -> 3; nothing else.**
-Predicted mean tracking error +3.4 -> +0.6 degC, DRYe 3:22 and DROP 6:54 against
-a 3:20 / 6:51 profile. Not yet run on the roaster — this is the next roast.
+**Step 1 was `pidKi` 0.04 -> 0.10 and `svLookahead` 0 -> 3, and roast 45
+(2026-09-02, 21:53) confirms it.** On the valid yardstick — time to reach the
+same BT, *not* mark times — roast 45 sits **0-7 s behind `profile_002` all the
+way through**, against roast 44's uniform 11 s, and the steady droop in the
+quiet windows is **+0.19 degC** against +3.4. The DRYe/FCs marks read 9-11 s
+early only because `autoDRY`/`autoFCs` fire on the fixed Phases thresholds
+(BT 149 / 196) while the profile's own marks sit at BT 152.0 / 197.9; mark-time
+comparisons are not meaningful here.
+
+**What is left is the operator's own air schedule, not the loop.** Refitting the
+plant with a fan term halves the residual and gives a fan sensitivity of ~49% of
+plant gain per 10 fan units, so the `65 -> 60` cut at 1:31 removes a quarter of
+the plant gain in three seconds. The error tracks each cut and is flat between
+them (-0.24 -> **+2.59 at 2:10** -> ~0 by 3:20 for the 5-unit cut; +0.83 ->
++1.50 -> -0.40 for the 2-unit cut at 4:26), with amplitude linear in step size.
+That is load-disturbance rejection, not a limit cycle — no SV reversal over
+10 degC after 1:00, SV ripple rms 1.19 degC, inner loop rms 0.91, heat 46-59%
+off both rails.
+
+**Step 2: `pidKi` 0.10 -> 0.15, `svLookahead` stays 3, nothing else in the PID**
+(Ki 0.20 triples the ripple under a 10 s deadtime stress; 0.26 breaks). The
+larger win is a roast decision rather than a control one — move the 65 -> 60 air
+cut into the charge dip where the floored output absorbs it for free (simulated
+rms 1.11 -> 0.72, better than any Ki), or re-author the background from a real
+roast so the air schedule's effect is part of the target instead of an error.
+Detail, the option table and the next roast's checklist are in state-plan.md
+§ Roast 45.
 
 **A source mechanism the earlier notes missed underpins all of it**:
 `_back_calculate_integral` (pid.py:330-348) runs on every clamped cycle whenever

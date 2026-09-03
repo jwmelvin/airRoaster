@@ -983,6 +983,147 @@ cannot be reconstructed). Then check, in order:
 Failure responses, in order of preference: overshoot early -> `svLookahead` to 2;
 ringing -> `pidKi` to 0.07; still droopy and one-sided -> `pidKi` to 0.13 before
 touching anything else.
+### Roast 45 (2026-09-02, 21:53) — step 1 applied; the droop is gone, the air schedule is what is left
+
+First run of `pidKi=0.10`, `svLookahead=3` (both confirmed in the alog), same
+background `profile_002`, same procedure. Operator's reading: "better again but
+still slow and wandering." Both halves have answers, and neither is the outer
+loop's gain.
+
+**Read the marks with care — they are not profile crossings.** DRYe and FCs are
+fired by `autoDRY`/`autoFCs` on the fixed BT thresholds in the Phases dialog
+(`phases=[38, 149, 196, 218]`, canvas.py:4920-4926), while `profile_002`'s own
+DRYe sits at **BT 152.0** and its FCs at **BT 197.9**. Comparing mark time to
+mark time therefore compares two different temperatures and always reads early.
+**The valid yardstick is the time to reach the same BT:**
+
+| BT | 100 | 120 | 140 | 150 | 160 | 170 | 180 | 190 | 196.5 |
+|---|---|---|---|---|---|---|---|---|---|
+| profile_002 | 1:31 | 2:03 | 2:46 | 3:14 | 3:45 | 4:20 | 4:59 | 5:46 | 6:21 |
+| roast 45 | 1:31 | 2:08 | 2:48 | 3:14 | 3:45 | 4:23 | 5:06 | 5:49 | 6:19 |
+| behind | 0 s | +5 s | +2 s | 0 s | 0 s | +3 s | +7 s | +4 s | -2 s |
+
+**Roast 45 is on the curve to within 0-7 s all the way through**, against roast
+44's uniform 11 s. (Roast 44 on the same yardstick: BT 149.2 at 3:23 vs the
+profile's 3:12; BT 197.7 at 6:39 vs 6:29.) Step 1 did what the model said it
+would; the prediction "DRYe 3:22" was a *BT-152.0 crossing*, and roast 45
+crossed 152.0 at 3:20.
+
+```
+tracking error vs the profile, 1:10-6:45   mean +0.85  rms 1.19  range -0.43 .. +2.77
+  in the quiet windows (3:10-4:20, 5:40-6:40)                    mean +0.19
+inner loop (Inlet vs commanded SV, 1:00-6:45)   mean -0.12  rms 0.91 degC
+heat 46-59% throughout — never saturated, never floored; SV never touched 140 or 300
+SV ripple vs a 61 s mean, 2:30-6:30            max 4.5  rms 1.19 degC
+SV direction reversals over 10 degC after 1:00  none
+```
+
+**The steady droop is essentially gone.** +0.19 degC in the quiet windows,
+against +3.4 degC in roast 44. `Iterm` still climbs (44.5 at 3:30 -> 65.4 at
+6:30, 0.116 duty/s), so `e_ss = 0.116/0.10 = 1.16 degC` against the
+lookahead-shifted target, of which 3 s of lead returns ~0.7 degC — leaving the
+~0.5 degC that the quiet windows show. The mechanism from § Roast 44 outer-loop
+analysis is intact and now nearly exhausted.
+
+**The "wandering" is the operator's own air schedule.** Refitting the plant on
+roast 45 with a fan term halves the model residual (3.59 -> 1.98 degC/min):
+
+```
+dBT/dt = (0.00970 + 0.02877*(fan-60)/60) * (Inlet - BT) - 0.274 + w(t)
+      => plant gain moves ~49% per 10 fan units
+```
+
+So the `65 -> 62 -> 60` cut at **1:31-1:34** removes about a **quarter of the
+plant gain in three seconds**, and the `60 -> 59 -> 58` cut at **4:26-4:32**
+another tenth. The error follows each one:
+
+| | air step | error before | peak | recovered |
+|---|---|---|---|---|
+| first | 1:31, 5 units | -0.24 at 1:30 | **+2.59 at 2:10** | ~0 by 3:20 |
+| second | 4:26, 2 units | +0.83 at 4:30 | **+1.50 at 5:20** | -0.40 by 6:30 |
+
+Amplitude is linear in step size (0.56 and 0.45 degC per fan unit), each
+excursion is locked to a step, and the error is flat between them (+0.29 to
++0.86 across 3:10-4:20). **That is load-disturbance rejection, not a limit
+cycle** — confirmed by the absence of any ringing signature above.
+
+The first cut also lands at the worst possible moment: 1:31 is the steepest part
+of the curve (background RoR ~46 degC/min) with the integrator still climbing
+hard out of the charge dip.
+
+#### What is left, and what it is worth
+
+A roast-45 simulator (same construction as § Roast 44 outer-loop analysis, with
+the fan term added) reproduces the roast at rms 1.09 degC and under-predicts the
+two bumps by ~25%, so the ranking below is trustworthy and the absolute numbers
+are indicative.
+
+| change | quiet droop | bump 1 | bump 2 | rms | ripple at +10 s deadtime |
+|---|---|---|---|---|---|
+| **as run** (Ki 0.10) | +0.04 | +2.08 | +1.25 | 1.11 | 2.3 |
+| Ki 0.13 | -0.25 | +1.81 | +0.90 | 0.89 | 2.9 |
+| **Ki 0.16** | -0.36 | +1.66 | +0.63 | 0.76 | 5.3 |
+| Ki 0.20 | -0.39 | +1.43 | +0.37 | 0.67 | **12.2** |
+| Ki 0.26 | -0.41 | +0.99 | +0.16 | 0.61 | **34.5** |
+| air cut moved to 0:25 (Ki 0.10) | +0.03 | **+1.31** | +1.20 | **0.72** | 1.3 |
+| air cut ramped over 60 s (Ki 0.10) | +0.27 | +2.11 | +1.21 | 1.06 | 2.7 |
+| no air changes at all (Ki 0.10) | +0.10 | +0.83 | +0.71 | 0.53 | 1.2 |
+| Ki 0.16 + air cut ramped | -0.28 | +1.07 | +0.65 | **0.57** | — |
+
+Reading it:
+
+- **The air schedule is now the dominant error term.** Removing it entirely
+  takes rms from 1.11 to 0.53 — more than any gain change achieves.
+- **Moving the first cut earlier beats every Ki value**, at zero stability cost.
+  In the charge dip the output is on its floor and the back-calculation re-seed
+  (§ Roast 44 outer-loop analysis) absorbs the gain change for free, whereas at
+  1:31 the loop has to find a new operating point during its steepest climb.
+  **But this is a real roast change, not a control tweak** — airflow drives
+  drying rate and chaff clearance, so whether a 5-unit cut a minute earlier is
+  acceptable is the operator's judgement, not the model's.
+- **Ramping the cut over 60 s barely helps the bump** (2.11 vs 2.08). The
+  disturbance is a *gain* change, not a transient; the loop has to relocate its
+  operating point either way. It does trim the time-behind (3.3 s vs 5.1 s).
+- **Ki 0.16 is the last value with margin.** 0.20 triples the ripple under a
+  10 s deadtime stress and 0.26 breaks — the same wall found in roast 44's sweep,
+  now confirmed against a second roast's plant fit.
+
+#### Step 2
+
+**`pidKi` 0.10 -> 0.15. Keep `svLookahead` at 3. Nothing else in the PID.**
+Expected: quiet droop stays under 0.5 degC, first bump 2.6 -> ~1.8 degC,
+time-behind at 5:00 from ~5 s to ~3 s, ripple unchanged at the real plant's
+~0 s deadtime.
+
+Separately, and as a roast decision rather than a control one, **one of**:
+
+1. Move the `65 -> 60` air cut from 1:31 into the charge dip (~0:25). Largest
+   single improvement, free in stability terms, but it changes the roast.
+2. Leave the air schedule alone and **re-author the background from a real roast
+   instead of the Designer.** The Designer curve contains no trace of the air
+   schedule, so the loop is being asked to hold a shape the airflow is actively
+   removing; a background taken from a good roast with the same air moves puts
+   the flat spot *in the target*, and the disturbance stops being an error at
+   all. Cheapest option that changes nothing about the roast itself.
+3. Accept a ~2 degC / ~8 s excursion at 2:00 as the cost of the air schedule.
+
+Do **not** chase the bumps with more Ki past 0.16 — the sweep shows what that
+buys and what it costs.
+
+#### Validation for the next roast
+
+Same procedure and capture as roast 45 (the dashboard CSV is required — it is
+what carries `SV`). Check, in order:
+
+1. **Time to reach BT 120 / 150 / 180 / 196.5** against 2:03 / 3:14 / 4:59 /
+   6:21. Ignore the DRYe and FCs mark times; they are BT thresholds.
+2. **Error in the quiet windows (3:10-4:20, 5:40-6:40) under 0.5 degC.**
+3. **Peak error in 1:31-3:20** — this is the first air cut's bump; roast 45 was
+   +2.59 and Ki 0.15 should give ~1.8. If it is unchanged, the bump is not
+   disturbance-limited and the air schedule needs the fix instead.
+4. **No SV reversal over 10 degC after 1:00**, and SV ripple against a 61 s mean
+   under ~6 degC (roast 45: max 4.5, rms 1.19). Above that, Ki has gone too far.
+5. Inner loop rms of ~1 degC and heat off both rails, as in roast 45.
 
 ### Commissioning order
 
