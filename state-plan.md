@@ -1369,6 +1369,69 @@ high-frequency residual is **0.064 degC rms**, so Kd 40 costs ~3.6 duty = 5.8 de
 of SV jitter, and `derivative_filter` (a fixed 0.1 Hz lowpass, pid.py:657-661)
 cuts that roughly fivefold.
 
+#### Tested and not upheld: the early floor / minimum inlet temperature
+
+Operator hypothesis: the 140 degC output floor early in the roast winds the
+integrator down and disturbs the loop. **Half right on the facts, but it is not
+what drives the ring.**
+
+**The floor episode is real and long.** In roast 45 the output sat at
+`SV = 140` (duty 0) from **0:05 to 0:47, 39 s**, with the error at -12 to
+-16 degC throughout. The cause is a **profile authoring defect**: the
+background's charge dip is deeper than the roaster can reach.
+
+| | profile_002 | roast 43 | roast 44 | roast 45 |
+|---|---|---|---|---|
+| minimum BT after CHARGE | **52.0** at 32 s | 58.8 at 23 s | 60.2 at 25 s | 67.3 at 28 s |
+| profile is deeper by | — | 6.8 degC | 8.2 degC | **15.3 degC** |
+
+**The integrator is genuinely whipsawed** — but *upward* first, not down.
+Reconstructed from roast 45: `Iterm` ~46 at 0:30 (back-calculation pinning it at
+`Kp*|err|` while floored), then draining hard to **15 by 1:20** as the loop
+unsaturates with the error still negative, then climbing back past 50. A 30-duty
+swing in the first two minutes. That is the disturbance the hypothesis points at,
+and it is real.
+
+**But removing it does not remove the ring.** Re-running the corrected model with
+the background's dip raised to an achievable minimum, everything else fixed:
+
+| background dip minimum | 52.0 (as authored) | 60 | 64 | 67 |
+|---|---|---|---|---|
+| floor time | 55 s | 39 s | 33 s | 26 s |
+| `Iterm` handed to the roast | 26.0 | 25.4 | 23.5 | 24.6 |
+| ring rms / swing (from 1:50) | 1.64 / 3.85 | 1.66 / 3.94 | 1.74 / 4.26 | 1.69 / 4.06 |
+
+Floor time halves; the ring does not move. The reason is back-calculation again:
+it converges on `Iterm = Kp*|err|` *while* floored and then the drain as the
+error returns to zero dominates, so the handover lands near 24-26 almost
+regardless of how deep the target dip was. The excitation that rings the loop is
+the charge transient itself, which is unavoidable — **the ring is a damping
+problem, and damping is set by the gain.**
+
+**Fix the dip anyway, on its own merits.** Forty seconds of saturated,
+open-loop operation every roast, with the loop's entry state decided by an
+anti-windup side effect rather than by control, is not a good place to start
+from — and it is what caps `svLookahead` near 4 s (§ Roast 44 outer-loop
+analysis), which matters now that Ki is margin-limited and lookahead is the only
+free tracking lever. Just do not expect it to quiet the roast.
+
+**Derivative is unproven — do not take it yet.** The frequency-domain table
+above says `Kd 40` under DoE should lift phase margin from 20 to 29-46 deg. Run
+in the time domain on the *same* plant it does not: ring rms 1.65 vs 1.64 at
+`Kd 0`, and the swing worsens 3.85 -> 4.67. The likely reason is that DoE
+differentiates the *reference* as well as the measurement, and the background's
+own RoR is a large varying signal, so the lead the margin calculation assumes is
+partly spent re-injecting profile curvature. `pidDlimit` does not rescue it
+(1.5 degC/s and 500 degC/s give identical results — steady-state `dErr/dt`
+rarely reaches the limit). The two analyses disagree; until one roast settles it,
+**`pidKd` stays 0.**
+
+**Model caveat.** The rebuilt model reproduces the ringing that the first one
+could not — extrema +3.67 / -0.17 / +1.81 against a measured +2.61 / -0.21 /
++1.50 — but its period is 234 s against the measured 177 s, roughly 30% long
+(`tau` is the poorly-determined parameter: 275 s from roast 45, 121 s from
+roast 44). Use it for direction and ranking, not for absolute numbers.
+
 #### Revised recommendation
 
 1. **Set `pidKi` to 0.07 and leave `svLookahead` at 3.** PM ~30 deg on both
