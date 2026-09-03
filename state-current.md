@@ -162,9 +162,9 @@ construction (DRYe 2:36 vs 3:00) — a spec error, not tuning; it should come do
 to ~0 now that the cascade is known to be tight. Detail in state-plan.md
 § Roast 42.
 
-**Canonical config is now `artisan/airRoaster_cascadePID_edit.aset`** (saved
-from a live session 2026-09-02 20:48, so it carries the alarms in plain-list
-form and a current batch counter), with background
+**Canonical config is `artisan/airRoaster_cascadePID.aset`** (one file; the
+brief `_edit` variant used while adding the alarms was folded back in and
+removed), with background
 **`artisan/profile_002.alog`**. It adds the auto-DROP alarm — `From DRY END,
 offset 0, Source DeltaBT, below -25 -> DROP` — because Artisan's built-in
 auto-DROP is gated on 7 minutes after CHARGE (canvas.py:4913) and these roasts

@@ -123,11 +123,10 @@ profile following against a background curve.
   provenance; they are overwritten to match the new single set.
   `pidGainScheduling` stays false.
 
-**Deliverable.** **`artisan/airRoaster_cascadePID_edit.aset` is the canonical
-config from 2026-09-02 20:48** — saved by the operator from a live Artisan
-session, so it carries the alarms in plain-list form and a current
-`batchcounter`. `airRoaster_cascadePID.aset` is superseded; keep it only as the
-record of the pre-alarm state. The background is now
+**Deliverable.** **`artisan/airRoaster_cascadePID.aset`** — the single canonical
+config. It was briefly split into an `_edit` variant while the operator added the
+alarms in Artisan; that content was folded back onto this filename 2026-09-02
+and the `_edit` file removed (recoverable from commit 90c9c46). The background is now
 **`artisan/profile_002.alog`** (CHARGE BT 127.8, DRYe 3:20, FCs 6:30, DROP 6:51
 at BT 201.2 — a gentler middle ramp than `profile_001` to the same endpoint,
 reached sooner). Both backgrounds carry zero special events, so neither can
@@ -653,7 +652,7 @@ within ~3 s of the BT peak at the dump. The charge dip at -267 is why the alarm
 **must not be armed from CHARGE** — it would fire at turning point every roast.
 DRYe (~2:36-3:20) is safely past TP (~0:30).
 
-As entered and verified in `airRoaster_cascadePID_edit.aset`:
+As entered and verified in `airRoaster_cascadePID.aset`:
 
 ```
 alarm 1: off  From=CHARGE   offset=1s  Source=(none/time)  above    0  -> Playback ON
