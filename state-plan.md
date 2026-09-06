@@ -1993,12 +1993,12 @@ buttons, so they are user-facing **20** and **21**.
 > was reworked from 22 buttons down to 19. `alarmstrings` holds the **1-based
 > index**, so adding or removing an event button silently re-points these
 > alarms. **Never hand-edit this variant.** Regenerate it with
-> [tools/gen_lookahead_aset.py](tools/gen_lookahead_aset.py), which derives the
+> [tools/gen_pid_alarm_asets.py](tools/gen_pid_alarm_asets.py), which derives the
 > button numbers from `len(extraeventslabels)` in the canonical file and appends
 > the buttons and alarms to a fresh copy of it.
 
 ```bash
-python3 tools/gen_lookahead_aset.py
+python3 tools/gen_pid_alarm_asets.py
 ```
 
 and two new alarms, both **time-only from CHARGE** (`alarmsource = -3`, so the
@@ -2191,7 +2191,7 @@ loop swallows a 20 degC setpoint step in about 5 s (see item 6), so this is a
 visible bump, not a hazard. If it reads badly on the roast, the gentler shape is
 **0 -> 3 at 1:30 (a +9.8 degC SV step) and 3 -> 6 at 3:00 (+4.9 degC)** — three
 buttons and three alarms instead of two, regenerated the same way with
-`tools/gen_lookahead_aset.py`. Run the file as generated first; one variable.
+`tools/gen_pid_alarm_asets.py`. Run the file as generated first; one variable.
 
 #### Item 5 failed, and the cause is the batch size, not the loop
 
@@ -2711,7 +2711,7 @@ stage" should mean.
 
 `p-i-d(<p>,<i>,<d>)` (main.py:10759 -> `confPID` -> `pid.setPID`) only assigns the
 three gains; `Iterm` is untouched, so both switches are bumpless. Wiring is the
-same pattern `tools/gen_lookahead_aset.py` already generates:
+same pattern `tools/gen_pid_alarm_asets.py` already generates:
 
 ```
 alarm, from CHARGE, offset  1 s, source -3 (time only) -> button: p-i-d(3,0,0)
@@ -2786,8 +2786,78 @@ reason § Correction gives for the ramp. Keep `Kp = 3.0` everywhere.
   flat and low while BT falls behind. The CONTROL button is the escape. The
   CHARGE+1 alarm failing is harmless (`Ki` stays 0.07, i.e. today's behaviour).
 - It composes with the lookahead switch: both are time-from-CHARGE alarms driving
-  hidden Artisan-Command buttons, and `gen_lookahead_aset.py` already builds
+  hidden Artisan-Command buttons, and `gen_pid_alarm_asets.py` already builds
   exactly that structure. Four buttons and four alarms in total.
+
+#### The files, and why the restore is at 90 s
+
+`tools/gen_pid_alarm_asets.py` (which replaces `gen_lookahead_aset.py` and
+regenerates the lookahead variant byte-identically bar the batch counters) emits
+three variants of the canonical config, each adding only hidden Artisan-Command
+buttons and time-only alarms:
+
+| file | added | what it does |
+|---|---|---|
+| `airRoaster_cascadePID_lookahead.aset` | 2 buttons, 2 alarms | `svLookahead` 0 at CHARGE+1 s, 6 at CHARGE+90 s |
+| **`airRoaster_cascadePID_kigate.aset`** | 2 buttons, 2 alarms | **`p-i-d(3,0,0)` at CHARGE+1 s, `p-i-d(3,0.07,0)` at CHARGE+90 s** |
+| `airRoaster_cascadePID_lookahead_kigate.aset` | 4 buttons, 4 alarms | both |
+
+**Restoring at 90 s and not earlier is what makes it work.** The insensitivity
+comes from `Iterm` not moving at all during the dip, so it is bought by the
+length of the gate:
+
+| `Ki` restored at | none | 30 s | 45 s | 60 s | 75 s | **90 s** | 120 s |
+|---|---|---|---|---|---|---|---|
+| `I@1:30` spread over the 62 degC charge sweep | 32.7 | 34.9 | 29.5 | 15.7 | 5.9 | **0.6** | — |
+| above-DRYe rms, coldest case | 1.37 | 1.38 | 1.30 | 1.10 | 0.96 | **0.79** | — |
+| `dt150` at the nominal charge | +3.5 | +0.7 | +0.6 | +0.6 | +0.7 | +1.4 | **+7.2** |
+
+Earlier restores track the nominal roast marginally better and buy almost no
+robustness; 120 s starts costing real time. 90 s also coincides with the
+lookahead switch, so the combined file needs only two alarm offsets.
+
+#### Predicted, and how to read the roast
+
+profile_003, 400 g, charge as roast 46. The first row is the validation: the
+simulator reproduces the measured roast's `+0.77/0.78` and `+0.69/0.71` in the
+two windows above DRY END.
+
+| | TP | floor | `I@1:30` | 1:30-DRYe worst | DRYe-5:00 | 5:00-7:00 | dt150 | dt196.5 |
+|---|---|---|---|---|---|---|---|---|
+| roast 46 as run *(measured)* | 57.6 | 11 s | 15.8 | +4.19 | +0.77 / 0.78 | +0.69 / 0.71 | +3.4 | +4.8 |
+| **`kigate`** | 57.4 | 18 s | **8.3** | +6.14 | +0.34 / 0.61 | +0.83 / 0.86 | +1.4 | +4.3 |
+| `lookahead` | 58.1 | 16 s | 23.4 | +1.47 | +0.00 / 0.59 | +0.19 / 0.26 | -1.9 | +0.9 |
+| `lookahead_kigate` | 58.0 | 40 s | **8.1** | +5.79 | -0.61 / 1.07 | **+0.32 / 0.38** | -3.3 | +1.2 |
+
+**At the nominal charge state `kigate` on its own is close to a null experiment.**
+The roast lands within a degree of roast 46 either way, because the gate buys
+*robustness*, not nominal performance, and one roast at the usual charge state
+cannot show robustness. What it can show, and what to check, is the mechanism:
+
+1. **`I@1:30` near 8, not 16-24.** From `I = (SV-140)/1.6 - 3*err`, or read `SV`
+   directly once v0.19.0 is flashed. This is the whole point of the change.
+2. **SV reaches the 140 floor and stays there until 1:30** — around 18 s against
+   roast 46's 11, and it will not lift off under its own steam. That is the
+   mechanism working: with `Ki = 0` there is no back-calculation to raise `Iterm`.
+3. **A slightly worse 1:30-DRYe window**, worst error about +6 degC against roast
+   46's +4.2, while the integrator climbs from 8 to its operating value.
+4. **Everything above DRY END unchanged** from roast 46 (+0.3 to +0.8 degC).
+5. **`pidKi` back at 0.07 in the PID dialog afterwards.** If it reads 0, the
+   1:30 alarm never fired.
+
+**On combining with the lookahead** (operator's question — is the lookahead
+really only above DRY END?). Not quite: the switch fires at 1:30 and DRY END is
+at 3:12, so it acts over that window too. But the effects separate cleanly and a
+combined roast is readable if the windows are read separately:
+
+- the **dip and `I@1:30`** attribute to the gate — the gate moves `I@1:30`
+  15.8 -> 8.3 while the lookahead leaves the above-DRYe error almost alone
+  (+0.71 -> +0.60 in isolation);
+- the **steady error over 5:00-7:00** attributes to the lookahead — the gate
+  leaves it at +0.83 against roast 46's +0.73, the lookahead takes it to +0.32;
+- **do not read DRYe-5:00 in a combined roast.** Its rms goes 0.59 -> 1.07 purely
+  because the integrator is still climbing out of the gate, and it would make the
+  lookahead look worse than it is.
 
 ### Charge temperature — roast 46 was frozen, and what that does and does not change (2026-09-05)
 
@@ -2907,6 +2977,13 @@ failing. Watch the two traps: `p-i-d()` is sticky, so a Save Settings before 1:3
 writes `pidKi = 0` into the `.aset`; and if the 1:30 alarm misses, the loop is
 P-only for the rest of the roast (roast 40's failure mode, CONTROL button to
 escape).
+
+File: **`artisan/airRoaster_cascadePID_kigate.aset`**, or
+`..._lookahead_kigate.aset` to run it together with step 6 — both generated by
+`tools/gen_pid_alarm_asets.py`. Predicted outturn and the five things to check
+are in § The dip is a different control problem. Note that at the usual charge
+state this is close to a **null experiment** on roast quality: check the
+mechanism (`I@1:30` near 8, SV parked on the floor until 1:30), not the outcome.
 
 **This is worth more than step 1b** and should come first — it removes the
 *sensitivity* to the dip shape rather than cancelling one instance of it.

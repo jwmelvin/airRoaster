@@ -452,7 +452,7 @@ the *ramp*, where the plant moves by only +-6%). The mechanism is that
 `_back_calculate_integral` is gated on `getKi(PV) != 0` (pid.py:314-333), so
 **`Ki = 0` closes both windup paths at once** and `Iterm` is simply frozen —
 `p-i-d(3,0,0)` at CHARGE+1 s, `p-i-d(3,0.07,0)` at CHARGE+90 s, both bumpless,
-both the same alarm-plus-hidden-button pattern `gen_lookahead_aset.py` already
+both the same alarm-plus-hidden-button pattern `gen_pid_alarm_asets.py` already
 generates. Simulated over a 62 degC swing in charge temperature, the integrator
 handed to the ramp goes from a spread of **36.5 to 0.3**, worst error in
 1:30-3:00 from -14.5 to +0.3 degC, and time-to-BT-150 from 9.2 s of range to
@@ -471,8 +471,18 @@ spread 91.5) — `Kp = 3.0` everywhere.
 SV/RS commands and `pidmode(...)`. The three gains, the two weights and the
 lookahead are the only runtime levers — and they are enough.
 
-**Revised order: step 6 (lookahead switch), then step 1c (gate `Ki`), then
-step 1b (profile_004, now a refinement rather than a fix).** Runbook and detail
+**Revised order (operator, 2026-09-05): step 1c first.** Files are generated —
+`tools/gen_pid_alarm_asets.py` (replacing `gen_lookahead_aset.py`) emits
+**`artisan/airRoaster_cascadePID_kigate.aset`** for step 1c alone and
+`..._lookahead_kigate.aset` to run it with step 6. The lookahead switch fires at
+1:30 rather than at DRY END, so the two are not strictly disjoint, but their
+effects separate: read the dip and `I@1:30` for the gate and **5:00-7:00** for
+the lookahead, and ignore DRY-END-to-5:00 in a combined roast (the integrator is
+still climbing out of the gate there). **At the usual charge state step 1c is
+close to a null experiment on roast quality** — check the mechanism (`I@1:30`
+near 8 instead of 16, SV parked on the 140 floor until 1:30, `pidKi` back at 0.07
+afterwards), not the outturn. Then step 1b (profile_004, now a refinement rather
+than a fix). Runbook and detail
 in state-plan.md § The dip is a different control problem and § Charge
 temperature.
 
