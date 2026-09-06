@@ -665,6 +665,36 @@ regression with a real lever arm. It does not replace Test C — an empty chambe
 measures the machine's heat demand against airflow, not the bean-bed loss term.
 state-plan.md § Files for the characterisation runs.
 
+**Roast 47 (2026-09-06) is Test A, and the replayed-schedule mechanism works.**
+Empty roaster, PID off, `airRoaster_cascadePID_char.aset` with
+`charstep_empty_fan.alog`: all 13 scheduled events fired on time, the inner loop
+held the commanded setpoint to **rms 1.12 degC over 619 quiet samples**, and
+**v0.19.0's `SV`/`HT` channels are live** — the first roast whose commanded
+setpoint and heat percent are in the profile itself, with no dashboard CSV taken
+or needed.
+
+**It found a trap that would have cost both loaded runs.** At 10:05 the DROP
+chain ran on its own. Not the alarm — `alarmflag` was off — but Artisan's
+**built-in `autoDrop`** (canvas.py:5151), which is not an alarm and which
+`alarmflag` does not touch: its gate is BT > 160 degC and **more than 7 minutes
+since CHARGE**, after which any `BTbreak` marks DROP. That 7-minute gate is why
+it has never appeared here (these roasts drop at 6:20-6:31, which is why the
+DeltaBT alarm exists at all) and why **every characterisation run trips it**. It
+cost 88 s and one steady window; the char config now carries `autoDrop = false`.
+It would have taken the last third of the fan measurement out of both doublets.
+
+**And it overturned step 8's coefficients.** Nine steady windows, fan **58-80**
+crossed against SV **145/185**, show the proposed
+`heat = -30.62 + 0.99*fan + 0.0096*SV` under-predicts by **10.8 to 25.9 %** with
+the `SV` term **26x too small** — the short-lever-arm failure the run was designed
+to catch, since the five preheat steps it came from held SV nearly constant. The
+fan coefficient survives. Use the **product form**,
+`heat = 69.87 - 0.8570*fan - 0.5101*SV + 1.1423*fan*SV/100` (rms 0.68 % against
+the affine form's 1.63, and it extrapolates better at roast 46's own preheat
+point). Carded in `tools/analysis/ff_roast47.json`; detail in
+state-history.md § Roast 47. **Step 8 is now the next thing to do**, and it is
+bench work.
+
 **Canonical config is `artisan/airRoaster_cascadePID.aset`** (one file; the
 brief `_edit` variant used while adding the alarms was folded back in and
 removed), with background

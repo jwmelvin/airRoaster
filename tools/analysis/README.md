@@ -12,7 +12,9 @@ reproduces the outer loop so tuning can be tested before it is roasted.
 | `margins.py` | frequency-domain phase margin for the same loop |
 | `roast46_refit.py` | driver that reproduces the numbers in state-plan.md § Roast 46 refit |
 | `dip_strategies.py` | charge-state robustness of the dip strategies; state-plan.md § Dip strategies |
+| `roast47_ff.py` | refits `feedforward()` from roast 47's fan x SV grid; **stdlib only**, no venv needed |
 | `plant_roast46.json` | the plant card `tools/merge_inlet_base.py` reads: `a`, `theta` and the loss cubic, with provenance |
+| `ff_roast47.json` | the `feedforward()` card: the product-form coefficients, the affine fallback and the fitted box |
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install numpy scipy
@@ -29,7 +31,11 @@ re-run `--emit-plant` and re-run the merge; nothing else changes.
 Roast logs live outside the repository (`~/Documents/artisan/`, `~/Downloads/`);
 the paths are at the top of `roast46_refit.py`.
 
-Two traps the code encodes so they cannot be repeated:
+```bash
+python3 tools/analysis/roast47_ff.py --emit-card    # no venv: stdlib only
+```
+
+Three traps the code encodes so they cannot be repeated:
 
 - The CHARGE origin is `timex[timeindex[0]]`, and `timeindex[0] == 0` is a
   **valid** index, not "unset" (`profile_003` relies on it).
@@ -37,3 +43,8 @@ Two traps the code encodes so they cannot be repeated:
   time. `fit_integral` restricts it to a low-order polynomial; `fit_disturbance`
   relaxes that only *after* the plant parameters are fixed, and exists purely to
   give the simulator something to run against.
+- A coefficient is only as good as the range its input moved over.
+  `feedforward()`'s `SV` term was fitted from preheat steps that barely moved SV
+  and came out **26x** too small; `roast47_ff.py` refuses a design matrix whose
+  inputs did not move independently, and cards the fitted box alongside the
+  coefficients so an extrapolation is visible as one.

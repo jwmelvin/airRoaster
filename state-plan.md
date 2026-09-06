@@ -449,8 +449,19 @@ pidOnCHARGE = false                        # the PID must never arm
 backgroundPlaybackEvents = true            # master playback switch
 replayType = 0                             # replay by time
 specialeventplayback = true, false, true, false    # Air + T_inlet
-alarmflag = 0, 0                           # both alarms off
+alarmflag = 0, 0                           # the DeltaBT auto-DROP alarm
+autoDrop = false                           # *and* Artisan's built-in detector
 ```
+
+**`autoDrop` is the one roast 47 was missing, and it is not an alarm.** Artisan's
+built-in DROP detector (canvas.py:5151) is gated on `autoDropFlag`, BT > 160 degC
+and **more than 7 minutes since CHARGE**, and `alarmflag` does not touch it. That
+7-minute gate is why it has never been seen here — these roasts drop at 6:20-6:31,
+which is the whole reason the DeltaBT alarm exists (§ Auto-DROP detection) — but
+**every characterisation run is longer than 7 minutes and above 160 degC**. On
+roast 47 it fired on the 10:01 inlet step-down and cost 88 s and one steady
+window; it would have taken the last third of the fan measurement out of both
+loaded doublets.
 
 **Procedure, all three tests: press ON, load the file as background, press START,
 then press CHARGE.** CHARGE is now required rather than forbidden — `playbackevent()`
@@ -459,10 +470,11 @@ because `pidOnCHARGE` is forced off in the file rather than avoided by not
 pressing the button. Everything after that is automatic; the operator's job is
 the fan level and DROP.
 
-**Why the DROP alarm is disabled.** `autoDRY` can mark DRY END on an *empty*
-roaster — the empty-run background takes BT to 168 degC, past the 149 degC Phases
-threshold — which would arm the DeltaBT auto-DROP in the middle of a step test
-and end the run through the `INLET 0` chain. Press DROP by hand on these runs.
+**Why the DeltaBT alarm is disabled too.** `autoDRY` can mark DRY END on an
+*empty* roaster — the empty-run background takes BT to 168 degC, past the 149 degC
+Phases threshold — which would arm the DeltaBT auto-DROP in the middle of a step
+test and end the run through the `INLET 0` chain. Press DROP by hand on these
+runs.
 
 **Why a doublet rather than a step for Test B**: its net energy is ~zero, so the
 batch lands near where it would have; and a 60 s half-period places the peak
@@ -885,16 +897,20 @@ sacrificial and one uses no beans at all.
 |---|---|---|---|
 | bench | flash v0.19.0, confirm the `SV`/`HT` curves, `INLET TRIM` drill (§ NEXT 14) | — | any cascade `.aset` |
 | **1** | **step 6** — the lookahead switch, *and step 7 for free* (hold fan 60 through preheat as well as the roast) | 1 real batch | `airRoaster_cascadePID_lookahead.aset` + `profile_003` |
-| bench | **step 8** — the affine `feedforward()` | — | firmware |
-| **2-4** | **steps 3-5** — Test A empty (17 min, also refits step 8's FF), then the two 9-minute loaded runs, one session off one warm-up | 1 free + 2 sacrificial | `airRoaster_cascadePID_char.aset` + `charstep_empty_fan`, `chardoublet_fan60/68` |
+| **2** | ~~**step 3** — Test A empty~~ **DONE, roast 47** — it measured the FF coefficients step 8 needs | free | `airRoaster_cascadePID_char.aset` + `charstep_empty_fan` |
+| bench | **step 8** — `feedforward()`, now with roast 47's measured coefficients | — | firmware |
+| **3-4** | **steps 4-5** — the two 9-minute loaded runs, one session | 2 sacrificial | `airRoaster_cascadePID_char.aset` + `chardoublet_fan60/68` |
 | desk | refit, `roast46_refit.py --emit-plant`, `merge_inlet_base.py`, the `.aset` half, settle `--dip` | — | — |
 | **5** | **step 9** — the FF schedule with the PID as a trim | 1 real batch | new |
 
-**Two orderings in that table are load-bearing.** Step 6 comes **before** step 8:
-its whole value is a one-variable comparison against roast 46, and step 8 changes
-the inner loop underneath it. Step 8 comes **before** the characterisation runs,
-which is what § Step 8 already says — the fan is their subject and
-`feedforward()` is the fan compensation that is currently dead. **Flashing
+**Two orderings in that table are load-bearing, and roast 47 sharpened the
+second.** Step 6 comes **before** step 8: its whole value is a one-variable
+comparison against roast 46, and step 8 changes the inner loop underneath it.
+Step 8 comes **before the loaded doublets** — the fan is their subject and
+`feedforward()` is the fan compensation that is currently dead — but **after**
+Test A, which is what measures the coefficients step 8 installs. Test A being
+empty and PID-off is exactly why it can sit on the wrong side of a firmware
+change without costing anything. **Flashing
 v0.19.0 first confounds nothing**: both of its items are inert on the present
 cascade path (`INLET TRIM` is never sent, the `SV`/`HT` nodes are additive), and
 it is what makes roast 1 self-contained for analysis.
@@ -1009,8 +1025,17 @@ and replays the test schedule onto slider 3 from the background — press ON, lo
 the background, START, CHARGE, and the run drives itself (§ Files for the
 characterisation runs). Run them back to back off one warm-up.
 
-**Step 3 — Test A, empty roaster. No beans, 17 minutes, free — and it now does
-step 8's job too.** Background `artisan/charstep_empty_fan.alog`
+**~~Step 3 — Test A, empty roaster.~~ DONE — roast 47, 2026-09-06.** The
+schedule replayed correctly (all 13 events on time), the inner loop held rms
+1.12 degC, the `SV`/`HT` channels are live, and `feedforward()` is refitted —
+**the coefficients step 8 was going to use are wrong, the `SV` term by 26x**
+(state-history.md § Roast 47, and step 8 below). One failure: Artisan's built-in
+`autoDrop` fired at 10:05 and cost 88 s and one steady window; the char config
+now disables it. Re-running Test A would recover the fan 80 / SV 145 corner, but
+the fit does not need it.
+
+*The specification, for the re-run if it is ever wanted.* Background
+`artisan/charstep_empty_fan.alog`
 (`tools/gen_char_empty.py`): the original inlet sequence 145 -> **185 at 2:00** ->
 **145 at 5:00** -> **185 at 7:00** -> **145 at 10:00**, extended with **185 at
 12:00** and **145 at 15:00**, crossed against a fan sweep **64 -> 72 at 2:30 ->
@@ -1132,14 +1157,43 @@ out — and the trace shows no air-schedule signature at all (state-history.md �
 yet that the ramp is not earning it. What is left is a roast that keeps 60
 through preheat too.
 
-**Step 8 — the feedforward term, firmware, bench only.** `feedforward()` is
-clamped at 100 for every sample of a roast and its model form is ~9x too steep
-in SV and ~1.8x too steep in fan (state-history.md § Roast 46). It is doing
-nothing except holding `pidITerm` at -45..-64 and forcing the anti-windup bound
-to `[-100, 0]`. Either give it the affine form the preheat measurement supports
-(`heat = -30.6 + 0.99*fan + 0.0096*SV`, resid rms 1.85 %) or set `FF OFF` until
-it has one. Bench-testable; no roast needed. **Do it before Test C**, whose
-whole subject is the fan compensation this term is supposed to provide.
+**Step 8 — the feedforward term, firmware, bench only. Now measured, and the
+coefficients have changed (roast 47, 2026-09-06).** `feedforward()` is clamped at
+100 for every sample of a roast, so it is doing nothing except holding `pidITerm`
+at -45..-64 and forcing the anti-windup bound to `[-100, 0]`
+(state-history.md § Roast 46).
+
+**Do not use `heat = -30.6 + 0.99*fan + 0.0096*SV`.** That was fitted from five
+preheat fan steps over which SV barely moved, and roast 47 — nine steady windows,
+fan **58-80** crossed against SV **145/185** — shows it under-predicts by
+**10.8 to 25.9 %** across the whole grid, with the `SV` coefficient **26x too
+small**. The fan coefficient survives (0.99 against 1.099 measured); the setpoint
+term was simply never identified.
+
+Use the **product form**, which more than halves the residual and extrapolates
+better (at roast 46's preheat point of fan 60 / SV 240, measured 55 %, it
+predicts 60.5 against the affine form's 66.1):
+
+```
+heat = 69.87 - 0.8570*fan - 0.5101*SV + 1.1423*fan*SV/100     resid rms 0.68 %
+     = 0.011423*(fan - 44.7)*(SV - 75.0) + 31.6
+```
+
+It is one multiply more than the affine form and is the physically right shape
+(power = mass flow x temperature rise). The affine fit
+(`-60.66 + 1.0992*fan + 0.2536*SV`, rms 1.63 %) stays on the table as the
+conservative choice — nine points against four parameters is close to the noise
+floor. Both are carded in `tools/analysis/ff_roast47.json`
+(`tools/analysis/roast47_ff.py --emit-card`).
+
+**Clamp it.** Whatever form goes in, the term must be bounded to `[0, 100]` and
+the fitted box is fan 58-80 / SV 145-185, while a roast runs to SV ~270. The
+product form's extrapolation was checked at exactly one point outside that box.
+
+Bench-testable; no roast needed. **Do it before the loaded doublets**, whose
+whole subject is the fan compensation this term is supposed to provide — and
+which will show ~6 degC of inlet transient per fan transition until it lands
+(roast 47 measured 0.6 degC per fan unit, worst -13.2 degC on the 58->80 step).
 
 **Step 9 — the inlet feedforward schedule with the PID as a trim.** The
 structural fix, and the reason steps 1b/1c are demoted rather than deleted:

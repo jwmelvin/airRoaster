@@ -2744,3 +2744,104 @@ warmest plausible TP or the gate never engages — at `dT = +42` TP is 72.5, so
 > state-plan.md § The base-curve authoring gap; the rejected approaches are
 > state-plan.md § Ruled out; and the charge-state proxy that is still open is
 > state-plan.md § The one adaptive idea that is still open.
+
+
+<a id="roast-47"></a>
+
+### Roast 47 (2026-09-06) — Test A: the schedule replays, and `feedforward()` is refitted
+
+Runbook step 3, the first characterisation run and the first use of the replayed
+schedule: empty roaster, PID off, background `charstep_empty_fan.alog`, config
+`airRoaster_cascadePID_char.aset`. 1064 samples, CHARGE at index 2, run to 17:00.
+
+**The mechanism works.** Every one of the 13 scheduled events fired at its
+authored time — seven `T_inlet` and six `Air` — and the inner loop held the
+commanded setpoint to **rms 1.12 degC over 619 quiet samples, mean +0.00**. The
+PID never armed, which is the check that matters on `pidOnCHARGE = false`: had it
+armed it would have driven slider 3 against playback and the event list would be
+hundreds of entries, not thirteen. **v0.19.0's `SV` and `HT` channels are live**
+and this is the first roast whose commanded setpoint and heat percent are in the
+profile itself; no dashboard CSV was needed and none was taken.
+
+#### The one failure: Artisan's *built-in* auto-DROP, which is not an alarm
+
+At 605 s the DROP button chain ran on its own — `T_inlet 0` and `Heater 0` in the
+event list — and the operator's cooldown took the fan to 100 at 633 s. Inlet fell
+184 -> 45 degC and BT 175 -> 82 before it was put back together by 647 s; the
+721 s leg of the schedule then fired on time and the run finished normally.
+**88% of the run is usable and one steady window was lost** (fan 80 / SV 145).
+
+The cause is **`autoDrop`, Artisan's own DROP detector** (canvas.py:5151), and
+the important thing about it is that **it is not an alarm and `alarmflag` does
+not touch it**. Its gate is `autoDropFlag` and BT > 160 degC and **more than
+7 minutes since CHARGE**, after which any `BTbreak` marks DROP. The 601 s inlet
+step-down from 185 to 145 is exactly such a break, at 10:01.
+
+That gate is why it has never been seen before: these roasts drop at 6:20-6:31,
+which is the whole reason the DeltaBT alarm exists (state-plan.md § Auto-DROP
+detection). **Every characterisation run is longer than 7 minutes and sits above
+160 degC**, so it fires on all of them. `airRoaster_cascadePID_char.aset` now
+also carries `autoDrop = false`. It would have fired on both loaded doublets too
+— they plateau at BT ~185 and the fan square wave steps at 7:00 and 8:00 — and
+would have cost the last third of the fan measurement, which is the part those
+runs exist for.
+
+#### `feedforward()` refitted — the proposed coefficients were badly wrong
+
+Nine steady windows, fan **58-80** crossed against SV **145** and **185**, each
+averaged over the 30 s before the next slider change (`tools/analysis/roast47_ff.py`):
+
+| fan | 145 degC | 185 degC |
+|---|---|---|
+| 58 | 41.5 | 48.1 |
+| 64 | 48.5 / 47.1 | 56.6 |
+| 72 | 52.8 / 53.5 | 65.2 |
+| 80 | *(lost to the DROP)* | 76.3 |
+
+Within-window sd is 0.39-1.50%, so the grid is well resolved. Three models:
+
+```
+affine      heat = -60.66 + 1.0992*fan + 0.2536*SV                       rms 1.63 %
+mass-flow   heat =  +6.31 + 0.5295*fan*(SV-28)/100                       rms 2.99 %
++product    heat = +69.87 - 0.8570*fan - 0.5101*SV + 1.1423*fan*SV/100   rms 0.68 %
+            = 0.011423*(fan - 44.7)*(SV - 75.0) + 31.6
+```
+
+**The model runbook step 8 proposed — `heat = -30.62 + 0.99*fan + 0.0096*SV` —
+under-predicts by 10.8 to 25.9% across the whole grid, and its `SV` coefficient
+is 26x too small.** The fan coefficient survives (0.99 against a measured 1.099);
+it is the setpoint term that was never identified, because the five preheat fan
+steps it came from held SV nearly constant. This is precisely the short-lever-arm
+failure the run was designed to fix, and it means **step 8 as written would have
+replaced a saturated feedforward with a badly biased one** — better, but still
+leaving `pidITerm` to supply 10-26 duty of standing offset.
+
+**The product term is worth its multiply.** It more than halves the residual, it
+is the physically right shape (power = mass flow x temperature rise), and it
+**extrapolates better**: at roast 46's own preheat point of fan 60 / SV 240 —
+55% measured, well outside the fitted box — the product form predicts 60.5 and
+the affine form 66.1. Nine points and four parameters is close to the noise
+floor, so the affine form remains the conservative choice; the product form is
+the recommendation. Coefficients are carded in `tools/analysis/ff_roast47.json`.
+
+**Two caveats on the fit.** It is an *empty* chamber. The inlet thermocouple sits
+upstream of the bed, so the heat needed to reach a given inlet temperature should
+not depend on a load — but that is an argument, not a measurement, and the loaded
+doublets are the check. And the fitted box is fan 58-80 / SV 145-185, while the
+roast runs to SV ~270; the roast-46 extrapolation check is the only evidence
+beyond it.
+
+#### What the fan steps cost the inner loop, with the feedforward dead
+
+Worst inlet excursion in the 40 s after each fan step, all of them at +2 s:
+
+| step | 64->72 | 72->58 | 58->80 | 80->64 | 64->72 |
+|---|---|---|---|---|---|
+| degC | -4.8 | +5.5 | **-13.2** | +8.0 | -3.0 |
+
+Roughly 0.6 degC per fan unit, recovered within seconds by the integrator. This
+is the disturbance `feedforward()` exists to cancel and currently does not
+(state-history.md § Roast 46: `FF = 100.0` for 430 of 430 samples, so
+`d(FF)/d(fan) = 0`). It also sets the scale for the loaded runs: their 60/70
+square wave should show ~6 degC of inlet transient per transition until step 8
+lands.

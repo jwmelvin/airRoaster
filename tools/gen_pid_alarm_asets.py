@@ -96,7 +96,8 @@ OVERRIDES = {
         'replayType': '0',                                 # replay by time
         'specialeventplayback': 'true, false, true, false',    # Air + T_inlet
         'specialeventplaybackramp': 'false, false, false, false',  # steps, not ramps
-        'alarmflag': '0, 0',                               # no auto-DROP in a step test
+        'alarmflag': '0, 0',                               # the DeltaBT auto-DROP alarm
+        'autoDrop': 'false',                               # *and* Artisan's built-in one
     },
 }
 
