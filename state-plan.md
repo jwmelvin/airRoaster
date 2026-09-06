@@ -2921,13 +2921,229 @@ real `greens_temp`.
   measurement. It is also not needed now that the loop is being made insensitive
   to it.
 
+### Dip strategies — a wider search, and the one that changes the structure (2026-09-06)
+
+**Operator, on the combined `lookahead_kigate` file:** *"by addressing the dip,
+the approach leaves the integrator a little behind and it needs to build to
+reduce error slowly … think about a variety of approaches."* The complaint is
+correct, the obvious repair (dose the integrator back up at handover) is
+**wrong**, and the search turned up one structural change that dissolves the
+problem instead of trading it around — plus a correction to how much the `Ki`
+gate is actually worth.
+
+The sweep is now **reproducible**: `tools/analysis/dip_strategies.py`. The one
+behind § The dip is a different control problem was ad hoc and is not in the
+repository, and **the two disagree** (below).
+
+#### The sweep, and why it is one-sided now
+
+Roast 46 was a frozen charge (§ Charge temperature), so the reachable variation
+is **warmer only**, up to ~42 degC. A warmer charge is injected as an extra
+mixing term in the plant disturbance, `d(t) = (0.386*dT/tau) * exp(-(t-2)/tau)`,
+`tau = 5 s` — integral `0.386 degC of BT dip per degC of charge`, which is what
+the measured 0-13 s fall implies (59.6 degC on 400 g frozen; a room-temperature
+batch should fall ~28% less). Mixing is complete by 13 s, which is where the
+13.5 s plant delay first lets the heater vote.
+
+| strategy | `I@90` | `I@DROP` | worst 1:30-3:20 | steady 5:00-7:00 mean/rms | dt150 | dI/dt |
+|---|---|---|---|---|---|---|
+| base (roast 46 as run) | 15.8 → 19.4 | 63 | +4.09 → +3.21 | +0.73 / 0.74 | +2.5 → +2.9 | 0.083 |
+| **`lookahead` (step 6)** | 23.4 → 23.4 | 63 | **-4.01 → -3.90** | **+0.19 / 0.26** | -2.9 → -3.0 | 0.082 |
+| `lookahead_kigate` | 8.1 → 9.1 | 63 | +5.79 → +4.39 | +0.32 / 0.38 | -4.3 → -0.1 | 0.092 |
+| `lookahead` + gain-scheduled `Ki` | 20.2 → 23.2 | 63 | +2.95 → -3.57 | +0.25 / 0.28 | -5.6 → -3.3 | 0.086 |
+| **FF trim** | 42.5 → 31.7 | **50** | +2.25 → +4.80 | **-0.08 / 0.11** | +1.6 → +2.9 | **-0.008** |
+| **FF trim + `Ki` gate** | **49.9 → 49.9** | **49** | **-0.87 → -1.23** | **-0.12 / 0.14** | **+1.6 → +1.6** | **-0.012** |
+| FF trim + gate, FF gain -20% | 49.6 | 42 | -4.95 → -5.16 | -0.13 / 0.15 | +6.4 → +6.3 | -0.013 |
+| FF trim + gate, FF gain +20% | 50.1 | 54 | +2.83 → +2.84 | -0.12 / 0.15 | -1.1 → -0.9 | -0.011 |
+
+Each pair is `dT = 0 → +42 degC`. `worst` is the largest signed background error
+over 1:30-3:20; `dI/dt` is duty/s over 5:00-7:00, i.e. the type-1 ramp error
+divided by `Ki`.
+
+#### Correction: over the reachable range the `Ki` gate does not pay for itself
+
+**§ The dip is a different control problem sweeps ±62 degC around roast 46 and
+half of that is unreachable** — roast 46 was already frozen, so "22 colder" and
+"42 colder" are not charge states this roaster will see. Read on the warm side
+only, this reconstruction says:
+
+- the **baseline is far less charge-sensitive than reported**: `I@1:30` spread
+  **3.6**, not 20.8, and `dt150` spread 0.9 s;
+- **`lookahead` alone is the most charge-insensitive of the Artisan-only
+  options** — `I@1:30` spread **0.9**, `dt150` spread **0.4 s** — because six
+  seconds of lead is feedforward, and feedforward does not care what the
+  integrator was doing;
+- adding the gate to it makes **every** metric worse: worst error +5.79 against
+  -4.01, steady rms 0.38 against 0.26, and `dt150` spread **4.2 s against 0.4**.
+
+That is precisely the operator's observation, and it is not a small residual —
+in this model the gate's robustness purchase is negative. The disagreement with
+the earlier tables cannot be closed (that code is gone), so treat the *direction*
+of the gate mechanism as established and its *magnitude* as unsettled, and note
+that this sweep is parameterised by a measured quantity while the earlier one was
+not. **Step 1c is demoted below step 6 rather than run with it.**
+
+#### The repair that does not work: dosing the integrator at handover
+
+The natural reading of "the integrator is left behind" is that it should be
+topped up at 1:30, and `p-i-d()` gives a way to do it — a short high-`Ki` burst,
+which with the gate in place starts from a repeatable state so the dose is
+repeatable. It **overshoots badly**: `Ki = 0.20` for 30 s takes `dt150` to
+**-20.9 s**, `Ki = 0.15` for 60 s to -20.4 s, and steady rms roughly triples. The
+loop is not short of integral — the `lookahead_kigate` file already runs *ahead*
+of the profile (`dt150 = -4.3`). What it is short of during 1:30-3:20 is
+**anticipation**, and integral is the wrong term for that. A temporary large
+`svLookahead` fails for the same reason and in the same direction (`L = 12` over
+1:30-3:00 → `dt150 -14.6`; `L = 16` → -20.5; `L = 20` → -26.3).
+
+#### Free improvement: build the gate out of gain scheduling, not alarms
+
+Artisan's software PID has **native gain scheduling** and it is not used.
+`getParameter` (pid.py:370-386) maps a linear fit through `(Schedule0, K)` and
+`(Schedule1, K1)` onto the PV — or onto the SV with `gain_scheduling_on_SV` —
+and **clamps the result to `[min, max]` of the two values** (pid.py:384-386), so
+it is a saturated ramp, not an extrapolation. All of it persists in the `.aset`
+(`pidKi1`, `pidSchedule0/1`, `gain_scheduling*`; main.py:13944-13982, 17229-17240)
+and it is applied through `confSoftwarePID` (pid_control.py:1470).
+
+`Ki` ramping 0 → 0.07 across **BT 70 → 95** is the same gate with better
+properties:
+
+- **no alarms and no buttons**, so no missed-alarm P-only failure mode, and no
+  sticky-`p-i-d()` trap — a Save Settings mid-roast writes nothing harmful,
+  because the gate is not a runtime gain change;
+- **self-scheduled on the recovery** rather than on a clock, so integral action
+  returns as fast as the beans actually recover;
+- and it removes the handover discontinuity the operator objected to: worst error
+  over 1:30-3:20 falls to **+2.95** against the timed gate's +5.79, and steady rms
+  to 0.28-0.36 against 0.38.
+
+It keeps most of the robustness (`I@1:30` spread 3.0 against the timed gate's 1.2)
+and it is strictly better than the timed gate on everything else. Three caveats:
+**v4.2.0 lacks master's guard against an all-zero schedule** (§ Development
+framework), so `pidSchedule0`/`pidSchedule1` must be set to distinct non-zero
+values *before* `pidGainScheduling` is ticked, or the fit is degenerate;
+`p-i-d()` still overrides the *base* gain `y1` if a runtime command is also used,
+so use one mechanism or the other; and the lower breakpoint must sit under the
+warmest plausible TP or the gate never engages — at `dT = +42` TP is 72.5, so
+70/95 is already marginal and 75/105 or 80/115 buys engagement at the cost of
+`I@1:30` spread (4.3 and 7.5 respectively).
+
+#### The structural fix: an inlet feedforward schedule with the PID as a trim
+
+**The root defect has been on the table since roast 40 and has never been
+addressed: the outer loop's output is an absolute setpoint, so its integrator has
+to supply the entire operating point** — a job the inner loop gives to
+`feedforward()`. That is why `I` climbs 8 → 63 across a roast at 0.09 duty/s, why
+`e_ss = (dI/dt)/Ki` exists at all, why `svLookahead` is needed, and why the value
+handed over at 1:30 matters in the first place. Every option above rearranges
+that burden. This one removes it.
+
+Give the firmware a **base inlet schedule** and make Artisan's PID output a
+**bounded trim** on it:
+
+```
+INLET = ff(t since CHARGE) + trim,        trim in [-80, +80] degC
+ff(t) = bg(t+theta) + (dbg/dt(t+theta) - loss(t+theta)) / a
+```
+
+— the plant inverted on the background, `a = 0.0049`, `theta = 13.5 s`, with the
+loss term a cubic fitted over 45 s..DROP. **The schedule deliberately knows
+nothing about the charge dip**, which is the honest case: the dip is the one part
+that is not repeatable, so it is left entirely to the trim.
+
+What that buys, from the table above:
+
+- **`dI/dt` collapses from 0.09 to 0.01 duty/s** and `I@DROP` from 63 to 50 — the
+  trim sits mid-range instead of ramping, so the type-1 error is **structurally**
+  gone rather than cancelled. Steady rms **0.11-0.14 degC** against 0.26-0.38.
+- **`svLookahead` becomes unnecessary** — every FF row runs `L = 0`. The whole
+  lookahead-versus-dip tension (§ Roast 44 outer-loop analysis: `L > 4` winds the
+  integrator through the dip) disappears with it.
+- **the handover value stops mattering**: with the gate, `I@1:30` is 49.9 at every
+  charge state and `dt150` is +1.6 s at every charge state — spreads of **0.0 and
+  0.1**, against 1.2 and 4.2 for `lookahead_kigate`. The dip becomes a bounded
+  trim excursion instead of an integrator re-seeding event.
+- and the gate now **helps** rather than trading: worst error over 1:30-3:20 goes
+  +2.25 → **-0.87**, because there is no longer an operating point for the frozen
+  integrator to be behind on.
+- **±20% of error in the assumed plant gain** costs `dt150` +6.4 s or -1.1 s and
+  leaves steady rms at 0.15-0.16 — still better than anything else in the table.
+  A 30% error in the loss term costs about the same.
+
+**It needs one small firmware command and no new Artisan machinery.**
+`specialeventplayback` is **per event type** (canvas.py:1848) and
+`pidPositiveTarget` selects **any of sliders 1-4** (pid_control.py:1252), so
+background event playback can drive the base on one slider while the PID drives
+the trim on another — the collision that forced playback off for the cascade
+(§ Background event playback must be off) was specifically that both wanted
+slider 3. So:
+
+- **Artisan**: re-enable playback for the inlet-base event type only; point
+  `pidPositiveTarget` at the trim slider; map that slider's target subrange onto
+  the trim range. `artisan/make_inlet_background.py` — kept for exactly this path
+  and never modified — authors the base curve into the background `.alog`.
+- **Firmware**: one new command, `INLET TRIM <degC>`, bounded, defaulting to 0,
+  cleared on disengage and on `INLET 0`. The inner loop's setpoint becomes
+  base + trim. Everything else, including the `INLET 0` DROP chain and the
+  cooldown guard, is untouched.
+
+**What it needs characterised before it is worth roasting**, and this is the
+honest weakness of the simulation: `ff` here is built from roast 46's own fitted
+plant and disturbance, so the exact-FF rows are partly circular. The ±20% gain
+and -30% loss rows are the answer to that and they hold up, but the real
+confirmation is Test A/B/C — **which have just recovered their priority**, since
+the FF schedule is exactly `1/a` and the loss curve, and the loss curve is where
+the fan enters. A schedule that is wrong in the *loss* term is wrong in the same
+direction for the whole roast, which the trim absorbs; a schedule wrong in `a` is
+wrong in proportion to the ramp rate, which it also absorbs, at 6 s of timing.
+
+**Risks to close before this is run.** The base schedule runs open-loop, so a
+stalled Artisan leaves the firmware holding base + last trim rather than a single
+frozen setpoint — the same exposure as today but with two stale numbers instead
+of one, and it argues for a trim staleness timeout in the firmware. The trim
+range must be bounded on the device, not only in the Artisan mapping. And an
+authoring error in the base curve is a whole-roast error rather than a transient,
+so the base must be regenerated from the background whenever the background
+changes.
+
+#### Ruled out, so they are not proposed again
+
+| approach | verdict |
+|---|---|
+| dose the integrator at handover (short high-`Ki` burst) | overshoots 10-30 s on `dt150`; the loop is short of anticipation, not integral |
+| temporary large `svLookahead` over 1:30-3:00 | same failure, same direction |
+| **relative setpoint** — `INLET = BT + trim`, the PID commanding a lead over BT | **worse, for a principled reason**: it converts the plant from a self-regulating first-order lag into an *integrator* with 13.5 s of delay, so the standing ramp error moves from integrator-rate-limited to gain-limited and the delay caps the gain. Best steady rms 1.17 against 0.24; `worst` +12 to +18. Feedforward on a *known* trajectory (above) gets the same structural benefit with none of it |
+| widen/narrow `positiveTargetMin/Max` to shrink the integrator's swing | pure reparameterisation — the map rescales `Kp` and `Ki` together in physical units, so `e_ss = (dI/dt)/Ki` is invariant. No free lunch |
+| `PIDoff` at CHARGE / `PIDon` at 1:30 (freeze at the preheat operating point) | `pidOn` does not reset `Iterm` (pid_control.py:1521-1527), so it is mechanically sound and gives `I@1:30` spread 0.8 — but the SV is frozen for 90 s, and `dt150` swings **14.6 s** across the charge sweep. Open-loop where the disturbance is |
+| `pidIRoC` (integral reset on large setpoint change) | inert here: the threshold is compared against the *per-sample* target change, which never exceeds ~5.5 degC even through the dip |
+| `pidIlimitFactor` < 1 to bound windup instead of freezing it | fatal on its own — the ramp needs `I` ≈ 63 and the cap is global. Becomes usable only under the FF trim, where `I` stays near 50 |
+| lower `Kp` through the dip | already ruled out in § The dip is a different control problem (handover spread 91.5); `beta < 1` via `pidWeights()` is the same move on the target path and no better |
+| the fan as a second actuator in the dip | not needed, and the operator now holds it constant deliberately; the ~0.99 %heat/fan-unit sensitivity is a loss-term effect, which the FF schedule and the trim both absorb |
+
+#### The one adaptive idea that is still open, and costs nothing to keep
+
+`(CHARGE_BT - BT at CHARGE+13 s) / mass` is a **free, control-independent proxy
+for the charge state** (§ Charge temperature) and it is available at 13 s — well
+before any handover. Artisan can act on it without a new process step: an alarm
+*from CHARGE, offset 13 s, source BT, below/above a threshold* can fire
+`loadBackground(<path>)` (main.py:10879), `moveBackground(<dir>,<step>)`
+(main.py:10923), `alarmset(<n>)` (main.py:10898) or `palette(<n>)`
+(main.py:10863) — so a whole tuning set or background can be selected on the
+measured charge state. **Do not build this yet.** It is the fallback if the FF
+trim leaves a charge-dependent residual worth chasing; on the present numbers it
+would be chasing 1.6 s.
+
 ### Runbook — the agreed order of work (2026-09-02, re-pointed 2026-09-05)
 
-One variable per roast. Order after roast 46, the refit and the charge-temperature
-finding: **step 6, then step 1c, then step 1b.** Steps 2-5 and 7-8 are
-independent; the characterisation runs (3-5) drop in priority now that the plant
-is identified, but Test C keeps its value because the fan is still one
-weakly-identified coefficient.
+One variable per roast. Order after roast 46, the refit, the charge-temperature
+finding and the strategy search: **step 6, then steps 3-5 (the characterisation
+runs), then step 9.** Steps 2 and 7-8 are independent. **Steps 1b and 1c are
+demoted** — § Dip strategies finds that over the *reachable* (warm-side only)
+charge range the `Ki` gate makes every metric worse than step 6 alone, and that
+both of them are rearranging a burden that step 9 removes. **The characterisation
+runs have recovered their priority**, because step 9's feedforward schedule is
+built from `1/a` and the loss curve, and the loss curve is where the fan enters.
 
 **Do this on every roast from now on, it costs nothing: fill in `greens_temp`**
 (Artisan Roast Properties). It is `0.0` on every roast on record, which is why
@@ -2985,8 +3201,16 @@ are in § The dip is a different control problem. Note that at the usual charge
 state this is close to a **null experiment** on roast quality: check the
 mechanism (`I@1:30` near 8, SV parked on the floor until 1:30), not the outcome.
 
-**This is worth more than step 1b** and should come first — it removes the
-*sensitivity* to the dip shape rather than cancelling one instance of it.
+**Demoted 2026-09-06 — do not run this with step 6.** § Dip strategies
+reconstructs the charge sweep as a reproducible tool
+(`tools/analysis/dip_strategies.py`), restricted to the warm side that a frozen
+roast 46 leaves reachable, and finds the gate costs more than it buys there:
+worst error over 1:30-3:20 +5.79 against step 6's -4.01, steady rms 0.38 against
+0.26, and `dt150` spread 4.2 s against 0.4. The mechanism is real, its magnitude
+is not settled, and the earlier sweep's code no longer exists to reconcile.
+**If the gate is run at all, run it as gain scheduling rather than alarms** —
+`Ki` 0 → 0.07 across BT 70 → 95, which is the same gate with no missed-alarm
+failure mode, no sticky-`p-i-d()` trap, and a worst error of +2.95.
 
 **Step 2 — flash v0.19.0 and wire up the new channels.** After step 1, so that
 roast stays clean. `./verify.sh upload`, then in Artisan **Config > Device >
@@ -3059,6 +3283,22 @@ give it the affine form the preheat measurement supports
 (`heat = -30.6 + 0.99*fan + 0.0096*SV`, resid rms 1.85 %) or set `FF OFF` until
 it has one. Bench-testable; no roast needed. **Do it before Test C**, whose whole
 subject is the fan compensation this term is supposed to provide.
+
+**Step 9 — the inlet feedforward schedule with the PID as a trim.** The
+structural fix, and the reason steps 1b/1c are demoted rather than deleted:
+today the outer integrator has to supply the entire operating point, so it ramps
+at 0.09 duty/s all roast, `e_ss = (dI/dt)/Ki` exists, `svLookahead` is needed to
+hide it, and the value handed over at 1:30 matters. Give the firmware a base
+inlet schedule (`ff(t) = bg(t+theta) + (dbg/dt - loss)/a`, authored by
+`artisan/make_inlet_background.py` and replayed through Artisan's per-event-type
+background playback on its own slider) and make the PID's output a bounded trim
+on it via a new `INLET TRIM <degC>` firmware command. Simulated: `dI/dt` 0.09 ->
+0.01, `I@DROP` 63 -> 50, steady rms **0.11-0.14 degC**, `svLookahead` 0, and with
+the `Ki` gate the handover integrator and `dt150` are **identical at every charge
+state**. Survives +-20% of error in the assumed plant gain. **Run steps 3-5
+first** — the schedule is exactly `1/a` and the loss curve, which is what those
+runs measure. Full design, the source citations for the playback/slider
+arrangement, and the risks to close are in § Dip strategies.
 
 #### The dump-lever switch
 

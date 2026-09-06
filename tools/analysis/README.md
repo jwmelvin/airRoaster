@@ -11,6 +11,7 @@ reproduces the outer loop so tuning can be tested before it is roasted.
 | `sim.py` | the closed-loop simulator: background -> PID -> inlet SV -> inner loop -> plant |
 | `margins.py` | frequency-domain phase margin for the same loop |
 | `roast46_refit.py` | driver that reproduces the numbers in state-plan.md § Roast 46 refit |
+| `dip_strategies.py` | charge-state robustness of the dip strategies; state-plan.md § Dip strategies |
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install numpy scipy

@@ -486,6 +486,53 @@ than a fix). Runbook and detail
 in state-plan.md § The dip is a different control problem and § Charge
 temperature.
 
+**A wider strategy search then changed the order again (2026-09-06), on the
+operator's observation that the `Ki` gate hands the ramp an integrator that is
+behind and has to build.** Three findings, all from a now-reproducible sweep
+(`tools/analysis/dip_strategies.py`; the sweep behind § The dip is a different
+control problem was ad hoc and is gone).
+
+**First, the correction: over the *reachable* charge range the gate does not pay
+for itself.** Roast 46 was frozen, so only the warm half of the earlier +-62 degC
+sweep is a charge state this roaster will see. Read that way, the baseline's
+`I@1:30` spread is **3.6, not 20.8**; `lookahead` alone is the most
+charge-insensitive Artisan-only option (`I@1:30` spread **0.9**, `dt150` spread
+**0.4 s**, because lead is feedforward and feedforward does not care about the
+integrator); and adding the gate makes every metric worse — worst error +5.79
+against -4.01, steady rms 0.38 against 0.26, `dt150` spread 4.2 s against 0.4.
+The mechanism stands, the magnitude does not, and the disagreement cannot be
+closed. **Step 6 runs alone; steps 1b and 1c are demoted.**
+
+**Second, the obvious repair is wrong.** Dosing the integrator back up at
+handover with a short high-`Ki` burst overshoots by 10-30 s on time-to-BT-150,
+and a temporary large `svLookahead` fails the same way. The loop is short of
+*anticipation* over 1:30-3:20, and integral is the wrong term for it. If the gate
+is wanted at all it should be built from Artisan's **native gain scheduling**
+(`Ki` 0 -> 0.07 across BT 70 -> 95; pid.py:370-386, persisted in the `.aset`)
+rather than two timed alarms — same gate, no missed-alarm P-only failure mode, no
+sticky-`p-i-d()` trap, and worst error +2.95 instead of +5.79.
+
+**Third, and this is the answer: give the outer loop a feedforward and make its
+output a trim.** The root defect has been on the table since roast 40 —
+the outer output is an *absolute* setpoint, so its integrator must supply the
+whole operating point, which is why it ramps at 0.09 duty/s, why `e_ss` exists,
+why `svLookahead` is needed, and why the handover value matters at all. Put the
+base inlet trajectory (`ff(t) = bg(t+theta) + (dbg/dt - loss)/a`) on background
+event playback on its own slider and make the PID drive a bounded `INLET TRIM`
+on another — `specialeventplayback` is per event type (canvas.py:1848) and
+`pidPositiveTarget` takes any of sliders 1-4 (pid_control.py:1252), so the
+collision that forced playback off does not arise. Simulated: **`dI/dt` 0.09 ->
+0.01**, `I@DROP` 63 -> 50, steady rms **0.11-0.14 degC** against 0.26-0.38,
+`svLookahead` **0**, and with the gate the handover integrator (49.9) and
+`dt150` (+1.6 s) are *identical at every charge state* — spreads 0.0 and 0.1.
+Survives +-20% of error in the assumed plant gain. It needs one small firmware
+command and **steps 3-5 first**, because the schedule is exactly `1/a` and the
+loss curve. That is new **runbook step 9**, and it is why the characterisation
+runs have recovered their priority. The relative-setpoint variant
+(`INLET = BT + trim`) was tried and is **worse** for a principled reason: it turns
+the plant into an integrator with 13.5 s of delay. Detail, the full table and the
+ruled-out list are in state-plan.md § Dip strategies.
+
 **Canonical config is `artisan/airRoaster_cascadePID.aset`** (one file; the
 brief `_edit` variant used while adding the alarms was folded back in and
 removed), with background
