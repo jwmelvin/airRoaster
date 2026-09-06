@@ -1,10 +1,14 @@
 # state-current — what is being worked on right now
 
-> One of three state documents. **This file**: the active effort and where it
-> stands. [state-plan.md](state-plan.md): planned phases and their full specs.
+> One of four state documents. **This file**: the active effort and where it
+> stands. [state-plan.md](state-plan.md): planned work and the specifications
+> in force. [state-history.md](state-history.md): the roast-by-roast cascade PID
+> reasoning behind them, chronological and superseding as it goes.
 > [state-archive.md](state-archive.md): completed work, review findings, and
 > decided-and-done rationale. Update discipline: when a phase completes, move
-> its detail from *plan* to *archive* and re-point this file at the next phase.
+> its detail from *plan* to *archive* and re-point this file at the next phase;
+> when a plan section turns into a record of what happened rather than a
+> statement of what to do, move it to *history*.
 
 ## Development framework (read this first if you are new here)
 
@@ -101,12 +105,12 @@ fast-forwarded into `main`; its on-roaster validation is still pending
 (state-plan.md § NEXT item 13, as is the ambient drill, item 12). Current
 working branch is **`feature/artisan-pid`**, which now also carries **v0.19.0**
 (unflashed): the `SV`/`HT` `getData` nodes and `INLET TRIM`, on top of the
-Artisan configuration and documentation work it started as. Note that `feature/vision-uvc-probe` holds two commits
-that exist on no other branch and have never been pushed. Start each new effort
-on a fresh branch off `main`. Commit per phase with
-a message naming the phase. The user's Artisan config churn (`artisan/*.aset`,
-`*.alog`) may be present in the working tree — never sweep it into a firmware
-commit; stage files explicitly.
+Artisan configuration and documentation work it started as. Note that
+`feature/vision-uvc-probe` holds two commits that exist on no other branch and
+have never been pushed. Start each new effort on a fresh branch off `main`.
+Commit per phase with a message naming the phase. The user's Artisan config
+churn (`artisan/*.aset`, `*.alog`) may be present in the working tree — never
+sweep it into a firmware commit; stage files explicitly.
 
 ## Active effort (2026-09-06)
 
@@ -162,8 +166,8 @@ standing **+17 degC BT deficit** to hold its output, all roast. The reason the
 estimate was wrong is structural — the outer loop's output is an absolute
 setpoint, so the integrator must supply the entire operating point, a job the
 firmware's inner loop gives to `feedforward()` and which Artisan's software PID
-has no term for. New gains: Kp 3.0, Ki 0.04, floor 140 degC, `svLookahead` 20 s. Detail and the caveats are in
-state-plan.md § Roast 40.
+has no term for. New gains: Kp 3.0, Ki 0.04, floor 140 degC, `svLookahead` 20 s.
+Detail and the caveats are in state-history.md § Roast 40.
 
 **Roast 41 (later the same evening, dashboard telemetry only) validated the
 inner loop**: on the SV 150 plateau it tracks to rms 0.3 degC, heat reached 100%
@@ -198,13 +202,13 @@ CHARGE — the preheat target is supplied automatically as the background's CHAR
 BT — and keep it to **one PID on/off cycle per monitor ON/OFF cycle**, since
 RESET between roasts silently carries the previous integrator over.
 
-**That procedure** forced the floor back down to
-140 (the loop needs inlet ~148 to hold 129.4 degC, which a 170 floor forbids)
-and Ki up to 0.04 (a correctly-started integrator sits at the empty-roaster
-operating point ~5 duty and must climb to ~55 during the roast). SV also sat at its 120 degC floor for 19 s
-during the charge dip — with the range limit unchecked that would have been
+**That procedure** forced the floor back down to 140 (the loop needs inlet ~148
+to hold 129.4 degC, which a 170 floor forbids) and Ki up to 0.04 (a
+correctly-started integrator sits at the empty-roaster operating point ~5 duty
+and must climb to ~55 during the roast). SV also sat at its 120 degC floor for
+19 s during the charge dip — with the range limit unchecked that would have been
 `INLET 0` and a heat kill mid-roast, so the floor is doing real work. Detail in
-state-plan.md § Roast 41.
+state-history.md § Roast 41.
 
 **Roast 42 (2026-09-02, retuned config + PID-driven preheat): the cascade
 works.** Outer integrator settles at 53-65 and stays, carrying the operating
@@ -214,7 +218,7 @@ point while P trims within +/-5 duty; tracking error +1.6 ... -0.9 degC from
 PID-driven preheat landed at CHARGE_BT 129.7 against a 129.4 target. The one
 remaining offset is `svLookahead=20`, which makes the roast run 20 s ahead by
 construction (DRYe 2:36 vs 3:00) — a spec error, not tuning; it should come down
-to ~0 now that the cascade is known to be tight. Detail in state-plan.md
+to ~0 now that the cascade is known to be tight. Detail in state-history.md
 § Roast 42.
 
 **Roast 44 (2026-09-02) is the clean validation run and the cascade is
@@ -223,7 +227,7 @@ intervention: CHARGE_BT 128.3 against a 127.8 target, DRYe 3:23 vs the
 profile's 3:20, DROP 7:03 vs 6:51 at BT 200.7 vs 201.2, tracking error
 converging +4.0 -> +1.7 degC. The auto-DROP alarm fired (operator-confirmed in
 roast 43; roast 44 shows the same signature). Control settings verified
-field-by-field against the PID dialog. Detail in state-plan.md § Roast 44.
+field-by-field against the PID dialog. Detail in state-history.md § Roast 44.
 
 **The residual droop is now diagnosed, and there is a proposal on the table
 (2026-09-02).** Reconstructing the outer loop from roast 44 (`.alog` + the
@@ -288,25 +292,25 @@ makes a delay-limited loop *worse*: PM 10 deg at Kp 2, 5 deg at Kp 1.5).
 (`pidDsetpointWeight = 1`) and `derivative_filter = 1`, predicted PM 29-46 deg —
 an experiment for its own roast, not a settled recommendation. The fan
 sensitivity measurement survives (~49% of plant gain per 10 fan units); what is
-retracted is that it shapes roast 45's error trace. Detail in state-plan.md
+retracted is that it shapes roast 45's error trace. Detail in state-history.md
 § Correction: roast 45's error is the loop, not the air.
 
 **A source mechanism the earlier notes missed underpins all of it**:
 `_back_calculate_integral` (pid.py:314-333) runs on every clamped cycle whenever
 `pidIWP` is on, and at the *low* clamp it drives `Iterm` **up**, converging
 geometrically (half per second) on `Kp*|err|`. So the charge dip re-seeds the
-integrator to `Kp * |worst dip error|` (roast 44: 3 x 8.4 = 25 against a measured
-24.6), whatever the preheat left is forgotten within seconds of the floor, and
-**raising Ki costs nothing on the charge transient** — the dip runs on a path
-with no Ki in it. The same mechanism is why `svLookahead` cannot go to the
-"natural" 12 s: the background falls at 5.5 degC/s through the dip, so each
+integrator to `Kp * |worst dip error|` (roast 44: 3 x 8.4 = 25 against a
+measured 24.6), whatever the preheat left is forgotten within seconds of the
+floor, and **raising Ki costs nothing on the charge transient** — the dip runs
+on a path with no Ki in it. The same mechanism is why `svLookahead` cannot go to
+the "natural" 12 s: the background falls at 5.5 degC/s through the dip, so each
 second of lead adds ~4 degC to the dip error and hence to the preload, and past
 `L=4` the roast starts wound up and overshoots by 5-20 degC in the first two
 minutes. The DROP-window truncation the handoff worried about is the *lesser*
 constraint. Full analysis, the option-by-option review of Artisan's other
 control modes (gain scheduling, beta/gamma, Dlimit, IRoC, ILF, Ramp/Soak,
 sv/duty filters, BT-RoR control) and the single-roast validation checklist are
-in state-plan.md § Roast 44 outer-loop analysis.
+in state-history.md § Roast 44 outer-loop analysis.
 
 **Roast 46 (2026-09-05, 400 g) is runbook step 1, and it passes.** Config
 unmodified (Kp 3.0, **Ki 0.07**, Kd 0, `svLookahead` 3, floor 140), background
@@ -328,14 +332,15 @@ which is the value `artisan/airRoaster_cascadePID_lookahead.aset` already
 carries. **Step 6 is therefore promoted to the next roast**; expect a +4.1 degC
 target step (~+20 degC of SV) at 1:30 when the switch fires.
 
-Second, **check 5 failed and the cause is batch size, not the loop**: profile_003's
-TP is matched to roast 45 at 345 g, roast 46 was 400 g and bottomed 9.8 degC
-deeper and 16 s earlier, exactly as § profile_003 predicted. That manufactured a
-30.5 degC error swing in the first twenty seconds, drove SV rail-to-rail
-(261 -> the 140 floor), put 11 s on the floor, and re-seeded `Iterm` to ~30 by
-back-calculation — after which BT overshot the background by 9.3 degC at 1:00 and
-sat 4.0 degC behind at 2:00. The fix is **profile_004**, a 400 g dip spliced onto
-profile_003's unchanged ramp (new runbook step 1b).
+Second, **check 5 failed and the cause is batch size, not the loop**:
+profile_003's TP is matched to roast 45 at 345 g, roast 46 was 400 g and
+bottomed 9.8 degC deeper and 16 s earlier, exactly as state-history.md §
+profile_003 predicted. That manufactured a 30.5 degC error swing in the first
+twenty seconds, drove SV rail-to-rail (261 -> the 140 floor), put 11 s on the
+floor, and re-seeded `Iterm` to ~30 by back-calculation — after which BT
+overshot the background by 9.3 degC at 1:00 and sat 4.0 degC behind at 2:00. The
+fix is **profile_004**, a 400 g dip spliced onto profile_003's unchanged ramp
+(new runbook step 1b).
 
 **A separate firmware finding: the feedforward term is saturated and inert.**
 `FF = 100.0` for 430 of 430 roast samples; fitting the model to the three
@@ -351,7 +356,7 @@ recalibrating `ffK` alone. New runbook step 8, bench-only, and it must come
 before Test C. The inner loop absorbed every one of those steps unaided (worst
 7.2 degC on an 11-unit step, 1.3-3.6 degC on the rest).
 
-Detail in state-plan.md § Roast 46.
+Detail in state-history.md § Roast 46.
 
 **The plant is refitted against roast 46, and there is now a simulator that
 reproduces the roast to 0.16 degC (2026-09-05).** Tooling in
@@ -366,14 +371,15 @@ dBT/dt = 0.0049 * (Inlet(t - 13.5 s) - BT) + slow(t)      tau 204 s
 **Roast 46 is the only roast in the set that identifies a plant at all, and the
 reason is the check it failed.** The 400 g batch against a 345 g dip drove the
 commanded inlet rail to rail in the first two minutes — an involuntary doublet,
-and exactly the excitation § Scheduling proposed Tests A and B to obtain. Run
-through the same code, roasts 44 and 45 return a negative gain or pin the delay
-at a grid edge. The residual minimum in theta is **3.9x deep** here against a
-flat ridge before, so `theta = 13-18 s` brackets the earlier 17 s and the
-retracted `tau 69 / theta 0` model is 4x worse on residual. Estimator changes
-that made the difference: integrate the model rather than differentiate BT, and
-keep the charge recovery in the window while the disturbance stays a low-order
-polynomial (a free `w(t)` is what produced the retracted "deadtime ~0 s").
+and exactly the excitation state-history.md § Scheduling proposed Tests A and B
+to obtain. Run through the same code, roasts 44 and 45 return a negative gain or
+pin the delay at a grid edge. The residual minimum in theta is **3.9x deep**
+here against a flat ridge before, so `theta = 13-18 s` brackets the earlier 17 s
+and the retracted `tau 69 / theta 0` model is 4x worse on residual. Estimator
+changes that made the difference: integrate the model rather than differentiate
+BT, and keep the charge recovery in the window while the disturbance stays a
+low-order polynomial (a free `w(t)` is what produced the retracted "deadtime ~0
+s").
 
 **Artisan's `PID.update()` is reimplemented against v4.2.0 and validated.**
 Driven with roast 46's measured BT and `profile_003` it reproduces the commanded
@@ -392,15 +398,16 @@ Follow-Background mode does not start tracking until CHARGE+3 s; without that
 the SV replay is a constant **+21 degC** out for the entire roast, because the
 frozen target floors the output and back-calculation pumps `Iterm` to `Kp*|err|`.
 
-**What the simulator says to do, ranked** (detail and the tables in state-plan.md
-§ Roast 46 refit):
+**What the simulator says to do, ranked** (detail and the tables in
+state-history.md § Roast 46 refit):
 
-1. **Step 6 is the next roast, file unmodified.** The 1.0 degC / 4-5 s steady lag
-   goes to **+0.05 degC / 0.44 s**; time-to-BT 150/180/196.5 lands at -1.9/+3.2/+0.9 s
-   against the profile. The 1:30 switch is a +4.0 degC target step and **+24.7 degC**
-   of commanded SV (a quarter larger than § Roast 46 estimated), settled in ~15 s.
-   The two-stage alternative is **not** meaningfully better — under 0.1 degC of rms
-   for two more buttons and an alarm.
+1. **Step 6 is the next roast, file unmodified.** The 1.0 degC / 4-5 s steady
+   lag goes to **+0.05 degC / 0.44 s**; time-to-BT 150/180/196.5 lands at
+   -1.9/+3.2/+0.9 s against the profile. The 1:30 switch is a +4.0 degC target
+   step and **+24.7 degC** of commanded SV (a quarter larger than
+   state-history.md § Roast 46 estimated), settled in ~15 s. The two-stage
+   alternative is **not** meaningfully better — under 0.1 degC of rms for two
+   more buttons and an alarm.
 2. **Then profile_004, and only with that config.** Together they are the best
    configuration found: **0 s at the output floor**, dip error -2.6 degC against
    -8.8, handover `Iterm` 30 against 42, steady error +0.18 degC. At the present
@@ -408,12 +415,13 @@ frozen target floors the output and back-calculation pumps `Iterm` to `Kp*|err|`
    The `pidLookahead(0)` leg of the step-6 file is mildly counterproductive
    against profile_003 (16 s on the floor, not 4) and exactly right against
    profile_004 — which is why the file gets run unchanged rather than edited.
-3. **`pidKi` 0.07 and `pidKp` 3.0 are settled, not compromises.** There is no room
-   above Ki 0.07 and no need: with the lookahead carrying the tracking the standing
-   error is already zero, so more integral gain only overshoots and rings, and 0.07
-   is the best value on the nominal plant, under +14 s of delay and under +50% of
-   gain. Kp 3.0 stands; § Correction's "do not lower Kp" holds for Kp <= 2.0 and is
-   overstated for 2.5, which is within model error of 3.0.
+3. **`pidKi` 0.07 and `pidKp` 3.0 are settled, not compromises.** There is no
+   room above Ki 0.07 and no need: with the lookahead carrying the tracking the
+   standing error is already zero, so more integral gain only overshoots and
+   rings, and 0.07 is the best value on the nominal plant, under +14 s of delay
+   and under +50% of gain. Kp 3.0 stands; state-history.md § Correction's "do
+   not lower Kp" holds for Kp <= 2.0 and is overstated for 2.5, which is within
+   model error of 3.0.
 4. **`pidKd = 40` with DoE is dropped.** The frequency-domain margin it promised
    (29-46 deg) is an artefact: in the time domain it worsens tracking, adds half
    again to the dip preload, puts 11 s back on the floor and multiplies SV ripple
@@ -448,29 +456,30 @@ proxy, and **start filling in `greens_temp`**.
 **Second, and much the more valuable: the dip is a different control problem, so
 gate `Ki` off through it.** The operator asked whether coarse parameters could
 ride through the initial stage and be swapped after equalisation. They can, and
-the earlier "no" in § Scheduling was to a different question (gain scheduling for
-the *ramp*, where the plant moves by only +-6%). The mechanism is that
-`_back_calculate_integral` is gated on `getKi(PV) != 0` (pid.py:314-333), so
-**`Ki = 0` closes both windup paths at once** and `Iterm` is simply frozen —
-`p-i-d(3,0,0)` at CHARGE+1 s, `p-i-d(3,0.07,0)` at CHARGE+90 s, both bumpless,
-both the same alarm-plus-hidden-button pattern `gen_pid_alarm_asets.py` already
-generates. Simulated over a 62 degC swing in charge temperature, the integrator
-handed to the ramp goes from a spread of **36.5 to 0.3**, worst error in
-1:30-3:00 from -14.5 to +0.3 degC, and time-to-BT-150 from 9.2 s of range to
-1.8 s, with `Iterm` at DROP unchanged at 71.2 in every run. It removes the
-*sensitivity* to the dip rather than cancelling one instance of it, which is why
-it is worth more than profile_004. Costs: the SV sits on the 140 floor longer and
-cannot lift off it before 1:30; `p-i-d()` is sticky so a Save Settings before
-1:30 writes `pidKi = 0` into the `.aset`; and a missed 1:30 alarm leaves the loop
-P-only for the roast. Lowering `Kp` in the dip is *worse*, not better (handover
-spread 91.5) — `Kp = 3.0` everywhere.
+the earlier "no" in state-history.md § Scheduling was to a different question
+(gain scheduling for the *ramp*, where the plant moves by only +-6%). The
+mechanism is that `_back_calculate_integral` is gated on `getKi(PV) != 0`
+(pid.py:314-333), so **`Ki = 0` closes both windup paths at once** and `Iterm`
+is simply frozen — `p-i-d(3,0,0)` at CHARGE+1 s, `p-i-d(3,0.07,0)` at CHARGE+90
+s, both bumpless, both the same alarm-plus-hidden-button pattern
+`gen_pid_alarm_asets.py` already generates. Simulated over a 62 degC swing in
+charge temperature, the integrator handed to the ramp goes from a spread of
+**36.5 to 0.3**, worst error in 1:30-3:00 from -14.5 to +0.3 degC, and
+time-to-BT-150 from 9.2 s of range to 1.8 s, with `Iterm` at DROP unchanged at
+71.2 in every run. It removes the *sensitivity* to the dip rather than
+cancelling one instance of it, which is why it is worth more than profile_004.
+Costs: the SV sits on the 140 floor longer and cannot lift off it before 1:30;
+`p-i-d()` is sticky so a Save Settings before 1:30 writes `pidKi = 0` into the
+`.aset`; and a missed 1:30 alarm leaves the loop P-only for the roast. Lowering
+`Kp` in the dip is *worse*, not better (handover spread 91.5) — `Kp = 3.0`
+everywhere.
 
-**A documentation error was also fixed**: § Scheduling listed `pidILF`, `pidIWP`,
-`pidIRoC`, `pidDerivativeLimit` and `pidDerivativeFilter` as runtime-settable.
-**None of those commands exist.** The complete PID command surface is
-`p-i-d(p,i,d)`, `pidWeights(beta,gamma)`, `pidLookahead(n)`, `pidSource(n)`, the
-SV/RS commands and `pidmode(...)`. The three gains, the two weights and the
-lookahead are the only runtime levers — and they are enough.
+**A documentation error was also fixed**: state-history.md § Scheduling listed
+`pidILF`, `pidIWP`, `pidIRoC`, `pidDerivativeLimit` and `pidDerivativeFilter` as
+runtime-settable. **None of those commands exist.** The complete PID command
+surface is `p-i-d(p,i,d)`, `pidWeights(beta,gamma)`, `pidLookahead(n)`,
+`pidSource(n)`, the SV/RS commands and `pidmode(...)`. The three gains, the two
+weights and the lookahead are the only runtime levers — and they are enough.
 
 **Revised order (operator, 2026-09-05): step 1c first.** Files are generated —
 `tools/gen_pid_alarm_asets.py` (replacing `gen_lookahead_aset.py`) emits
@@ -481,17 +490,16 @@ effects separate: read the dip and `I@1:30` for the gate and **5:00-7:00** for
 the lookahead, and ignore DRY-END-to-5:00 in a combined roast (the integrator is
 still climbing out of the gate there). **At the usual charge state step 1c is
 close to a null experiment on roast quality** — check the mechanism (`I@1:30`
-near 8 instead of 16, SV parked on the 140 floor until 1:30, `pidKi` back at 0.07
-afterwards), not the outturn. Then step 1b (profile_004, now a refinement rather
-than a fix). Runbook and detail
-in state-plan.md § The dip is a different control problem and § Charge
-temperature.
+near 8 instead of 16, SV parked on the 140 floor until 1:30, `pidKi` back at
+0.07 afterwards), not the outturn. Then step 1b (profile_004, now a refinement
+rather than a fix). Runbook and detail in state-history.md § The dip is a
+different control problem and § Charge temperature.
 
 **A wider strategy search then changed the order again (2026-09-06), on the
 operator's observation that the `Ki` gate hands the ramp an integrator that is
 behind and has to build.** Three findings, all from a now-reproducible sweep
-(`tools/analysis/dip_strategies.py`; the sweep behind § The dip is a different
-control problem was ad hoc and is gone).
+(`tools/analysis/dip_strategies.py`; the sweep behind state-history.md § The dip
+is a different control problem was ad hoc and is gone).
 
 **First, the correction: over the *reachable* charge range the gate does not pay
 for itself.** Roast 46 was frozen, so only the warm half of the earlier +-62 degC
@@ -514,13 +522,13 @@ rather than two timed alarms — same gate, no missed-alarm P-only failure mode,
 sticky-`p-i-d()` trap, and worst error +2.95 instead of +5.79.
 
 **Third, and this is the answer: give the outer loop a feedforward and make its
-output a trim.** The root defect has been on the table since roast 40 —
-the outer output is an *absolute* setpoint, so its integrator must supply the
-whole operating point, which is why it ramps at 0.09 duty/s, why `e_ss` exists,
-why `svLookahead` is needed, and why the handover value matters at all. Put the
-base inlet trajectory (`ff(t) = bg(t+theta) + (dbg/dt - loss)/a`) on background
-event playback on its own slider and make the PID drive a bounded `INLET TRIM`
-on another — `specialeventplayback` is per event type (canvas.py:1848) and
+output a trim.** The root defect has been on the table since roast 40 — the
+outer output is an *absolute* setpoint, so its integrator must supply the whole
+operating point, which is why it ramps at 0.09 duty/s, why `e_ss` exists, why
+`svLookahead` is needed, and why the handover value matters at all. Put the base
+inlet trajectory (`ff(t) = bg(t+theta) + (dbg/dt - loss)/a`) on background event
+playback on its own slider and make the PID drive a bounded `INLET TRIM` on
+another — `specialeventplayback` is per event type (canvas.py:1848) and
 `pidPositiveTarget` takes any of sliders 1-4 (pid_control.py:1252), so the
 collision that forced playback off does not arise. Simulated: **`dI/dt` 0.09 ->
 0.01**, `I@DROP` 63 -> 50, steady rms **0.11-0.14 degC** against 0.26-0.38,
@@ -529,12 +537,12 @@ collision that forced playback off does not arise. Simulated: **`dI/dt` 0.09 ->
 Survives +-20% of error in the assumed plant gain. It needs one small firmware
 command — **`INLET TRIM`, now folded into v0.19.0** so the outer-loop
 instrumentation and the outer-loop restructuring land in one flash (spec in
-state-plan.md § Firmware now in scope; it is inert until Artisan is
+state-history.md § Firmware now in scope; it is inert until Artisan is
 reconfigured) — and **steps 3-5 first**, because the schedule is exactly `1/a`
 and the loss curve. **The firmware half is written (2026-09-06) and v0.19.0 is
 now complete and unflashed** — see the paragraph below. The Artisan half had a
-gap that was not costed — `artisan/make_inlet_background.py` does **not** emit the
-file step 9 needs, since its events mode blanks BT by construction — and
+gap that was not costed — `artisan/make_inlet_background.py` does **not** emit
+the file step 9 needs, since its events mode blanks BT by construction — and
 **that gap is now closed (2026-09-06)**: `tools/merge_inlet_base.py` merges the
 base schedule into profile_003/004 rather than generating it, reading the plant
 from `tools/analysis/plant_roast46.json` (written by `roast46_refit.py
@@ -546,19 +554,21 @@ things in the analysis: the playback name check is not *absent* but *broken*
 on; the `bg(t+theta)` lead reads into a recorded roast's **cooling phase**, not
 merely off the end, so the window closes at DROP and the background is blended
 into its terminal RoR fit; the residual has a ~0.5 degC floor from whole-degree
-event quantisation; and **the default dip rule is not the one § Dip strategies
-simulated** — raw `ff` is -432 degC at CHARGE, the simulation clipped it to the
-120 floor, and the operator's choice is instead to back-extrapolate the ramp to a
-near-flat 199 degC and leave the whole dip to the trim (`--dip follow` reproduces
-the simulated variant). Closing that comparison, and the `.aset` half (trim
-slider, `pidPositiveTarget`, per-event-type playback), are what is left.
-state-plan.md § Dip strategies § The base-curve authoring gap. Still not on the
-critical path — there is no real `ff(t)` to author until steps 3-5 run, so the
-merged background is generated on demand rather than committed. That is new **runbook step 9**, and it is why the characterisation
-runs have recovered their priority. The relative-setpoint variant
-(`INLET = BT + trim`) was tried and is **worse** for a principled reason: it turns
-the plant into an integrator with 13.5 s of delay. Detail, the full table and the
-ruled-out list are in state-plan.md § Dip strategies.
+event quantisation; and **the default dip rule is not the one state-history.md §
+Dip strategies simulated** — raw `ff` is -432 degC at CHARGE, the simulation
+clipped it to the 120 floor, and the operator's choice is instead to
+back-extrapolate the ramp to a near-flat 199 degC and leave the whole dip to the
+trim (`--dip follow` reproduces the simulated variant). Closing that comparison,
+and the `.aset` half (trim slider, `pidPositiveTarget`, per-event-type
+playback), are what is left. state-plan.md § The base-curve authoring gap. Still
+not on the critical path — there is no real `ff(t)` to author until steps 3-5
+run, so the merged background is generated on demand rather than committed. That
+is new **runbook step 9**, and it is why the characterisation runs have
+recovered their priority. The relative-setpoint variant (`INLET = BT + trim`)
+was tried and is **worse** for a principled reason: it turns the plant into an
+integrator with 13.5 s of delay. Detail, the full table and the ruled-out list
+are in state-plan.md § Ruled out; the sweep that produced them is in
+state-history.md § Dip strategies.
 
 **v0.19.0 is written, compile-verified and unflashed (2026-09-06).** Both items
 are in: the `SV`/`HT` `getData` nodes (first item, done earlier) and now
@@ -655,26 +665,26 @@ defaults to °F, converts to °C before sending — firmware and Artisan stay
 Compile-verified; dashboard checked in browser preview with simulated pushes;
 on-roaster drill is state-plan.md § NEXT item 12.
 
-**Prior: Cooldown guard → v0.16.0** (on `main`). Minimum fan-shutdown
-criteria, per operator request: the fan may stop only once the inlet has
-stayed below `COOL_FAN_OFF_C` (70 °C) for the release dwell (`coolDwellS`,
-default 30 s, live-set via `COOL DWELL <1-3600>`, NVS) on fresh
-readings with heat off. **First on-roaster run 2026-07-05**: deferral, hold,
-and auto-release all worked, but the 30 s dwell released into soak-back and
-the guard re-enforced twice (fan pulsed twice at ~17:36–17:38 on the log) —
-which is why the dwell became adjustable; raise it until one release sticks. An `OT2` below `coolFanMin` (default 50, live-set via
-`COOL MIN`, NVS namespace "cool") while hot is *deferred* (fan
-held at `coolFanMin`, requested level auto-applies when the criteria are met);
-a hot roaster with the fan below minimum gets airflow forced back on
-autonomously (manual-mode requested heat zeroed so the raised fan can't
-un-block interlock-capped heat). Stale-hot sensor keeps the fan running;
-`COOL OFF` is the runtime-only operator escape (re-armed every boot). New
-`COOL` command, `cool` push, status `cool` field, OLED row 7; OT2 refactored
-through commit-on-ack `setFanLevel()`. Dashboard gains a Cooldown panel
-(arm/disarm, fan-min read/set, hold-state line; prefilled from `COOL` on
-connect) and a cooldown line in the Status panel. Compile-verified; dashboard
-checked in browser preview with simulated pushes; on-roaster drill is
-state-plan.md § NEXT item 11. README + state docs updated.
+**Prior: Cooldown guard → v0.16.0** (on `main`). Minimum fan-shutdown criteria,
+per operator request: the fan may stop only once the inlet has stayed below
+`COOL_FAN_OFF_C` (70 °C) for the release dwell (`coolDwellS`, default 30 s,
+live-set via `COOL DWELL <1-3600>`, NVS) on fresh readings with heat off.
+**First on-roaster run 2026-07-05**: deferral, hold, and auto-release all
+worked, but the 30 s dwell released into soak-back and the guard re-enforced
+twice (fan pulsed twice at ~17:36–17:38 on the log) — which is why the dwell
+became adjustable; raise it until one release sticks. An `OT2` below
+`coolFanMin` (default 50, live-set via `COOL MIN`, NVS namespace "cool") while
+hot is *deferred* (fan held at `coolFanMin`, requested level auto-applies when
+the criteria are met); a hot roaster with the fan below minimum gets airflow
+forced back on autonomously (manual-mode requested heat zeroed so the raised fan
+can't un-block interlock-capped heat). Stale-hot sensor keeps the fan running;
+`COOL OFF` is the runtime-only operator escape (re-armed every boot). New `COOL`
+command, `cool` push, status `cool` field, OLED row 7; OT2 refactored through
+commit-on-ack `setFanLevel()`. Dashboard gains a Cooldown panel (arm/disarm,
+fan-min read/set, hold-state line; prefilled from `COOL` on connect) and a
+cooldown line in the Status panel. Compile-verified; dashboard checked in
+browser preview with simulated pushes; on-roaster drill is state-plan.md § NEXT
+item 11. README + state docs updated.
 
 **Prior: INLET 0 semantics → v0.15.1** (on `main`). A follow-background test (2026-07-04 dashboard CSV)
 ended with Artisan's SV slider at 0; the firmware clamped it to
@@ -699,7 +709,7 @@ off `main`.
 Remaining known work: the unchecked on-roaster validation items in
 [state-plan.md](state-plan.md) § NEXT (failsafe drills, WDT margin, RTD
 fault-rate comparison, interlock persistence, OTA idle gate, WiFi
-kill/restore) and the unscheduled ideas in § Later / not scheduled.
+kill/restore) and the unscheduled ideas in its § Later / not scheduled.
 
 **Key verified facts the work rests on** (traceable to datasheets, see archive):
 - Adafruit_MAX31865 v1.6.2 `temperature()` is a blocking one-shot (~75 ms) that
