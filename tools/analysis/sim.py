@@ -50,6 +50,12 @@ class LoopConfig:
     slider_min: int = 0
     slider_max: int = 320
     curvefilter: int = 3
+    # Artisan's sampling rate in Hz.  It sets the two IIR filters' corner
+    # (pid.py:497-533) and is the unit ``curvefilter`` counts in; the gains are
+    # *not* rate-dependent, since Ki is applied as ``Ki*err*dt`` in real seconds
+    # and ``svLookahead`` is in seconds.  Roasts up to 48 ran at 1 Hz; from
+    # roast 49 the Delay is 500 ms (state-plan.md § Runbook).
+    sampling_rate: float = 1.0
     charge_detect_delay: float = 0.0   # autoCHARGE backdating, in ticks/seconds
     # runtime lookahead switching: list of (t_since_charge, new_svLookahead)
     lookahead_schedule: list = field(default_factory=list)
@@ -61,7 +67,7 @@ class LoopConfig:
 
 def make_pid(cfg: LoopConfig, bg: Background, iterm0=0.0, target0=None):
     pid = PID(p=cfg.Kp, i=cfg.Ki, d=cfg.Kd, beta=cfg.beta, gamma=cfg.gamma,
-              sampling_rate=1.0)
+              sampling_rate=cfg.sampling_rate)
     pid.setDutySteps = None
     pid.dutySteps, pid.dutyMin, pid.dutyMax = cfg.dutySteps, cfg.dutyMin, cfg.dutyMax
     pid.output_filter_level = cfg.duty_filter

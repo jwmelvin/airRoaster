@@ -896,13 +896,18 @@ sacrificial and one uses no beans at all.
 | # | what | runs | file |
 |---|---|---|---|
 | bench | flash v0.19.0, confirm the `SV`/`HT` curves, `INLET TRIM` drill (§ NEXT 14) | — | any cascade `.aset` |
-| **1** | **step 6** — the lookahead switch, *and step 7 for free* (hold fan 60 through preheat as well as the roast) | 1 real batch | `airRoaster_cascadePID_lookahead.aset` + `profile_003` |
+| **1** | ~~**step 6** — the lookahead switch, *and step 7 for free*~~ **DONE, roast 49** — tracking error +0.40 degC / 1.84 s, and step 7 came with it: fan held at **64** for the whole recording | 1 real batch | `airRoaster_cascadePID_lookahead.aset` + `profile_003` |
 | **2** | ~~**step 3** — Test A empty~~ **DONE, roast 47** — it measured the FF coefficients step 8 needs | free | `airRoaster_cascadePID_char.aset` + `charstep_empty_fan` |
 | bench | ~~**step 8** — `feedforward()`~~ **DONE, v0.20.0** — measured coefficients, enabled; flash before the loaded runs | — | firmware |
 | **3** | ~~**steps 4-5** — one 400 g loaded run~~ **DONE, roast 48** — the empty FF map transfers; the plant refit is still owed | 1 sacrificial | `airRoaster_cascadePID_char.aset` + `charsingle_400g` |
 | bench | ~~untick **Drop Spikes**, set **Sampling** to 0.5 s~~ **DONE in the files** — load the `.aset` before the next run, the live session is still on the old values | — | `gen_pid_alarm_asets.py` |
 | desk | ~~refit roast 48 for `a`/`theta`~~ **DONE** — `kf = 0`, but `a`/`theta` are not stationary, so `plant_roast46.json` stays the source. Left: `merge_inlet_base.py`, the `.aset` half, settle `--dip` | — | — |
 | **5** | **step 9** — the FF schedule with the PID as a trim | 1 real batch | new |
+
+**Roast 49 added an item that is not in this table yet** — a deliberate
+ambient-vs-freezer charge pair, of which roast 49 is already the warm arm.
+It is a proposal awaiting the operator's decision, not scheduled work; the
+case for it and where it would sit is § The charge-temperature experiment.
 
 **Two orderings in that table are load-bearing, and roast 47 sharpened the
 second.** Step 6 comes **before** step 8: its whole value is a one-variable
@@ -1202,7 +1207,18 @@ been done — 0.07 is optimal, not a compromise. What 3-5 are still for is the
 than an accidental doublet. The **predicted-BT channel** (state-history.md §
 Firmware now in scope) is a separate decision.
 
-**Step 6 — the lookahead switch. This is the next roast (2026-09-05).** Load
+**~~Step 6 — the lookahead switch.~~ DONE — roast 49, 2026-09-06.** Rows 1-3
+of the table below pass: steady tracking error **+0.40 degC / 1.84 s** against
+roast 46's +1.06 / 4.73, time-to-BT **-0.9 / +2.2 / +2.0 s**, and the 1:30 switch
+delivering +21.2 degC of commanded SV inside two samples with 95% of the
+excursion in 12 s and no ring afterwards. Rows 4-5 miss — 29.2 s on the floor
+against 16, a 7.7 degC SV reversal against 3.2 — and **both are the charge state,
+not the loop**: roast 49's charge was 33-35 degC warmer than roast 46's, so the
+dip ran 12 degC *above* the background rather than 9.8 below. Those two rows are
+not a one-variable comparison and must not be read as one. Full reading in
+state-history.md § Roast 49.
+
+*The specification, for the record.* Load
 `artisan/airRoaster_cascadePID_lookahead.aset` **unmodified** with background
 profile_003 and roast normally. Roast 46 is the clean baseline it needed and
 measures the required lead at 6.3 s against the file's 6; the validated
@@ -1226,7 +1242,17 @@ step 1b work. **Do not take the two-stage alternative**: swept against three-
 and four-stage schedules it gains under 0.1 degC of rms and costs two buttons
 and an alarm.
 
-**Step 7 — a fixed fan, independent.** state-history.md § Fan vs batch size says
+**~~Step 7 — a fixed fan, independent.~~ DONE — roast 49, and more cleanly than
+specified.** The fan sat at **64 for the entire recording** — two `Air` events,
+both 64, one at -1:48 and one at CHARGE — so preheat, the charge circulation bump
+and the roast body all ran at one level and there is no air schedule anywhere in
+the trace. The tracking result is therefore attributable to the loop with nothing
+to subtract. Taken with roast 48's `kf = 0`, the air schedule has now failed to
+earn its disturbance twice. The level was 64 rather than the specified 60, which
+costs nothing here: `kf = 0` says the BT plant has no fan term, and
+`feedforward()` covers the extra heat demand.
+
+*The original statement.* state-history.md § Fan vs batch size says
 the level does not depend on charge mass and the loop barely notices the level,
 only the step. One roast at a flat **fan 60** with no changes tests whether the
 ramp is earning its disturbance. Roast 46 already went most of the way: the fan
@@ -1301,6 +1327,100 @@ dipping base that state-history.md § Dip strategies simulated (§ The base-curv
 authoring gap, item 4). Full design, the source citations for the
 playback/slider arrangement, and the risks to close are in § Step 9 above; the
 strategy sweep that produced it is state-history.md § Dip strategies.
+
+### What roasts 47-49 jointly say, and what to do next (proposal, 2026-09-06)
+
+**Not decided. This section is a recommendation for the operator to accept,
+reorder or reject**; nothing above it has been re-pointed at it.
+
+**The through-line.** Three runs in one day closed three different things and
+they point the same way. Roast 47 measured `feedforward()` over a real fan x SV
+box; roast 48 showed that map transfers to a loaded chamber (bias +1.07%, rms
+1.61%) and that the BT plant has **no fan term at all** (`kf = 0.0000`); roast 49
+showed the outer loop tracking `profile_003` to **+0.40 degC / 1.84 s** with the
+error inside -1.94 .. +0.93 degC for the whole ramp. Inner loop rms is 0.40-0.52
+degC. **The controller is no longer the limiting error.**
+
+What is left is almost entirely in the *reference*. Roast 49's worst excursion of
+the whole roast was **-16 degC in the first minute**, and it was not the loop
+failing — it was `profile_003`'s dip being authored for a 345 g frozen charge
+while the batch was 400 g and ~33 degC warmer. Roast 46 had the same defect with
+the opposite sign. Neither is fixable by tuning: at a warm charge the output
+floor is a *lower* bound on inlet, so the loop physically cannot pull BT back
+down, and it spends the minute saturated at an error it cannot act on.
+
+That reframes the remaining work. **More control effort has low marginal value;
+generating the reference for the batch in hand has high marginal value; and the
+one measurement that unlocks it is the charge state** — which is what the
+operator proposed independently.
+
+#### The charge-temperature experiment
+
+**Run it next.** Two 400 g batches of the same lot, everything else held
+identical, one straight from the freezer and one equilibrated at room
+temperature for >= 12 h. Roast 49 is already a usable warm arm, so if only one
+batch can be spared, **make it the frozen one** and pair it against roast 49 —
+but a deliberate pair is worth much more, because roast 49's preheat was 28 degC
+hotter than the group's and that had to be corrected for rather than avoided.
+
+What has to be held fixed, and why each one:
+
+- **`greens_temp` recorded on both.** Probe the bean mass, not the air, and enter
+  it in Roast Properties. It is `0.0` on all of roasts 43-49, which is the only
+  reason any of this is inference. This is the whole point of the run.
+- **The preheat trajectory, not just CHARGE_BT.** Inlet air from
+  `t in [-theta, 0]` arrives inside the mixing window, so a hotter preheat makes
+  the beans look warmer. Hold the inlet flat within +-2 degC for 60 s before
+  CHARGE on both.
+- **Mass, to the gram.** The proxy is not linear in mass
+  (`dBT = m*c*(BT_c - T_b)/(C_chamber + m*c)`), so a mass difference does not
+  divide out.
+- **Fan constant, as roast 49 already did**, and the same config and background
+  (`airRoaster_cascadePID_lookahead.aset` + `profile_003`) so the run is also a
+  second step-6 sample.
+
+What it measures: `k` and `C_chamber` in the mixing model, and — the part no
+existing run can give — whether the dip *shape* (depth, turning-point time, the
+recovery slope out of it) is a function of the same variable, or whether bean
+temperature moves more than one thing. `tools/analysis/charge_state.py` already
+runs the estimator and prints the band.
+
+**Expect the warm run to roast differently, and let it.** Roast 49 finished with
+a 19 s development window against roast 46's 25 s and the background's 26 s, at
+the same DROP BT. If that difference survives a controlled pair it is a real
+outturn consequence of charge state, not a tracking artefact, and it is the
+argument for doing anything about the dip at all.
+
+#### What it unblocks, and the revised ranking
+
+1. **The charge-temperature pair** (above). Cheap, no firmware, no Artisan
+   reconfiguration, no new failure mode, and useful under every path below.
+2. **Backgrounds generated from (mass, greens temp)** — step 1b generalised from
+   one authored `profile_004` to a computed dip. This is what removes the
+   -16/+9 degC first-90 s error at its root, for every charge state, rather than
+   for the one that was authored. It needs (1) and nothing else.
+3. **Step 9, after (1) and (2), and reframed.** Its headline claim — steady rms
+   0.11-0.14 degC against 0.26-0.38 — is now a marginal gain over a measured
+   +0.40 degC, so *tracking* is no longer the case for it. Two arguments survive
+   and both are about robustness: it stops the integrator being a ramp-follower
+   (`dI/dt` 0.09 -> 0.01), and it decouples the loop from the profile's shape, so
+   a differently-shaped profile does not need `svLookahead` re-derived. It also
+   has a live cost that roast 48 raised: the base schedule is `bg(t+theta) +
+   (dbg/dt - loss)/a`, and roast 48 found `a` and `theta` **not stationary within
+   one roast** (`a` 0.0062-0.0085, `theta` 7.8-14.5). The trim absorbs that — the
+   simulation survives +-20% of gain error — but it caps how good the base can
+   be. (1) and (2) also settle its open `--dip` question outright: with a charge
+   model the dip can be *computed* into the base rather than back-extrapolated
+   around.
+4. **Desk: settle the deadtime-versus-lag question.** `fit_integral_2lag` takes a
+   third off the residual on every well-excited window of roast 48 with `theta`
+   collapsing to ~0 and a 10-25 s lag in its place. It costs no roast, it changes
+   the phase margin arithmetic, and it changes the `bg(t+theta)` lead that (3)
+   would be built on. Do it before step 9, not before (1).
+5. **Drop the remaining characterisation runs.** Test C's two loaded doublets
+   existed to measure the fan; roast 48 measured it (`kf = 0` in the plant, and
+   the loaded FF check needs no correction, so `FF SLOPE` has nothing to do). A
+   loaded FF grid stays unjustified. Step 1c stays demoted.
 
 #### The dump-lever switch
 

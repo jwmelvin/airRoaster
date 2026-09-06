@@ -45,6 +45,9 @@
 - [The dip is a different control problem](#the-dip) — gate Ki through it
 - [Charge temperature](#charge-temperature) — roast 46 was frozen
 - [Dip strategies](#dip-strategies) — the wider search
+- [Roast 47](#roast-47) — Test A: the schedule replays, `feedforward()` refitted
+- [Roast 48](#roast-48) — the loaded characterisation; the empty map transfers, `kf = 0`
+- [Roast 49](#roast-49) — step 6 passes, and the charge was not frozen
 
 ## Cascade PID — the investigation record
 
@@ -2846,6 +2849,8 @@ is the disturbance `feedforward()` exists to cancel and currently does not
 square wave should show ~6 degC of inlet transient per transition until step 8
 lands.
 
+<a id="roast-48"></a>
+
 ### Roast 48 (2026-09-06, 14:59) — the loaded characterisation, and the empty map transfers
 
 Runbook steps 4-5, and the first roast on **v0.20.0**. Not the two-batch doublet
@@ -3128,3 +3133,115 @@ give 33.7 and 9.2. The tie-breaker is the one closed-loop behaviour actually on
 record: **roast 45 rang at 177 s at Ki 0.10**, and roast 46's plant predicts
 190 s there while roast 48's predicts 135 s. The card fitted to a real roast
 predicts the real roast. **`pidKi` 0.07 stands.**
+
+<a id="roast-49"></a>
+
+### Roast 49 (2026-09-06, 15:51) — step 6 passes, and the charge was not frozen
+
+Runbook roast 1, at last: `airRoaster_cascadePID_lookahead.aset` loaded
+unmodified with background `profile_003`, 400 g of the same Ethiopia the whole
+series has used, PID-driven preheat, no intervention. 1032 samples at **0.511 s**
+— the first roast at the new sampling rate — DROP by the DeltaBT alarm at 7:03,
+400 g in, 353.2 g out. Analysis: `tools/analysis/roast49_step6.py` and
+`tools/analysis/charge_state.py`.
+
+**The lookahead switch fired and did what the simulator said it would.** Against
+state-plan.md § Step 6's predictions, with roast 46 as the one-variable baseline
+in the third column:
+
+| | predicted | roast 49 | roast 46 |
+|---|---|---|---|
+| steady tracking error, 3:00-DROP-10 | +0.05 degC / 0.44 s | **+0.40 degC / 1.84 s** (rms 0.47) | +1.06 / 4.73 (rms 1.09) |
+| time to BT 150 / 180 / 196.5 vs profile | -1.9 / +3.2 / +0.9 s | **-0.9 / +2.2 / +2.0 s** | +3.4 / +4.9 / +4.8 |
+| at 1:30: target step -> commanded SV | +4.0 -> +24.7 degC, ~15 s | **+3.96 -> +21.2 in 2 s, +31.6 peak, 95% in 12 s** | — |
+| floor time in the charge dip | 16 s | **29.2 s** (last at 0:59) | 11 s |
+| SV max / worst reversal after 1:00 | 296 / 3.2 degC | **232 / 7.7 degC at 2:24** | 289 / 0.3 |
+
+Rows 1-3 are the experiment and they pass. The standing lag is **2.6x smaller**
+than roast 46's and the roast now runs within ±2.2 s of the profile at every
+BT — the type-1 ramp error that `svLookahead` exists to cancel is, for practical
+purposes, cancelled. The switch itself behaves as designed: a +3.96 degC target
+step, +21.2 degC of commanded SV inside two samples and 95% of the excursion
+within 12 s, with the +31.6 degC peak being the two-sample jump plus the
+integrator's normal climb. There is no ring: after 1:40 the tracking error stays
+inside **-1.94 .. +0.93 degC** for the rest of the roast, the -1.94 being the
+mild overshoot the kick manufactures and which is gone by 3:20.
+
+Rows 4 and 5 miss, and **both misses are the charge state, not the loop** — see
+below. The dip ran BT 12 degC *above* the background instead of roast 46's 9.8
+below, so the error went to -16 degC, the output floored for 29 s and
+`_back_calculate_integral` seeded `Iterm` to 49 at 0:45 (it had drained to 25.0
+by 1:30, and reached 54.5 at DROP). The "reversal" is the settle after the 1:30
+kick, one monotone decay from SV 196.1 at 1:50 to 188.6 at 2:24, not an
+oscillation. Note the floor never killed heat: the inner loop held inlet 140 at
+44-48% heat throughout.
+
+**The simulator carries over to 0.5 s sampling unchanged.** Replaying the
+measured BT through the ported `PID.update()` at `sampling_rate = 2` reproduces
+the commanded SV to **rms 0.83 degC over 0:30-DROP and 0.44 after 4:00** — the
+same numbers as roast 46 at 1 Hz, and the same 1 degC slider-gate resolution
+floor. `LoopConfig` gains a `sampling_rate` field for this; the gains genuinely
+are rate-independent, only the two IIR filters and the `curvefilter` window move.
+`Iterm` climbs at 0.0995 duty/s over 3:20-6:40, so `e_ss = (dI/dt)/Ki =
+1.42 degC` and six seconds of lead against a ~0.22 degC/s background cancels
+~1.3 of it — which is the +0.4 degC that is left, arithmetic rather than luck.
+
+**Both Artisan settings changes landed and are visible in the file.** Sampling is
+0.511 s, and the largest `SV` step reads `232.1 232.1 232.1 231.3 0.0` — one
+sample wide. Roast 48's same step reads `190 190 190 126.67 63.33 0.0`, the
+destructive equal-run repair. Drop Spikes is off.
+
+**Step 7 came for free, and in a stronger form than specified.** The fan sat at
+**64 for the entire recording** — two `Air` events, both 64, one at -1:48 and one
+at CHARGE — through preheat, the charge bump and the whole roast body. So there
+is no air schedule anywhere in this trace, and the tracking result above is
+attributable to the loop with nothing to subtract. Combined with roast 48's
+`kf = 0`, the air schedule has now failed to earn its disturbance twice.
+
+#### The charge was ~33 degC warmer than roasts 43-46
+
+The dip is the wrong sign, and the reason is the beans. The plant's transport
+delay means nothing the heater does reaches BT before ~13.5 s, so the BT fall
+over `0 .. theta` is charge mixing alone — the control-independent measurement
+state-history.md § Charge temperature used to conclude roasts 43-46 were frozen.
+`tools/analysis/charge_state.py` now runs it as a tool and adds the correction
+roast 49 forced: **the air already in flight counts**, since inlet air from
+`t in [-theta, 0]` arrives inside the mixing window, and roast 49's preheat sat
+at 168.6 degC against roasts 43-46's 140-150. That is worth +0.39 degC/100 g and
+it is applied.
+
+```
+roast  mass   BT@0  BT@13.5   drop   /100g    air    corr  inlet_pre
+   43   400  127.8     67.5  60.25   15.06  +0.08   15.14      149.9
+   44   400  128.3     70.1  58.20   14.55  +0.02   14.57      146.2
+   45   345  128.7     79.8  48.85   14.16  -0.03   14.13      143.7
+   46   400  129.0     68.1  60.90   15.23  -0.07   15.15      140.6
+   49   400  131.1     85.4  45.70   11.43  +0.39   11.81      168.6
+```
+
+Roast 49 reads **22% below** the 400 g frozen group, which holds to 2.2%. Under
+`proxy = k*(BT_charge - T_bean)` that is **T_bean ≈ +15 degC (band +13 .. +18)**
+if 43/44/46 were at -18. The **difference** is the robust part and is
+anchor-free: whatever the freezer actually held, roast 49's charge was
+**33-35 degC warmer**, because the anchor cancels out of the difference. Roast 48,
+the sacrificial stock, reads +12.8 on the same estimator — consistent, though its
+low CHARGE_BT of 84.3 gives it a shorter lever and a correspondingly softer
+number.
+
+Two cautions the tool encodes. **The proxy is not linear in mass** — the mixing
+settles at `dBT = m*c*(BT_c - T_b)/(C_chamber + m*c)`, so dividing by mass only
+removes the leading term, and roast 45 at 345 g reads ~7% low against the 400 g
+runs for that reason alone; compare like masses. And **the preheat trajectory is
+part of the measurement**, so a charge-temperature experiment has to hold it
+fixed, not merely hit the same CHARGE_BT.
+
+**What this does to the step-6 verdict: nothing, and it is worth being explicit
+why.** The tracking window is 3:00 onward, long after the integrator has
+re-converged, and `svLookahead`'s effect on `e_ss` has no charge term in it. What
+is confounded is only the dip comparison — rows 4 and 5 of the table are **not**
+a one-variable comparison against roast 46 and should not be read as one.
+
+**And it hands the project the warm arm of an experiment nobody ran.** The
+operator's proposed ambient-vs-freezer pair now needs one deliberate frozen
+batch to close, with `greens_temp` recorded on both — which it was not here, for
+the fourth roast running.

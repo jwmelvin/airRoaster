@@ -15,6 +15,8 @@ reproduces the outer loop so tuning can be tested before it is roasted.
 | `dip_strategies.py` | charge-state robustness of the dip strategies; state-plan.md § Dip strategies |
 | `roast47_ff.py` | refits `feedforward()` from roast 47's fan x SV grid; **stdlib only**, no venv needed |
 | `roast48_ff.py` | the same grid **loaded** (roast 48, 400 g): does the empty map transfer, is `slope(SV)` a line, and the pooled 47+48 fit; **stdlib only** |
+| `roast49_step6.py` | roast 49 against state-plan.md § Step 6's predictions, and the PID replay at 0.5 s sampling |
+| `charge_state.py` | how cold the beans were: the control-independent mixing proxy, air-corrected; **stdlib only** |
 | `plant_roast46.json` | the plant card `tools/merge_inlet_base.py` reads: `a`, `theta` and the loss cubic, with provenance |
 | `plant_roast48.json` | roast 48's plant, **not** an authoring source (`supersedes_plant_roast46: false`); its settled content is `kf` |
 | `ff_roast47.json` | the `feedforward()` card: the product-form coefficients, the affine fallback and the fitted box |
@@ -39,7 +41,12 @@ the paths are at the top of `roast46_refit.py`.
 ```bash
 python3 tools/analysis/roast47_ff.py --emit-card    # no venv: stdlib only
 python3 tools/analysis/roast48_ff.py --emit-card    # reads roast 47 too, for the pooled fit
+python3 tools/analysis/charge_state.py              # run this after every roast
 ```
+
+`charge_state.py` is the one to run habitually: it is the only read the project
+has on the charge state, and it stops being an inference the moment `greens_temp`
+is filled in.
 
 Four traps the code encodes so they cannot be repeated:
 
