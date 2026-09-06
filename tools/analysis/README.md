@@ -11,17 +11,20 @@ reproduces the outer loop so tuning can be tested before it is roasted.
 | `sim.py` | the closed-loop simulator: background -> PID -> inlet SV -> inner loop -> plant |
 | `margins.py` | frequency-domain phase margin for the same loop |
 | `roast46_refit.py` | driver that reproduces the numbers in state-plan.md § Roast 46 refit |
+| `roast48_plant.py` | the plant from roast 48's **designed** inlet steps: the fan term (`kf = 0`), the sub-window instability, and the two-lag alternative to the deadtime |
 | `dip_strategies.py` | charge-state robustness of the dip strategies; state-plan.md § Dip strategies |
 | `roast47_ff.py` | refits `feedforward()` from roast 47's fan x SV grid; **stdlib only**, no venv needed |
 | `roast48_ff.py` | the same grid **loaded** (roast 48, 400 g): does the empty map transfer, is `slope(SV)` a line, and the pooled 47+48 fit; **stdlib only** |
 | `plant_roast46.json` | the plant card `tools/merge_inlet_base.py` reads: `a`, `theta` and the loss cubic, with provenance |
+| `plant_roast48.json` | roast 48's plant, **not** an authoring source (`supersedes_plant_roast46: false`); its settled content is `kf` |
 | `ff_roast47.json` | the `feedforward()` card: the product-form coefficients, the affine fallback and the fitted box |
 | `ff_roast48_loaded.json` | the loaded check: transfer error against the flashed map, per-setpoint fan slopes, and the pooled 47+48 refit |
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install numpy scipy
+python3 -m venv .venv && .venv/bin/pip install numpy scipy   # .venv/ is gitignored
 .venv/bin/python tools/analysis/roast46_refit.py
 .venv/bin/python tools/analysis/roast46_refit.py --emit-plant   # refresh plant_roast46.json
+.venv/bin/python tools/analysis/roast48_plant.py                # the designed-excitation refit
 ```
 
 `--emit-plant` is the seam between this directory and the authoring tools: it
@@ -59,3 +62,10 @@ Four traps the code encodes so they cannot be repeated:
   are constant by construction and trip it constantly. Window means survive
   (0.10 %); transient timing does not. `roast48_ff.py` opens every guard
   `FILTER` seconds *before* a step. Untick **Drop Spikes** and this goes away.
+- **A plant card is not automatically the best one available.** Roast 48's
+  excitation is designed and roast 46's is accidental, yet `plant_roast46.json`
+  is still what `merge_inlet_base.py` reads: roast 48's `a` and `theta` are not
+  stationary across its own sub-windows, and the one closed-loop behaviour on
+  record (roast 45's 177 s ring at Ki 0.10) is predicted by roast 46's card and
+  not by roast 48's. Check a fit against a *measured closed-loop* response before
+  letting it move any tuning.

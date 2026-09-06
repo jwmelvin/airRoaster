@@ -3049,7 +3049,82 @@ PID-driven preheat, and this one charged at BT 84.3 with the schedule starting
 from inlet 129, so the driving temperature difference is not the same. It is
 evidence of a warm charge, not a measurement of one.
 
-The plant fit (`a`, `theta` loaded, for `merge_inlet_base.py` and step 9) is not
-in this section. The inlet steps of ±65 to ±95 degC at 165/270/330/435/495 s are
-far better plant excitation than roast 46's accidental doublet, and that fit is
-the next piece of desk work.
+#### The plant refit: the fan is settled, the deadtime is questioned, `a` is not
+
+`tools/analysis/roast48_plant.py`, card `tools/analysis/plant_roast48.json`. This
+is the first run whose excitation was *designed* — roast 46 identified a plant by
+accident, when a 400 g batch against a 345 g dip drove the commanded inlet rail
+to rail. Roast 48 steps the inlet by -95, +65, -65 and +40 degC at
+270/330/435/495 s with the PID off, so there is no controller correlating input
+with output. There is no PID-replay or closed-loop section here for that reason.
+
+**The fan term in the plant is 0, and that is the run's clean result.** Fitting
+`dBT/dt = a*(1 + kf*(fan-60))*(Inlet(t-theta) - BT) + loss(t)` over the whole
+window puts `kf` at **+0.0000**, with the 1%-of-residual band running -0.004 to
++0.002. Forcing it up costs residual monotonically:
+
+| `kf` | % of plant gain per 10 fan units | residual | × best |
+|---|---|---|---|
+| 0.000 | 0 | 0.5804 | 1.000 |
+| 0.005 | 5 | 0.5894 | 1.016 |
+| 0.010 | 10 | 0.6111 | 1.053 |
+| 0.020 | 20 | 0.6818 | 1.175 |
+| 0.030 | 30 | 0.7740 | 1.334 |
+| **0.049** | **49** | 0.9692 | **1.670** |
+
+The 49% figure is the one § Correction measured from roast 45 and that
+state-current.md later retracted for circularity — the disturbance had been a
+free `w(t)`, which absorbs whatever it is asked to. **This replaces the retraction
+with a bound**: at a fixed inlet temperature, airflow over 60-70 does not change
+the rate at which the bed heats, to within about 5% of plant gain per 10 units.
+That closes the last item state-current.md § Tests A/B/C kept the characterisation
+runs alive for — "the fan, still a single weakly-identified coefficient".
+
+Physically it is worth stating what this does and does not say. It is **not** that
+airflow does not matter; `roast48_ff.py` measures 1.3-2.6% more *heat* per fan
+unit to hold the same inlet temperature, which is the same air carrying more
+enthalpy past the element. It is that once the inlet air is at a given
+temperature, delivering 17% more of it does not measurably speed the bed up over
+this range. The bed is not flow-limited here.
+
+**`a` and `theta`, on the other hand, are not stationary, and roast 48 does not
+supersede roast 46's card.** The whole-window fit reads `theta 8.5 s, a 0.00802,
+tau 125 s` against roast 46's `13.5 / 0.00490 / 204` — a 1.64x gap. But refit on
+sub-windows of roast 48 itself:
+
+| window | theta | `a` | tau | resid |
+|---|---|---|---|---|
+| 45-300 | 5.50 | 0.00249 | 401 | 0.124 |
+| 45-430 | 8.50 | 0.00729 | 137 | 0.479 |
+| 165-450 | 7.75 | 0.00615 | 163 | 0.309 |
+| 300-750 | 10.50 | 0.00846 | 118 | 0.437 |
+| 450-750 | 14.50 | 0.00695 | 144 | 0.254 |
+
+45-300 is under-excited — it holds one inlet step, at its very end — and is the
+outlier. The rest still spread `a` 0.0062-0.0085 and `theta` 7.8-14.5, **as wide
+as the disagreement with roast 46**. So the gap is not evidence that roast 46 is
+wrong. The two runs also measured different roasters in a real sense: roast 46 is
+a closed-loop real roast on a frozen charge running to BT 200+, roast 48 a warm
+sacrificial batch held under 185 by a schedule that parks the inlet 20-70 degC
+above BT for minutes at a time. **`plant_roast46.json` stays the authoring source
+for `merge_inlet_base.py`**, and `plant_roast48.json` carries
+`supersedes_plant_roast46: false` and a note saying so.
+
+**What the instability does point at is the model, not the data.** The two-lag
+estimator — `Inlet -> 1/(1+tau2 s) -> a/(s+a) -> BT`, which
+`plantfit.fit_integral_2lag` has carried unused since roast 46 — fits the same
+windows with **`theta` collapsing to ~0** and a 10-25 s first lag in its place,
+and takes about a third off the residual on every well-excited window
+(45-430: 0.353 against 0.479; 165-450: 0.188 against 0.309; 300-750: 0.217
+against 0.437). **The 13.5 s "deadtime" carried since roast 46 is at least partly
+a lag**, which matters because a lag and a delay cost very different amounts of
+phase margin. `a` still drifts (0.0074-0.0139 two-lag), so this is a better
+structure rather than a finished one.
+
+**None of this reopens the tuning, and the reason is empirical.** Against roast
+48's plant, Kp 3.0 / Ki 0.07 has 44.5 deg of phase margin and Ki 0.15 still has
+21.5, which would say there is room above 0.07; against roast 46's the same gains
+give 33.7 and 9.2. The tie-breaker is the one closed-loop behaviour actually on
+record: **roast 45 rang at 177 s at Ki 0.10**, and roast 46's plant predicts
+190 s there while roast 48's predicts 135 s. The card fitted to a real roast
+predicts the real roast. **`pidKi` 0.07 stands.**

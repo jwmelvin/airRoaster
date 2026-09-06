@@ -781,12 +781,42 @@ would put two variables in one roast. **The files are ahead of the live Artisan
 session**: load the `.aset` (or set both in Config › Curves › Filters and
 Config › Sampling) before the next run. Detail in state-history.md § Roast 48.
 
-**Still open after roast 48: the loaded plant fit.** `a` and `theta` for
-`merge_inlet_base.py` and step 9 are not in the section above. Roast 48's inlet
-steps of ±40 to ±95 degC at 165/270/330/435/495 s are far better excitation than
-roast 46's accidental doublet, and that refit is the next piece of desk work; it
-needs the numpy/scipy venv from tools/analysis/README.md. `greens_temp` was again
-left at `0.0`.
+**The plant refit is done too (`tools/analysis/roast48_plant.py`,
+`plant_roast48.json`), and it settles one thing, questions another and supersedes
+nothing.** Roast 48 is the first run whose excitation was *designed* — inlet steps
+of -95/+65/-65/+40 degC with the PID off, so no controller correlates input with
+output.
+
+**Settled: the plant has no fan term.** `kf` fits to **0.0000** in
+`dBT/dt = a*(1 + kf*(fan-60))*(Inlet(t-theta) - BT) + loss(t)`, band -0.004 to
++0.002, and forcing it to the 0.049 that state-history.md § Correction measured
+from roast 45 costs **1.67x the residual**. That figure was already retracted for
+circularity; this replaces the retraction with a bound of about 5% of plant gain
+per 10 fan units. It closes the last item Tests A/B/C were kept alive for. Note
+what it does *not* say: `roast48_ff.py` measures 1.3-2.6% more **heat** per fan
+unit to hold the same inlet, which is real. Once the air is at temperature,
+17% more of it does not measurably speed the bed up. The bed is not flow-limited.
+
+**Not settled: `a` and `theta`.** The whole-window fit is `theta 8.5 / a 0.00802 /
+tau 125` against roast 46's `13.5 / 0.00490 / 204`, but roast 48's own sub-windows
+spread `a` 0.0062-0.0085 and `theta` 7.8-14.5 — as wide as the gap — so the
+disagreement is not evidence against roast 46. **`plant_roast46.json` remains the
+authoring source for `merge_inlet_base.py`**; the new card says so in a
+`supersedes_plant_roast46: false` field.
+
+**Questioned: the deadtime.** `fit_integral_2lag`, unused since roast 46, fits the
+same windows with `theta` collapsing to **~0** and a 10-25 s first lag in its
+place, taking about a third off the residual on every well-excited window. The
+13.5 s "deadtime" is at least partly a lag — which matters, because the two cost
+very different phase margin.
+
+**The tuning does not move.** Roast 48's plant gives Kp 3.0 / Ki 0.07 a 44.5 deg
+margin and would allow more; roast 46's gives 33.7. The tie-breaker is empirical:
+roast 45 rang at **177 s** at Ki 0.10, and roast 46's plant predicts 190 s there
+against roast 48's 135 s. The card fitted to a real roast predicts the real roast.
+**`pidKi` 0.07 stands.** Detail in state-history.md § Roast 48.
+
+`greens_temp` was again left at `0.0`.
 
 **Canonical config is `artisan/airRoaster_cascadePID.aset`** (one file; the
 brief `_edit` variant used while adding the alarms was folded back in and

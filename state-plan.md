@@ -901,7 +901,7 @@ sacrificial and one uses no beans at all.
 | bench | ~~**step 8** — `feedforward()`~~ **DONE, v0.20.0** — measured coefficients, enabled; flash before the loaded runs | — | firmware |
 | **3** | ~~**steps 4-5** — one 400 g loaded run~~ **DONE, roast 48** — the empty FF map transfers; the plant refit is still owed | 1 sacrificial | `airRoaster_cascadePID_char.aset` + `charsingle_400g` |
 | bench | ~~untick **Drop Spikes**, set **Sampling** to 0.5 s~~ **DONE in the files** — load the `.aset` before the next run, the live session is still on the old values | — | `gen_pid_alarm_asets.py` |
-| desk | refit **roast 48** (not 46) for `a`/`theta`, `--emit-plant`, `merge_inlet_base.py`, the `.aset` half, settle `--dip` | — | — |
+| desk | ~~refit roast 48 for `a`/`theta`~~ **DONE** — `kf = 0`, but `a`/`theta` are not stationary, so `plant_roast46.json` stays the source. Left: `merge_inlet_base.py`, the `.aset` half, settle `--dip` | — | — |
 | **5** | **step 9** — the FF schedule with the PID as a trim | 1 real batch | new |
 
 **Two orderings in that table are load-bearing, and roast 47 sharpened the
