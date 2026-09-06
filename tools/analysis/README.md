@@ -13,8 +13,10 @@ reproduces the outer loop so tuning can be tested before it is roasted.
 | `roast46_refit.py` | driver that reproduces the numbers in state-plan.md § Roast 46 refit |
 | `dip_strategies.py` | charge-state robustness of the dip strategies; state-plan.md § Dip strategies |
 | `roast47_ff.py` | refits `feedforward()` from roast 47's fan x SV grid; **stdlib only**, no venv needed |
+| `roast48_ff.py` | the same grid **loaded** (roast 48, 400 g): does the empty map transfer, is `slope(SV)` a line, and the pooled 47+48 fit; **stdlib only** |
 | `plant_roast46.json` | the plant card `tools/merge_inlet_base.py` reads: `a`, `theta` and the loss cubic, with provenance |
 | `ff_roast47.json` | the `feedforward()` card: the product-form coefficients, the affine fallback and the fitted box |
+| `ff_roast48_loaded.json` | the loaded check: transfer error against the flashed map, per-setpoint fan slopes, and the pooled 47+48 refit |
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install numpy scipy
@@ -33,9 +35,10 @@ the paths are at the top of `roast46_refit.py`.
 
 ```bash
 python3 tools/analysis/roast47_ff.py --emit-card    # no venv: stdlib only
+python3 tools/analysis/roast48_ff.py --emit-card    # reads roast 47 too, for the pooled fit
 ```
 
-Three traps the code encodes so they cannot be repeated:
+Four traps the code encodes so they cannot be repeated:
 
 - The CHARGE origin is `timex[timeindex[0]]`, and `timeindex[0] == 0` is a
   **valid** index, not "unset" (`profile_003` relies on it).
@@ -48,3 +51,11 @@ Three traps the code encodes so they cannot be repeated:
   and came out **26x** too small; `roast47_ff.py` refuses a design matrix whose
   inputs did not move independently, and cards the fitted box alongside the
   coefficients so an extrapolation is visible as one.
+- **Artisan rewrites the two samples before every step in a constant-valued
+  channel.** `inputFilter` (canvas.py:4535) ends with an "improve a previously
+  corrected reading" repair that un-sticks an equal run by linear interpolation,
+  destructively, in the array it saves; the gate is any of `minmaxLimits` /
+  `dropSpikes` / `dropDuplicates`, and `dropSpikes` alone is on. `SV` and `HT`
+  are constant by construction and trip it constantly. Window means survive
+  (0.10 %); transient timing does not. `roast48_ff.py` opens every guard
+  `FILTER` seconds *before* a step. Untick **Drop Spikes** and this goes away.

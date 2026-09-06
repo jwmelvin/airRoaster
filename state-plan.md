@@ -899,8 +899,9 @@ sacrificial and one uses no beans at all.
 | **1** | **step 6** — the lookahead switch, *and step 7 for free* (hold fan 60 through preheat as well as the roast) | 1 real batch | `airRoaster_cascadePID_lookahead.aset` + `profile_003` |
 | **2** | ~~**step 3** — Test A empty~~ **DONE, roast 47** — it measured the FF coefficients step 8 needs | free | `airRoaster_cascadePID_char.aset` + `charstep_empty_fan` |
 | bench | ~~**step 8** — `feedforward()`~~ **DONE, v0.20.0** — measured coefficients, enabled; flash before the loaded runs | — | firmware |
-| **3** | **steps 4-5** — one 400 g loaded run (617 g of sacrificial stock), or the two 9-minute runs if 800 g turns up | 1-2 sacrificial | `airRoaster_cascadePID_char.aset` + `charsingle_400g`, or `chardoublet_fan60/68` |
-| desk | refit, `roast46_refit.py --emit-plant`, `merge_inlet_base.py`, the `.aset` half, settle `--dip` | — | — |
+| **3** | ~~**steps 4-5** — one 400 g loaded run~~ **DONE, roast 48** — the empty FF map transfers; the plant refit is still owed | 1 sacrificial | `airRoaster_cascadePID_char.aset` + `charsingle_400g` |
+| bench | **new** — untick **Drop Spikes**, and set **Sampling** to 0.5 s; regenerate the `.aset` set (state-history.md § Roast 48) | — | `gen_pid_alarm_asets.py` |
+| desk | refit **roast 48** (not 46) for `a`/`theta`, `--emit-plant`, `merge_inlet_base.py`, the `.aset` half, settle `--dip` | — | — |
 | **5** | **step 9** — the FF schedule with the PID as a trim | 1 real batch | new |
 
 **Two orderings in that table are load-bearing, and roast 47 sharpened the
@@ -919,9 +920,21 @@ it is what makes roast 1 self-contained for analysis.
 in the paragraph above; the sections below keep their detail for the record.
 
 **Do this on every roast from now on, it costs nothing: fill in `greens_temp`**
-(Artisan Roast Properties). It is `0.0` on every roast on record, which is why
-the charge state of the existing set had to be inferred rather than read
-(state-history.md § Charge temperature).
+(Artisan Roast Properties). It is `0.0` on every roast on record — roast 48
+included, so this is still not being done — which is why the charge state of the
+existing set had to be inferred rather than read (state-history.md § Charge
+temperature).
+
+**Two Artisan settings changes are now queued ahead of the desk work, both from
+roast 48** (state-history.md § Roast 48, § Two Artisan settings). **Untick "Drop
+Spikes"** (Config › Curves › Filters): with it on — and it is on in every cascade
+`.aset` — Artisan destructively rewrites the two samples before every step in a
+constant-valued channel, which `SV` and `HT` are by construction. And **set
+Sampling to 0.5 s** (Config › Sampling; `min_delay` is 100 ms, and the outer
+loop's `Kp`/`Ki`/`svLookahead` are all rate-independent, so nothing is retuned).
+Both live in the `.aset`, as `dropSpikes` and `Delay`, so
+`tools/gen_pid_alarm_asets.py` regenerates the whole set from the canonical file
+once it is re-saved.
 
 **~~Step 1 — validate `pidKi` 0.07 + profile_003.~~ DONE — roast 46,
 2026-09-05.** Five of the six checks pass, item 5 (floor time) fails on batch

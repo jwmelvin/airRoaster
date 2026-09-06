@@ -722,32 +722,62 @@ SV 200; a dedicated loaded FF grid stays unscheduled unless those disagree,
 because it costs a batch and the bed's flow resistance drifts as the beans dry.
 state-plan.md § Step 8.
 
-**The loaded run is now one 400 g batch, not two (operator, 2026-09-06).** The
-sacrificial stock is 617 g — one 400 g batch or two 308 g ones — and **two 308 g
-batches would characterise a roaster that is not run**: charge mass sets the
-bed's pressure drop (hence flow per fan unit, what `FF SLOPE` corrects) and the
-thermal mass in the plant fit, and one mass gives nothing to extrapolate from.
-`artisan/charsingle_400g.alog` (`tools/gen_char_single.py`), 12:15, same char
-config.
+**Roast 48 (2026-09-06) is that batch, and it closes the open question:
+`feedforward()`'s empty-chamber map transfers to a loaded chamber.** Steps 4-5,
+the first roast on v0.20.0, and — the operator's framing — **Test A's design run
+again with beans in it** rather than the doublet. All 45 scheduled events fired
+on time, `autoDrop = false` held on exactly the 7:15 `BTbreak` that cost roast 47
+88 s, and BT peaked at 184.6 degC against the generator's simulated 185.7.
+400 g in, 350 g out.
 
-**It measures strictly more than the pair could**, because roast 47 showed heat
-reaches 95 % of its final value **within 2 s** of a fan step. A slope therefore
-costs ~45 s rather than a plateau, so it is taken at **three flat setpoints —
-245, 215, 190** — and since `slope(sv) = cfan + cfansv*sv/100` is a line, three
-points **identify both loaded fan coefficients separately** instead of only
-rescaling them together, which is all a single setpoint (the pair's SV 200) can
-support. Every fan step sits at a dead-flat inlet ≥20 s from any inlet change;
-heat depends on fan and setpoint and essentially not on BT, so BT climbing
-through a block is harmless. The SV 150 valleys between blocks are what keep BT
-under first crack — a steady inlet drags BT to within ~15 degC of itself, so
-SV 245 cannot be held — and they double as the plant-ID excitation, so the file
-needs no separate inlet doublet. Simulated BT peaks at 185.7 degC and the tool
-refuses to write a schedule that reaches 196.
+Fourteen steady windows, fan 60-70 × SV 140-245, against the map flashed in
+v0.20.0: **bias +1.07%, rms 1.61%, worst +2.45%**, with most rows extrapolated in
+SV beyond roast 47's box. The fan slope — the quantity a bean bed was supposed to
+move, and the reason `FF SLOPE` exists — measures 1.03-1.11x the empty map at
+SV 190 and 215 and 1.33x at SV 245, but SV 245 is 60 degC outside roast 47's
+fitted box, so that row is one extrapolation against another and is not a load
+effect. **Pooled** (25 windows over the union of both runs, one estimator,
+fan 58-80 × SV 140-245) the refit is `82.71 - 1.0774*fan - 0.6255*SV +
+1.3294*fan*SV/100`, rms 1.21%, which differs from the flashed coefficients by at
+most **1.65%** anywhere in the box the cascade uses. **Nothing to reflash, and
+`FF SLOPE` has nothing to correct.** Carded in
+`tools/analysis/ff_roast48_loaded.json`; tool `tools/analysis/roast48_ff.py`.
 
-Given up: the between-batch fan-level contrast and the moisture-loss question
-(roast quality, not characterisation), and **there is no retry** — 217 g is left,
-under the 250 g minimum. If 800 g of other sacrificial beans turns up, the
-two-batch pair is still on disk and is the safer run. state-plan.md § Step 4/5.
+**And the feedforward does the job it was written for.** Worst inlet excursion
+after a fan step at a flat setpoint is **1.5 degC on a 10-unit step**, about
+0.13 degC/fan-unit, against roast 47's 0.50 with `d(FF)/d(fan) = 0` (its 22-unit
+step cost 13.2 degC). Roast 47 predicted the loaded runs would show ~6 degC per
+transition until step 8 landed; step 8 landed and they show 1.5. Inner-loop
+tracking rms **0.40 degC** over 226 quiet samples against roast 47's 1.12, all 14
+windows inside ±0.30 degC, and commanded inlet steps of ±40 to ±95 degC settle
+within 2 degC in **3-6 s**.
+
+**Two Artisan settings came out of it and both should change before the next
+run.** First, **untick "Drop Spikes"** (Config › Curves › Filters;
+`dropSpikes=true` in every cascade `.aset`). Artisan's `inputFilter`
+(canvas.py:4535) ends with a repair that assumes any run of equal readings is a
+stuck sensor and **destructively rewrites the two samples before the change** as
+a linear ramp, in the array it saves — gated on *any* of `minmaxLimits` /
+`dropSpikes` / `dropDuplicates`, of which only `dropSpikes` is on. `SV` and `HT`
+are constant by construction, so they trip it constantly: SV 245 → 150 is stored
+as 245, 213.33, 181.67, 150. Window means survive it (0.10% worst), transient
+timing does not — naively this run reads rms 2.79 degC of tracking error against
+a true 0.40. Second, **Artisan can sample at up to 10 Hz** (`min_delay = 100`,
+canvas.py:608; Config › Sampling takes 0.10-999.99 s and only warns below 2 s),
+and the outer loop's tuning is **rate-independent** — `Ki` is applied as
+`Ki*err*dt` in real seconds and `svLookahead` is in seconds, so Kp 3.0 / Ki 0.07
+/ lookahead 3 carry over unchanged. `Delay=1000` today; **0.5 s doubles the
+resolution on every transient this project measures**, and 0.25 s is the floor
+worth having (the firmware's `controlStep()` period). What moves with it:
+WebSocket load, and `curvefilter`/`deltaBTsamples`, which are counts of samples,
+so their time spans halve. Detail in state-history.md § Roast 48.
+
+**Still open after roast 48: the loaded plant fit.** `a` and `theta` for
+`merge_inlet_base.py` and step 9 are not in the section above. Roast 48's inlet
+steps of ±40 to ±95 degC at 165/270/330/435/495 s are far better excitation than
+roast 46's accidental doublet, and that refit is the next piece of desk work; it
+needs the numpy/scipy venv from tools/analysis/README.md. `greens_temp` was again
+left at `0.0`.
 
 **Canonical config is `artisan/airRoaster_cascadePID.aset`** (one file; the
 brief `_edit` variant used while adding the alarms was folded back in and

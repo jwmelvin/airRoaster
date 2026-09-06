@@ -2845,3 +2845,202 @@ is the disturbance `feedforward()` exists to cancel and currently does not
 `d(FF)/d(fan) = 0`). It also sets the scale for the loaded runs: their 60/70
 square wave should show ~6 degC of inlet transient per transition until step 8
 lands.
+
+### Roast 48 (2026-09-06, 14:59) — the loaded characterisation, and the empty map transfers
+
+Runbook steps 4-5, and the first roast on **v0.20.0**. Not the two-batch doublet
+pair: with 617 g of sacrificial stock the operator ran **Test A's design over
+again with beans in it** — `tools/gen_char_single.py`'s one 400 g batch, the
+inlet parked at three flat setpoints with a fan step taken inside each, rather
+than the 3:00-5:00 doublet plus a 60/70 square wave. Background
+`charsingle_400g.alog`, config `airRoaster_cascadePID_char.aset`, DROP by hand at
+12:30. 400 g in, 350 g out (12.5% loss), BT peaked at **184.6 degC** against the
+generator's simulated 185.7 and never approached first crack, as designed for a
+sacrificial batch. Analysis: `tools/analysis/roast48_ff.py`, card
+`tools/analysis/ff_roast48_loaded.json`.
+
+**The mechanism replayed again and `autoDrop = false` held.** All 45 scheduled
+events fired at their authored times — every fan step (0/64, 90/60, 195/66,
+240/60, 360/66, 405/60, 525/70, 585/60, 645/70, 705/60) and every inlet step
+(165/245, 270/150, 330/215, 435/150, 495/190). The 7:15 inlet step-down from 215
+to 150 is precisely the `BTbreak` at BT 184 and CHARGE+7:15 that took 88 s out of
+roast 47, and **it did not fire**: the `autoDrop = false` the char config gained
+after roast 47 is confirmed on the run it was written for. Heat touched 100% for
+3 samples of 751 and 0% for 3, both inside inlet step transitions.
+
+#### The bean bed does not move the feedforward map
+
+Fourteen steady windows, fan 60-70 crossed against SV 140-245, each averaged over
+the 30 s before the next slider change and starting 12 s after the previous one.
+Against the **empty-chamber** map now flashed in v0.20.0
+(`heat = 69.8685 - 0.8570*fan - 0.5101*SV + 1.1423*fan*SV/100`):
+
+| | measured | empty map | error |
+|---|---|---|---|
+| fan 60 / SV 150 | 42.3, 42.6 | 44.7 | +2.45, +2.10 |
+| fan 60 / SV 190 | 50.6, 49.5, 49.7 | 51.7 | +1.18, +2.28, +2.04 |
+| fan 70 / SV 190 | 64.1, 64.0 | 64.9 | +0.82, +0.91 |
+| fan 60 / SV 215 | 55.8, 54.4 | 56.1 | +0.37, +1.74 |
+| fan 66 / SV 215 | 64.9 | 65.7 | +0.77 |
+| fan 60 / SV 245 | 60.1, 59.8 | 61.4 | +1.32, +1.54 |
+| fan 66 / SV 245 | 75.4 | 73.0 | **-2.38** |
+| fan 64 / SV 140 | 46.1 | 46.0 | -0.14 |
+
+**Bias +1.07%, rms 1.61%, worst +2.45%** — against the empty run's own residual
+of 0.68%, and with every row but the last two *extrapolated* in SV, since roast
+47's fitted box stops at SV 185. That is the open question in state-current.md
+§ Step 8 answered: **a 400 g bed does not change the heat a given fan level and
+setpoint cost**, and `FF SLOPE` has nothing to correct. The argument the card's
+note rested on — the inlet thermocouple sits upstream of the bed — now has a
+measurement behind it.
+
+#### The fan slope, which is the part that would have mattered
+
+`FF SLOPE` exists because a bed changes the pressure drop and so the flow a fan
+level delivers. Eight step pairs, each a step up and the matching step down:
+
+| SV | steps | measured %/fan-unit | empty map | ratio |
+|---|---|---|---|---|
+| 190 | 60↔70, twice | 1.35, 1.46, 1.45, 1.43 | 1.313 | 1.03-1.11 |
+| 215 | 60↔66 | 1.53, 1.76 | 1.599 | 0.96-1.10 |
+| 245 | 60↔66 | 2.56, 2.59 | 1.942 | **1.32-1.34** |
+
+Mean ratio 1.130. **Do not read the SV 245 row as a load effect.** Roast 47's fit
+box is SV 145-185, so at SV 245 the "empty map" column is an extrapolation 60 degC
+beyond its data, and the measured column is one end of roast 48's own three-point
+line. The two agree where they overlap and diverge only where each is guessing.
+The honest statement is the pooled one below.
+
+Three setpoints is the smallest design that can see curvature in
+`slope(SV) = c_fan + c_fansv*SV/100`, and this is the first data that has it.
+The line through the three loaded points is `-2.740 + 2.133*SV/100`, rms 0.141
+%/fan-unit — steeper than the empty map's `-0.857 + 1.142*SV/100`, but on one
+degree of freedom and over a range where the two designs barely overlap. Not
+enough to act on.
+
+#### Pooled, the flashed map is right to under 2% everywhere the cascade runs
+
+The two characterisation runs cover boxes the other does not — roast 47 spans
+fan **58-80** at SV 145/185, roast 48 spans SV **140-245** at fan 60-70 — so put
+through one estimator and fitted together they cover the box a roast actually
+uses. 25 windows:
+
+```
+pooled   heat = 82.71 - 1.0774*fan - 0.6255*SV + 1.3294*fan*SV/100    rms 1.21 %
+```
+
+Against the coefficients flashed in v0.20.0, over fan 58/64/70 × SV 150/200/250,
+the largest disagreement anywhere is **1.65%** (-1.7 at fan 58 / SV 250, +1.3 at
+fan 70 / SV 250). **There is nothing to reflash.** Adding a load *offset* to the
+pooled fit gives -1.67% and takes the residual 1.21 -> 1.02; adding a
+load × fan × SV term gives -0.0137 and 1.05. Both are small, both are weakly
+separable from the fact that the loaded run is the only source of SV > 185 and
+the empty run the only source of fan outside 60-70 — and an offset is absorbed by
+the inner loop's integral trim within seconds anyway. Only a change in the fan
+*sensitivity* would survive, and that is the row that does not clear the noise.
+The pooled coefficients are carded under `pooled` in `ff_roast48_loaded.json` as
+the fit to flash if `feedforward()` is ever recalibrated.
+
+#### The feedforward works — fan-step rejection is 4x better than roast 47
+
+This is the first roast with `feedforward()` live rather than clamped at 100.
+Worst inlet excursion in the 40 s after each fan step at a flat setpoint, with the
+window closed before the next inlet step:
+
+| step | 60→66 | 66→60 | 60→66 | 66→60 | 60→70 | 70→60 | 60→70 | 70→60 |
+|---|---|---|---|---|---|---|---|---|
+| degC | -1.5 | +1.0 | -0.5 | +1.0 | -0.8 | -1.0 | -1.5 | +1.0 |
+
+**About 0.13 degC per fan unit, against roast 47's 0.50** (-4.8 on 8 units, +5.5
+on 14, -13.2 on 22, +8.0 on 16, -3.0 on 8, all at +2 s, with `d(FF)/d(fan) = 0`).
+The largest disturbance in the whole run is 1.5 degC on a 10-unit step. Roast
+47's own prediction was that the loaded runs "should show ~6 degC of inlet
+transient per transition until step 8 lands"; step 8 landed, and they show 1.5.
+The heat channel shows why: it moves 59 -> 76 within 5 s of the step, which is the
+map stepping, not an integrator climbing.
+
+**Inner-loop tracking is rms 0.40 degC over 226 quiet samples, mean +0.00**
+(roast 47: 1.12 over 619), and all 14 steady windows sit inside ±0.30 degC of the
+commanded setpoint. Commanded inlet steps of -95, +65, -65 and +40 degC settle to
+within 2 degC in **3-6 s**.
+
+#### Two Artisan settings this run exposed, and both should change
+
+**Artisan destructively rewrites the two samples before every step in a
+constant-valued channel, and it is a settings problem, not a fact of life.**
+This was first read here as a 3-sample moving average; it is not. `inputFilter`
+(canvas.py:4535) ends with an *"improve a previously corrected reading"* repair
+that assumes any run of equal readings was produced by drop-out replacement and
+un-sticks it by linear interpolation toward the new value — in the array that
+gets **saved**:
+
+```python
+if (self.minmaxLimits or self.dropSpikes or self.dropDuplicates):
+    if len(tempx) > 2 and tempx[-1] == tempx[-2] == tempx[-3] != temp:
+        delta = (tempx[-3] - temp) / 3.0
+        tempx[-1] = tempx[-3] - 2*delta;  tempx[-2] = tempx[-3] - delta
+    elif len(tempx) > 1 and tempx[-1] == tempx[-2] != temp:
+        tempx[-1] = (tempx[-2] + temp) / 2.0
+```
+
+The gate is *any* of the three filters and no spike need ever have been detected.
+`dropDuplicates` ("Interpolate Duplicates") and `minmaxLimits` are **false** in
+every cascade `.aset`; **`dropSpikes` ("Drop Spikes", Config › Curves › Filters)
+is `true`, and on its own it opens the gate.** So a channel that is constant
+*by construction* — which is exactly what `SV` and `HT` are — trips a repair
+written for a stuck sensor. SV 245 → 150 is stored as 245, **213.33, 181.67**,
+150; the integer heat channel carries thirds (59.7, 75.3, 64.7); `amb` reads
+28.36666667.
+
+**It does not damage this run's conclusions, and it does damage transient
+timing.** The substituted ramp is nearly mean-preserving: dropping every
+non-integer heat sample moves the 14 window means by at most **0.10%**, against
+a fit residual of 0.68-1.6%, so the feedforward numbers above stand as measured.
+What it corrupts is anything read across a transition. Read naively this run's
+inner-loop tracking is rms 2.79 degC with a worst sample of +29.6; the whole
+difference from the true 0.40 is four fabricated samples sitting before inlet
+steps. `roast48_ff.py` opens every guard `FILTER = 3` seconds *before* a step,
+not after it.
+
+**The fix is to untick "Drop Spikes"**, and it should be done before the next
+characterisation run. The repair is not separately switchable, so there is no way
+to keep spike rejection and lose the fabrication. The cost is real but small
+here: the firmware already rejects faulted and stale RTD samples on-device
+(hardware/emi.md), which is where this project's spikes come from, and Artisan's
+own tooltip scopes the feature to "large spikes".
+
+**And Artisan can sample much faster than 1 Hz — `min_delay` is 100 ms**
+(canvas.py:608; `default_delay` is 2000). Config › Sampling accepts 0.10-999.99 s
+in hundredths and only warns below 2 s. **Critically, the outer loop's tuning
+does not depend on it**: `Iterm += getKi(i) * err * dt` with `dt = now -
+lastTime` in real seconds (pid.py:439), `Kp` is rate-free, and `svLookahead` is
+added to `tx` in **seconds** (pid_control.py:1707, and the comment at :50). So
+`Kp 3.0 / Ki 0.07 / svLookahead 3` carry over unchanged to a faster rate. Two
+things do move: every sample is one `getData` round trip, so the WebSocket load
+scales; and `curvefilter` (3) and `deltaBTsamples` are counts of *samples*, so
+their time spans halve at 0.5 s — including the decay-average that produces the
+PID's own PV, which state-current.md § Roast 44 costs at 0.67 s of lag. Below
+**0.25 s** there is nothing left to gain: that is the firmware's `controlStep()`
+period, so Artisan would be resampling the same control decision. `Delay=1000`
+in every cascade `.aset` is the key.
+
+**A slope measurement costs ~45 s, and this run confirms it at load.** Roast 47
+measured heat reaching 95% of its final value within 2 s of a fan step; roast 48
+shows it settling in 3-6 s with beans in the chamber and then holding flat, which
+is what let the SV 245 and SV 215 blocks be only 30 s long. That is the assumption
+`gen_char_single.py` was built on and it held.
+
+#### What the run did not give
+
+`greens_temp` is still `0.0` — the runbook asks for it on every roast from now on
+and it was not filled in. The charge-state proxy `(CHARGE_BT - BT at CHARGE+13 s)
+/ mass` reads **7.47 degC/100 g** against the 14.46 ± 0.48 of the frozen roasts
+43-46, but it is **not comparable**: those charged into a chamber at BT ~128 under
+PID-driven preheat, and this one charged at BT 84.3 with the schedule starting
+from inlet 129, so the driving temperature difference is not the same. It is
+evidence of a warm charge, not a measurement of one.
+
+The plant fit (`a`, `theta` loaded, for `merge_inlet_base.py` and step 9) is not
+in this section. The inlet steps of ±65 to ±95 degC at 165/270/330/435/495 s are
+far better plant excitation than roast 46's accidental doublet, and that fit is
+the next piece of desk work.
