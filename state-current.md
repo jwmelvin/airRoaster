@@ -526,8 +526,11 @@ collision that forced playback off does not arise. Simulated: **`dI/dt` 0.09 ->
 `svLookahead` **0**, and with the gate the handover integrator (49.9) and
 `dt150` (+1.6 s) are *identical at every charge state* — spreads 0.0 and 0.1.
 Survives +-20% of error in the assumed plant gain. It needs one small firmware
-command and **steps 3-5 first**, because the schedule is exactly `1/a` and the
-loss curve. That is new **runbook step 9**, and it is why the characterisation
+command — **`INLET TRIM`, now folded into v0.19.0** so the outer-loop
+instrumentation and the outer-loop restructuring land in one flash (spec in
+state-plan.md § Firmware now in scope; it is inert until Artisan is
+reconfigured) — and **steps 3-5 first**, because the schedule is exactly `1/a`
+and the loss curve. That is new **runbook step 9**, and it is why the characterisation
 runs have recovered their priority. The relative-setpoint variant
 (`INLET = BT + trim`) was tried and is **worse** for a principled reason: it turns
 the plant into an integrator with 13.5 s of delay. Detail, the full table and the

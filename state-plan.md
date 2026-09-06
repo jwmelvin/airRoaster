@@ -2044,7 +2044,7 @@ filter on BT would buy a few seconds at the cost of amplifying noise, and is
 **not worth doing**. The step test should confirm this before it is dismissed
 for good.
 
-#### Done: v0.19.0 — `SV` and `HT` in `getData`
+#### v0.19.0, first item (done): `SV` and `HT` in `getData`
 
 ```c
 "{\"id\":%s,\"data\":{\"BT\":%.1f,\"ET\":%.1f,\"IN\":%.1f,\"AT\":%.1f,"
@@ -2066,6 +2066,81 @@ guessed here because a wrong one silently mis-maps a curve.
 This retires the dashboard-CSV cross-correlation that every analysis in this
 document has depended on, and beats `createEvents` (integer degC, 200-400 events
 a roast). Turn `createEvents` off once the device is flashed.
+
+#### v0.19.0, second item: `INLET TRIM` — the feedforward-plus-trim command
+
+Added to v0.19.0 rather than a version of its own (operator, 2026-09-06) so the
+outer-loop instrumentation and the outer-loop restructuring land in **one flash**.
+It is the firmware half of § Dip strategies § The structural fix / runbook step 9,
+and it is inert until Artisan is reconfigured to use it — nothing about the
+present cascade changes when it is flashed.
+
+**What it is.** The inlet setpoint becomes a **sum of two independently
+commanded numbers**: a *base*, which Artisan replays open-loop from the
+background as the feedforward schedule, and a *trim*, which the outer PID drives.
+The firmware adds them; neither side needs to know about the other.
+
+```
+INLET <degC>        sets the base   (unchanged command, unchanged semantics)
+INLET TRIM <degC>   sets the trim   (new; -INLET_TRIM_MAX_C .. +INLET_TRIM_MAX_C)
+INLET TRIM          reports base, trim and the effective setpoint
+effective SV = clamp(base + trim, INLET_SV_MIN_C, INLET_SV_MAX_C)
+```
+
+**Shape of the change.** `inletSV` keeps its present meaning — *the effective
+setpoint* — so `controlStep()`, `feedforward()`, the OLED, `STAT`, the status
+push and the `getData` `SV` node all keep working untouched. What is new is
+`inletBase` and `inletTrim` upstream of it, plus one place that recomputes
+`inletSV` from the pair. `engageInlet()` currently returns early when already in
+`MODE_INLET` (deliberately, so a retarget does not re-seed the integrator); that
+early return is the natural home for the recompute, but the bumpless-transfer
+seeding must use the **effective** setpoint, not the base.
+
+**Zeroing, and why it is not optional.** A stale trim is a stuck heat offset.
+`inletTrim` returns to 0 on `INLET OFF`, on `INLET <= 0`, in `inletFailsafe()`,
+on entry to `MODE_TUNE`, and at boot — everywhere `MODE_INLET` is left or the
+loop lets go.
+
+**Staleness timeout.** In `MODE_INLET`, if the trim has not been refreshed for
+`INLET_TRIM_STALE_MS` (15 s, against a 1 Hz outer loop), `controlStep()` ramps it
+toward 0 at `INLET_TRIM_DECAY_CPS` (2 degC/s) and logs once. **Toward zero is the
+correct direction and it is not the same as "safe"**: the base schedule keeps
+running, so the roaster falls back to open-loop feedforward rather than to no
+heat — which is the intended degraded mode, and is why the ramp is gentle rather
+than a snap. Note the trim can be *negative*, so decaying it can raise the
+effective setpoint; the clamp and the existing inlet failsafes are what bound
+that, not the sign of the decay. **Command staleness on the *base* is
+deliberately out of scope** — the firmware holds the last `INLET` indefinitely
+today and changing that is a roast-safety decision of its own, not something to
+smuggle into this change.
+
+**Auth tier: all forms of `INLET TRIM` are `TIER_DRIVE`.** `INLET TRIM 0` looks
+safety-increasing and is not — a negative trim removed raises the setpoint — so
+it does not get the `INLET 0` / `INLET OFF` exemption. `cmdTier()` already falls
+through to `TIER_DRIVE` for an unparseable `tokens[1]`, so the correct behaviour
+is the default; make it explicit anyway so the reasoning survives.
+
+**Telemetry.** `base` and `trim` join the status push and `STAT`. The `getData`
+`SV` node keeps reporting the **effective** setpoint, so no Artisan-side change
+is needed and the v0.19.0 `SV` channel keeps meaning what § Roast 46 refit
+assumes it means. Check every `snprintf` buffer that grows.
+
+**Artisan side, for reference — no firmware dependency.** `specialeventplayback`
+is per event type (canvas.py:1848), so background playback drives the base on one
+slider while `pidPositiveTarget` (any of sliders 1-4, pid_control.py:1252) points
+the PID at a second slider bound to `INLET TRIM {}`. That is the collision that
+forced playback off for the cascade (§ Background event playback must be off),
+and putting the two on different sliders is what dissolves it. The base curve is
+authored by `artisan/make_inlet_background.py`, kept unmodified for exactly this
+path. **Do not configure any of this until steps 3-5 have measured `1/a` and the
+loss curve** — the schedule *is* those two things.
+
+**Acceptance.** Compile-verified via `./verify.sh`; bench-checkable with the
+heater cold — `INLET 200` then `INLET TRIM 20` must show an effective 220 with no
+integrator step, `INLET TRIM -20` an effective 180, `INLET TRIM` alone must
+report all three, silence for 15 s must ramp the trim out, and `INLET OFF`,
+`INLET 0` and a forced failsafe must each leave the trim at 0. No behaviour
+change on any path that does not send `INLET TRIM`.
 
 #### The one big idea, gated on the characterisation runs
 
@@ -3213,7 +3288,11 @@ is not settled, and the earlier sweep's code no longer exists to reconcile.
 failure mode, no sticky-`p-i-d()` trap, and a worst error of +2.95.
 
 **Step 2 — flash v0.19.0 and wire up the new channels.** After step 1, so that
-roast stays clean. `./verify.sh upload`, then in Artisan **Config > Device >
+roast stays clean. **v0.19.0 now carries two items**: the `SV`/`HT` `getData`
+nodes (done, below) and the `INLET TRIM` command that step 9 needs
+(§ Firmware now in scope). `INLET TRIM` is inert until Artisan is reconfigured,
+so flashing it changes nothing about the present cascade — but it means step 9
+needs no second flash. `./verify.sh upload`, then in Artisan **Config > Device >
 Extra Devices** add a further WebSocket device so channel slots 5 and 6 become
 curves, and name them `SV` and `HT`. The `channel_nodes`/`channel_modes` entries
 are already in both `.aset` files. Confirm the two curves appear and track, then
