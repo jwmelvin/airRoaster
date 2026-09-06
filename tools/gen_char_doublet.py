@@ -16,32 +16,46 @@ What it emits
 extension of ``chardoublet_loaded.alog``:
 
 ===============  =========================================================
+0:00 - 1:30      **fan 64** -- establish circulation.  Identical in both files
 0:00 - 5:00      unchanged -- roast 45's own commanded SV with the +30/-30
                  degC inlet doublet over 3:00-5:00
+1:30 - 6:00      fan drops to this batch's **base** (60 or 68)
 5:05 - 5:20      inlet stepped down to the **hold** value in two steps
 5:20 - 9:00      inlet held, so BT levels off instead of running on
-6:00 - 7:00      **fan swapped to the other batch's base level**
-7:00 - 8:00      fan back to this batch's base
-8:00 - 9:00      **fan swapped again**
+6:00 - 9:00      **fan square wave 60 <-> 70**, 60 s half-cycles,
+                 phase-reversed between the two files
 9:00             DROP (by hand -- the char config disables both alarms)
 ===============  =========================================================
 
-**The fan window is narrow at both ends and the schedule lives inside it.**  Below
-**55** the interlock stops giving the heater full authority (``IL_FAN_FULL_DFLT``,
-airRoaster.ino:111): the heat clips, the inner loop stops holding the inlet, and
-the run is invalid.  Above about **65** is outside anything this roaster has been
-run at -- the operator's own ``Fan FULL`` button is **64** (``extraeventsvalues``
-in the canonical ``.aset``) and roast 46 held 60 -- so a large upward excursion
-risks lifting beans out of the chamber, which is a physical failure, not a noisy
-measurement.  That leaves roughly **55-65**, and the schedule uses **57 and 65**.
+The fan floor is a **bean** constraint, not an actuator one
+--------------------------------------------------------------
+**A 400 g charge does not circulate at fan 60.**  It takes ~64 to get the bed
+lofted and drying, after which it sustains at 60 (operator, 2026-09-06).  Roast
+46's own events say the same thing and are not the "constant 60" that
+state-current.md summarised them as: 60 at CHARGE+2 s, **64 at +7 s**, 63 at
++11 s, back to 60 at +85 s.  So a constant fan from CHARGE is not a schedule this
+roaster can run, and both files open with **64 until 1:30** -- identical in both,
+so it differences out of the comparison, and a step rather than a level, which is
+excitation rather than a confound.
 
-So the two files are a **phase-reversed pair** over the same two levels rather
-than two different amplitudes: batch 1 runs the ramp at 57 and modulates
-57 -> 65 -> 57 -> 65, batch 2 runs the ramp at 65 and modulates 65 -> 57 -> 65 ->
-57.  That gives the between-batch level contrast during the ramp *and*
-within-batch modulation during the plateau, six transitions across the pair in
-both directions, and any slow drift common to the two runs cancels in the
-difference.
+Below **55** the interlock stops giving the heater full authority
+(``IL_FAN_FULL_DFLT``, airRoaster.ino:111): the heat clips, the inner loop stops
+holding the inlet, and an open-loop identification run is invalid.  The operator
+puts the practical floor higher still -- 58-59 is the lowest reachable at all --
+so the schedule never goes below **60**.  There is no blow-out ceiling (operator,
+2026-09-06); the concerns above the usual band are moisture loss at higher
+Reynolds number and bed uniformity (chuffing drives local circulations that
+short-cut the funnel), neither of which is a reason to avoid **70** for 60 s at a
+time on a sacrificial batch.
+
+So the plateau modulation is a **phase-reversed 60 <-> 70 square wave**, the same
+two levels in both files with opposite phase: six transitions across the pair in
+both directions, and slow drift common to the two runs cancels in the difference.
+The **base** through the ramp differs -- 60 and 68 -- which is the between-batch
+level contrast, and which also puts a first number on a question the operator has
+open independently: whether minimum airflow costs or saves moisture.  **Weigh in
+and out on both**; that comparison is indicative rather than definitive, since
+the two runs share the plateau.
 
 Why the inlet is levelled off rather than continued
 ---------------------------------------------------
@@ -144,7 +158,7 @@ def step_lookup(points):
     return f
 
 
-def build(src, base_fan, alt_fan, args, a, theta, poly, window):
+def build(src, base_fan, args, a, theta, poly, window):
     p = dict(src)
     n_old = len(p['timex'])
     dt = p['timex'][1] - p['timex'][0]
@@ -161,13 +175,16 @@ def build(src, base_fan, alt_fan, args, a, theta, poly, window):
     mid = round((inlet_hi + args.hold) / 2.0)
     inlet += [(args.hold_start + 5.0, mid), (args.hold_start + 20.0, float(args.hold))]
 
-    # ---- fan schedule: base through the ramp, then a square wave base <-> alt
-    fan = [(0.0, float(base_fan))]
+    # ---- fan: circulation bump, then the ramp base, then the square wave
+    fan = [(0.0, float(args.charge_fan)),
+           (args.charge_fan_until, float(base_fan))]
+    # start the square wave on whichever level is further from this batch's base,
+    # so no half-cycle is wasted repeating the level the ramp already sat at
+    k = 0 if abs(args.mod[0] - base_fan) > abs(args.mod[1] - base_fan) else 1
     t = args.fan_start
-    at_alt = True
     while t < args.length:
-        fan.append((t, float(alt_fan if at_alt else base_fan)))
-        at_alt = not at_alt
+        fan.append((t, float(args.mod[k % 2])))
+        k += 1
         t += args.fan_period
     for _, v in fan:
         if v < IL_FAN_FULL + 2:
@@ -217,13 +234,16 @@ def build(src, base_fan, alt_fan, args, a, theta, poly, window):
             etypes[k] = args._etypes[k]
     p['etypes'] = etypes
 
-    p['title'] = (f'CHAR BC - inlet doublet 3:00-5:00 + fan {base_fan}/{alt_fan} '
-                  'square wave 6:00-9:00 (PID OFF)')
+    p['title'] = (f'CHAR BC - inlet doublet 3:00-5:00, ramp fan {base_fan}, '
+                  f'fan {args.mod[0]}/{args.mod[1]} square wave 6:00-9:00 '
+                  '(PID OFF)')
     p['beans'] = 'CHARACTERISATION RUN - not a roast'
     p['roastingnotes'] = (
-        f'Open-loop. Load airRoaster_cascadePID_char.aset. Fan base {base_fan}; '
-        f'the schedule replays it. BT column is a forward simulation of the '
-        f'plant card from {args.sim_from:.0f} s, not a recorded roast. DROP by hand.')
+        f'Open-loop. Load airRoaster_cascadePID_char.aset. Set fan '
+        f'{args.charge_fan} before CHARGE; the schedule replays every change from '
+        f'there (ramp base {base_fan}). Weigh in and out. BT column is a forward '
+        f'simulation of the plant card from {args.sim_from:.0f} s, not a recorded '
+        'roast. DROP by hand at 9:00.')
     p.update(_IDENTITY_KEYS)
 
     # round-trip the event encoding on what we are about to write
@@ -251,10 +271,13 @@ def main():
     ap.add_argument('--plant', default=str(PLANT_CARD))
     ap.add_argument('--aset', default=str(ASET),
                     help='config the run will load; its etypes names are copied')
-    ap.add_argument('--bases', type=int, nargs='+', default=[57, 65],
-                    help='base fan level per output file (default 57 65)')
-    ap.add_argument('--alt', type=int, nargs='+', metavar='LEVEL',
-                    help='modulation target per base (default: the other base)')
+    ap.add_argument('--bases', type=int, nargs='+', default=[60, 68],
+                    help='fan level through the ramp, per output file')
+    ap.add_argument('--charge-fan', type=int, default=64, metavar='LEVEL',
+                    help='fan until --charge-fan-until, to establish circulation')
+    ap.add_argument('--charge-fan-until', type=float, default=90.0, metavar='SEC')
+    ap.add_argument('--mod', type=int, nargs=2, default=[60, 70], metavar='LEVEL',
+                    help='the two plateau modulation levels (default 60 70)')
     ap.add_argument('--fan-start', type=float, default=360.0, metavar='SEC')
     ap.add_argument('--fan-period', type=float, default=60.0, metavar='SEC')
     ap.add_argument('--hold-start', type=float, default=300.0, metavar='SEC',
@@ -274,12 +297,8 @@ def main():
     print(f'source {pathlib.Path(args.src).name}: {len(src["timex"])} samples, '
           f'plant a={a:.6f} theta={theta} loss window {window[0]:.0f}-{window[1]:.0f} s')
 
-    bases = args.bases
-    alts = args.alt or [bases[(i + 1) % len(bases)] for i in range(len(bases))]
-    if len(alts) != len(bases):
-        sys.exit('--alt must give one level per --bases entry')
-    for base, alt in zip(bases, alts):
-        p, inlet, fan, temp2 = build(src, base, alt, args, a, theta, poly, window)
+    for base in args.bases:
+        p, inlet, fan, temp2 = build(src, base, args, a, theta, poly, window)
         name = f'chardoublet_fan{base}.alog'
         report(name, inlet, fan, temp2, dt)
         if not args.dry_run:

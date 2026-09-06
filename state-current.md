@@ -314,8 +314,17 @@ in state-history.md § Roast 44 outer-loop analysis.
 
 **Roast 46 (2026-09-05, 400 g) is runbook step 1, and it passes.** Config
 unmodified (Kp 3.0, **Ki 0.07**, Kd 0, `svLookahead` 3, floor 140), background
-profile_003, PID-driven preheat, no intervention, **fan held constant at 60 for
-the whole roast** so nothing in the trace is air-schedule disturbance. Five of
+profile_003, PID-driven preheat, no intervention, **fan held at 60 for the roast
+body** so nothing in the trace is air-schedule disturbance — *with the charge
+bump*, which this summary previously flattened away and which turns out to
+matter: the events read 60 at CHARGE+2 s, **64 at +7 s**, 63 at +11 s, back to 60
+at +85 s. state-history.md § Roast 46 recorded it correctly all along as "the
+operator's usual 63-64 blip over 0:09-1:26"; what is new (operator, 2026-09-06)
+is that it is not a blip but a **requirement** — a 400 g charge does not
+circulate at 60, it takes ~64 to loft the bed, after which 60 sustains. So no
+run in this project can hold a constant fan from CHARGE, the characterisation
+runs included, and the bump sits inside the window the plant fit draws its
+excitation from. Five of
 six checks pass: time-to-BT **+3.4 to +5.9 s** against the profile (roast 44, the
 other 400 g batch, was +8.9 to +13.9); quiet-window error -1.02 and -0.80 degC;
 inner loop rms 1.25 degC with heat 4 s at 100% and 1 s at 0% of 430; SV monotone
@@ -625,17 +634,35 @@ between-batch fan contrast at n=2 is also a *batch* contrast, and roast 46 is th
 standing proof that batch differences are not small. `tools/gen_char_doublet.py`
 extends the doublet to nine minutes — inlet doublet unchanged over 3:00-5:00, an
 inlet hold from 5:20 that levels BT off near 185 degC, then a **fan square wave
-over 6:00-9:00**, phase-reversed between the two files (`chardoublet_fan57.alog`
-runs the ramp at 57 and modulates 57/65; `..._fan65.alog` the mirror). Three
-constraints set the numbers and each is a way the run could have been wasted
-rather than merely noisy: below fan **55** the interlock clips the heat and the
+over 6:00-9:00**, phase-reversed between the two files (`chardoublet_fan60.alog`
+runs the ramp at 60, `..._fan68.alog` at 68, and both modulate 60/70 with
+opposite phase). Every file opens at **fan 64 until 1:30** for circulation —
+identical in both, so it differences out, and a step rather than a level, which
+is excitation rather than a confound.
+
+**The fan envelope is set by the beans at the bottom and by nothing at the top**
+(operator, 2026-09-06). Below fan **55** the interlock clips the heat and the
 inner loop stops holding the inlet (`IL_FAN_FULL_DFLT`, airRoaster.ino:111);
-above ~**65** is outside anything this roaster has run at — the operator's own
-`Fan FULL` button is 64 — and risks lifting beans out of the chamber; and the
-plateau sits at **185 degC, below first crack**, so the bean exotherm is not
-sitting on top of the signal being measured. The files' BT column is a forward
-simulation of the plant card and is **identical for both**, because the card has
-no fan term — which is exactly what the pair is for.
+below **58-59** is unreachable in practice, and a *charge* will not circulate
+below ~64. There is **no blow-out ceiling** — the concerns above the usual band
+are moisture loss at higher Reynolds number and bed uniformity (chuffing drives
+local circulations that short-cut the asymmetric expansion funnel), and the
+operator's standing preference is the *minimum* airflow that sustains
+circulation, for efficiency, untested against any alternative. So 70 for 60 s at
+a time is acceptable, and the 60-vs-68 ramp bases put a first number on that open
+question — **weigh in and out on both**. The plateau sits at **185 degC, below
+first crack**, so the bean exotherm is not on top of the signal. The files' BT
+column is a forward simulation of the plant card and is **identical for both**,
+because the card has no fan term — which is exactly what the pair is for.
+
+**Test A gains a fan sweep and now also serves step 8.** With no beans it has no
+circulation floor and no ceiling, so `tools/gen_char_empty.py` crosses the
+original inlet steps with **six fan levels from 58 to 80** on an offset grid (no
+fan step within 30 s of an inlet step) and runs 17 minutes:
+`artisan/charstep_empty_fan.alog`. Step 8's affine `feedforward()` currently
+rests on five preheat fan steps spanning 0.81-1.11 %heat/unit; this is the same
+regression with a real lever arm. It does not replace Test C — an empty chamber
+measures the machine's heat demand against airflow, not the bean-bed loss term.
 state-plan.md § Files for the characterisation runs.
 
 **Canonical config is `artisan/airRoaster_cascadePID.aset`** (one file; the

@@ -422,10 +422,10 @@ Both are ordinary background profiles carrying the test's inlet schedule as
 
 | file | test | schedule |
 |---|---|---|
-| `artisan/charstep_empty.alog` | **A** - empty roaster, no beans | inlet 145 -> 185 at 2:00 -> 145 at 5:00 -> 185 at 7:00 -> 145 at 10:00 |
-| `artisan/chardoublet_fan57.alog` | **B/C** - loaded, sacrificial | roast 45's SV + the inlet doublet, then a plateau and a fan square wave; ramp at fan **57** |
-| `artisan/chardoublet_fan65.alog` | **B/C** - loaded, sacrificial | the same, phase-reversed; ramp at fan **65** |
-| `artisan/chardoublet_loaded.alog` | superseded | the 7-minute inlet-doublet-only original the two above are generated from |
+| `artisan/charstep_empty_fan.alog` | **A** - empty roaster, no beans, 17 min | the original inlet steps crossed with a **fan sweep 58-80** on an offset grid (`tools/gen_char_empty.py`) |
+| `artisan/chardoublet_fan60.alog` | **B/C** - loaded, sacrificial, 9 min | fan 64 to 1:30, ramp at **60**, inlet doublet 3:00-5:00, plateau, fan 70/60/70 over 6:00-9:00 |
+| `artisan/chardoublet_fan68.alog` | **B/C** - loaded, sacrificial, 9 min | the same with the ramp at **68** and the square wave phase-reversed (60/70/60) |
+| `artisan/charstep_empty.alog`, `artisan/chardoublet_loaded.alog` | superseded | the 12- and 7-minute originals the three above are generated from |
 
 **They are replayed, not hand-driven** (revised 2026-09-06; the original
 procedure was to follow the curve on slider 3 by hand). `specialeventplayback`
@@ -460,7 +460,7 @@ pressing the button. Everything after that is automatic; the operator's job is
 the fan level and DROP.
 
 **Why the DROP alarm is disabled.** `autoDRY` can mark DRY END on an *empty*
-roaster — `charstep_empty.alog` takes BT to 168 degC, past the 149 degC Phases
+roaster — the empty-run background takes BT to 168 degC, past the 149 degC Phases
 threshold — which would arm the DeltaBT auto-DROP in the middle of a step test
 and end the run through the `INLET 0` chain. Press DROP by hand on these runs.
 
@@ -807,6 +807,56 @@ be to enable the predictor, and the channel route achieves that without it. The
 1 Hz WebSocket link is not a limitation — 1 s against 17 s of deadtime — and the
 background curve authoring belongs in Artisan's Designer.
 
+#### Measure the charge temperature instead of inferring it (operator, 2026-09-06)
+
+**Charge with the fan off, read the incoming bean temperature off the BT probe's
+cooling curve, then start the fan to loft the bed and begin profiling.** The
+system is already preheated, so the beans are not scorched while they are being
+measured, and the probe starts from a known temperature — the preheat BT, ~129
+degC — so the *shape* of the fall carries the bean temperature without waiting
+for equilibrium. Once enough of the curve has been observed, the fan starts and
+the roast begins.
+
+**Why this is worth more than it looks.** `greens_temp` is `0.0` on every roast on
+record, and the charge state has had to be inferred (state-history.md § Charge
+temperature) — from the fall over 0-13 s per 100 g, which is only a *proxy*, and
+one that has to assume the plant delay to be interpretable. Charge state is the
+single largest source of run-to-run variation the strategy search found: it is
+what the `Ki` gate was invented for, what makes the handover integrator matter,
+and what § Step 9 has to be shown robust against. Measuring it directly turns a
+sensitivity study into a known input.
+
+**It also composes with something already required.** The fan has to be at ~64 to
+loft a 400 g charge and cannot start at the ramp base anyway (§ Files for the
+characterisation runs), so the charge already has a distinct fan phase. This
+would make that phase carry information instead of only lofting the bed.
+
+**What has to be settled before it is worth building.**
+
+- **Is the probe reading beans or stagnant air?** With the fan off the bed is not
+  circulating, so the heat path to the probe is contact and natural convection.
+  If the probe is not buried in the bed the curve reads chamber air and the
+  measurement is of the wrong thing. This is checkable on the bench in one
+  charge with no roast attached: fan off, watch the BT fall, then loft and see
+  whether the settled temperature is consistent with the extrapolation.
+- **How long does it take, and what does the delay cost?** Every second with the
+  fan off is a second the profile has not started and the chamber is cooling. The
+  cascade's whole clock is CHARGE, so a variable-length measure phase moves the
+  reference; either the phase is fixed-length or CHARGE is marked at loft rather
+  than at the dump.
+- **The heater must be off throughout**, which the interlock already enforces
+  below fan 48 — so this is safe by construction rather than by new code, and
+  that is worth keeping true.
+- **The free proxy already exists.** `(CHARGE_BT - BT at CHARGE+13 s) / mass`
+  costs no process change at all (§ The one adaptive idea). The new routine is
+  better but not free; the honest comparison is *measured `greens_temp` versus
+  the proxy on the same charges*, which the runs in the table can supply for
+  nothing if `greens_temp` is filled in by hand each time.
+
+**Not scheduled.** It is a firmware routine plus a change to how a roast starts,
+and it sits behind step 9. But it is the first idea on this list that would
+remove a variable rather than compensate for one.
+
 #### Still wanted, independent of the control problem
 
 **Instrument the dump lever** (already noted in § Auto-DROP detection): expose it
@@ -836,7 +886,7 @@ sacrificial and one uses no beans at all.
 | bench | flash v0.19.0, confirm the `SV`/`HT` curves, `INLET TRIM` drill (§ NEXT 14) | — | any cascade `.aset` |
 | **1** | **step 6** — the lookahead switch, *and step 7 for free* (hold fan 60 through preheat as well as the roast) | 1 real batch | `airRoaster_cascadePID_lookahead.aset` + `profile_003` |
 | bench | **step 8** — the affine `feedforward()` | — | firmware |
-| **2-4** | **steps 3-5** — Test A empty, then the two 9-minute loaded runs at fan 57 and 65, one session off one warm-up | 1 free + 2 sacrificial | `airRoaster_cascadePID_char.aset` + `charstep_empty`, `chardoublet_fan57/65` |
+| **2-4** | **steps 3-5** — Test A empty (17 min, also refits step 8's FF), then the two 9-minute loaded runs, one session off one warm-up | 1 free + 2 sacrificial | `airRoaster_cascadePID_char.aset` + `charstep_empty_fan`, `chardoublet_fan60/68` |
 | desk | refit, `roast46_refit.py --emit-plant`, `merge_inlet_base.py`, the `.aset` half, settle `--dip` | — | — |
 | **5** | **step 9** — the FF schedule with the PID as a trim | 1 real batch | new |
 
@@ -959,46 +1009,78 @@ and replays the test schedule onto slider 3 from the background — press ON, lo
 the background, START, CHARGE, and the run drives itself (§ Files for the
 characterisation runs). Run them back to back off one warm-up.
 
-**Step 3 — Test A, empty roaster. No beans, ~12 minutes, free.** Background
-`artisan/charstep_empty.alog`: inlet 145 -> **185 at 2:00** -> **145 at 5:00** ->
-**185 at 7:00** -> **145 at 10:00**. Press DROP by hand at the end and save.
+**Step 3 — Test A, empty roaster. No beans, 17 minutes, free — and it now does
+step 8's job too.** Background `artisan/charstep_empty_fan.alog`
+(`tools/gen_char_empty.py`): the original inlet sequence 145 -> **185 at 2:00** ->
+**145 at 5:00** -> **185 at 7:00** -> **145 at 10:00**, extended with **185 at
+12:00** and **145 at 15:00**, crossed against a fan sweep **64 -> 72 at 2:30 ->
+58 at 5:50 -> 80 at 9:10 -> 64 at 12:30 -> 72 at 15:50**. The two grids are
+offset so no fan step lands within 30 s of an inlet step and the regression can
+separate them. Set fan 64 before CHARGE; the schedule replays both sliders. DROP
+by hand at 17:00.
+
+With no beans there is no circulation floor and no ceiling, so this is the only
+run in the set that can sweep the fan widely — which is what **step 8** needs:
+the affine `feedforward()` currently rests on five preheat fan steps spanning
+0.81-1.11 %heat/unit, and this is the same regression with a real lever arm. It
+does **not** replace Test C; an empty chamber measures the machine's heat demand
+against airflow, not the bean-bed loss term that step 9's schedule is built
+from.
 
 **Step 4/5 — Test B and Test C, merged: two loaded 9-minute runs.** Backgrounds
-`artisan/chardoublet_fan57.alog` then `artisan/chardoublet_fan65.alog`
-(`tools/gen_char_doublet.py`). Each carries the inlet doublet over 3:00-5:00,
-an inlet hold from 5:20 that levels BT off near 185 degC, and a fan square wave
-between 57 and 65 over 6:00-9:00 — phase-reversed between the two files. Set the
-fan to the file's base level before CHARGE; the schedule replays it from there.
-**DROP by hand at 9:00** (both alarms are off in the char config). **Fill in
-`greens_temp` and weigh both batches the same.**
+`artisan/chardoublet_fan60.alog` then `artisan/chardoublet_fan68.alog`
+(`tools/gen_char_doublet.py`). Each opens at **fan 64 for circulation**, drops to
+its ramp base at 1:30, carries the inlet doublet over 3:00-5:00, holds the inlet
+from 5:20 so BT levels off near 185 degC, and runs a **fan square wave 60/70**
+over 6:00-9:00, phase-reversed between the two files. Set **fan 64** before
+CHARGE; the schedule replays every change from there. **DROP by hand at 9:00**
+(both alarms are off in the char config). **Fill in `greens_temp`, weigh both
+batches the same, and record both out-weights.**
 
 **The fan excitation is inside each batch, not only between them** (operator
 decision 2026-09-06). A between-batch comparison at n=2 confounds the fan with
 everything else that differs between two batches, and roast 46 is the standing
 proof that batch differences are not small (55 g manufactured a 30 degC error
 swing). `tools/gen_char_doublet.py` therefore extends the original doublet to
-nine minutes: **0:00-5:00 unchanged**, the inlet then stepped down to a **200 degC
-hold** so BT levels off near 185 degC, and a **fan square wave over 6:00-9:00**.
-The two files are a **phase-reversed pair over the same two levels** — batch 1
-runs the ramp at 57 and modulates 57/65/57/65, batch 2 runs the ramp at 65 and
-modulates 65/57/65/57 — so the between-batch level contrast and the within-batch
-modulation both cover the full usable window, six transitions in both directions,
-and slow drift common to the two runs cancels in the difference.
+nine minutes: **fan 64 to 1:30** for circulation, then the ramp at this batch's
+**base**, **0:00-5:00 of inlet unchanged**, the inlet then stepped down to a
+**200 degC hold** so BT levels off near 185 degC, and a **fan square wave 60/70
+over 6:00-9:00**, phase-reversed between the two files. The ramp bases are **60
+and 68**. So the level contrast lives in the ramp and the modulation lives in the
+plateau, six transitions across the pair in both directions, and slow drift
+common to the two runs cancels in the difference.
 
-Three constraints shaped it, and each is a way the run could have been wasted
+Four constraints shaped it, and each is a way the run could have been wasted
 rather than merely noisy:
 
-- **Fan floor 55.** Below `IL_FAN_FULL_DFLT` (airRoaster.ino:111) the interlock
-  stops giving the heater full authority, the heat clips, and the inner loop
-  stops holding the inlet — which is the one thing that invalidates an
-  open-loop identification run. The tool refuses a level under 57.
-- **Fan ceiling ~65.** The operator's own `Fan FULL` button is **64** and roast
-  46 held 60; a large upward excursion risks lifting beans out of the chamber.
-  That is a physical failure, not a measurement problem.
+- **A charge does not circulate at 60.** It takes ~64 to loft the bed, after
+  which 60 sustains (operator, 2026-09-06) — and roast 46's own events are that
+  pattern, not the constant 60 state-current.md had summarised: 60 at CHARGE+2 s,
+  **64 at +7 s**, 63 at +11 s, 60 at +85 s. **A constant fan from CHARGE is not a
+  schedule this roaster can run**, so both files open at 64 until 1:30. Identical
+  in both, so it differences out, and a step rather than a level, which is
+  excitation rather than a confound.
+- **Fan floor 55, and 58-59 in practice.** Below `IL_FAN_FULL_DFLT`
+  (airRoaster.ino:111) the interlock stops giving the heater full authority, the
+  heat clips, and the inner loop stops holding the inlet — the one thing that
+  invalidates an open-loop identification run. The operator's own floor is higher
+  (58-59 is the lowest reachable at all), so the schedule never goes below **60**
+  and the tool refuses under 57.
+- **There is no blow-out ceiling** (operator, 2026-09-06). The concerns above the
+  usual band are *moisture loss at higher Reynolds number* and *bed uniformity* —
+  chuffing drives local circulations that short-cut the asymmetric expansion
+  funnel — neither of which rules out **70** for 60 s at a time on a sacrificial
+  batch.
 - **Stay below first crack.** Replaying roast 45's SV to 9:00 would run BT into
   second crack. The plateau at ~185 degC keeps the fan modulation clear of the
   bean exotherm, which would otherwise sit on top of exactly the signal being
   measured. The batches come out underdeveloped rather than burnt.
+
+**The 60-vs-68 ramp bases also answer a question the operator has open
+independently**: the standing preference is the *minimum* airflow that sustains
+circulation, for efficiency, and it has never been compared against a higher one.
+**Weigh in and out on both batches.** The comparison is indicative rather than
+definitive, since the two runs share the plateau and the charge segment.
 
 The background's BT column is replaced from 3:00 by a forward simulation of the
 plant card, so it is an honest prediction rather than roast 45's closed-loop BT
@@ -1044,8 +1126,9 @@ and an alarm.
 the level does not depend on charge mass and the loop barely notices the level,
 only the step. One roast at a flat **fan 60** with no changes tests whether the
 ramp is earning its disturbance. Roast 46 already went most of the way: the fan
-was held at 60 through the whole roast and the trace shows no air-schedule
-signature at all (state-history.md § Roast 46), which is the cleanest evidence
+was held at 60 through the roast body — bar the mandatory 63-64 charge
+circulation bump over 0:09-1:26, which is not optional and cannot be designed
+out — and the trace shows no air-schedule signature at all (state-history.md § Roast 46), which is the cleanest evidence
 yet that the ramp is not earning it. What is left is a roast that keeps 60
 through preheat too.
 
