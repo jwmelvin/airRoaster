@@ -69,6 +69,27 @@ Remaining drills, roughly in commissioning order:
     wrong-key proxy → refused; mode survives a power cycle (NVS); serial
     stays fully trusted. Also confirm a keyless build (empty AUTH_KEY)
     behaves exactly as v0.17.
+14. **`INLET TRIM` (v0.19.0, second item)** — bench drill, heater cold, fan at
+    a level that clears the interlock; watch the dashboard Setpoint panel and
+    the serial log. (a) `INLET 200`, then `INLET TRIM 20` → readout `base 200.0
+    + trim +20.0 = SV 220.0`, OLED `Inlet SV:220`, and the PID `I` term must
+    carry on from where it was rather than jump — a trim is a retarget on an
+    already-engaged loop, and a retarget must never re-seed the integrator.
+    (b) `INLET TRIM -20` → effective 180. (c) bare `INLET TRIM` →
+    reports all three. (d) stop sending for 15 s → `inlet trim stale: ramping to
+    0` appears **once**, the effective SV walks back to the base at 2 °C/s
+    (10 s from ±20), and one status push lands when it arrives; confirm the base
+    is untouched and the loop is still engaged. (e) `INLET TRIM 20` again, then
+    each of `INLET OFF`, `INLET 0`, `TUNE` (then `TUNE ABORT`), and a forced
+    failsafe (unplug the inlet TC, as in item 3) → `INLET TRIM` must read
+    `trim 0.0` after every one.
+    (f) bounds: `INLET TRIM 500` clamps to +80, `INLET TRIM -500` to −80,
+    `INLET TRIM abc` replies `invalid argument` and changes nothing.
+    (g) auth: with `AUTH MODE FULL` and an unkeyed browser, **every** form —
+    `INLET TRIM 20`, `INLET TRIM 0`, and bare `INLET TRIM` — must be refused,
+    while `INLET OFF` and `INLET 0` still work. (h) regression: run a normal
+    `INLET <degC>` session start to finish without ever sending `INLET TRIM` and
+    confirm nothing differs from v0.18 behaviour.
 
 ## Artisan cascade PID — outer BT loop driving the inlet setpoint
 
@@ -2067,7 +2088,7 @@ This retires the dashboard-CSV cross-correlation that every analysis in this
 document has depended on, and beats `createEvents` (integer degC, 200-400 events
 a roast). Turn `createEvents` off once the device is flashed.
 
-#### v0.19.0, second item: `INLET TRIM` — the feedforward-plus-trim command
+#### v0.19.0, second item (done): `INLET TRIM` — the feedforward-plus-trim command
 
 Added to v0.19.0 rather than a version of its own (operator, 2026-09-06) so the
 outer-loop instrumentation and the outer-loop restructuring land in **one flash**.
@@ -2141,6 +2162,27 @@ integrator step, `INLET TRIM -20` an effective 180, `INLET TRIM` alone must
 report all three, silence for 15 s must ramp the trim out, and `INLET OFF`,
 `INLET 0` and a forced failsafe must each leave the trim at 0. No behaviour
 change on any path that does not send `INLET TRIM`.
+
+**As built (2026-09-06).** `inletBase` / `inletTrim` sit upstream of `inletSV`
+and `inletEffectiveSV()` is the single place the two are combined — every
+assignment to `inletSV` goes through it, so the pair can never disagree with the
+setpoint the loop is holding. `engageInlet()` takes the base, and its
+already-in-`MODE_INLET` early return is where the recompute lives; the
+bumpless-transfer seed on the manual→inlet edge uses the effective setpoint.
+`clearInletTrim()` is called from `INLET OFF`, `INLET <= 0`, `inletFailsafe()`
+and `startTune()`; the boot value is the static 0. The staleness ramp sits in
+`controlStep()` after the `dt` clamp and before the error is formed, logs once
+via `logError()`, and broadcasts status once when the trim reaches 0 rather than
+on every 4 Hz tick. `cmdTier()` returns `TIER_DRIVE` for `a1 == "TRIM"`
+explicitly (the fall-through already did, since `"TRIM"` does not parse as a
+float). Buffers: status push 176 → 224 (worst case 168), `STAT` 112 → 176
+(worst case 127), the new `inlet` report 128 (worst case 86). Dashboard gains a
+`base + trim = SV` readout and a trim entry/0/Read row in the Setpoint panel,
+fed by the status push (no connect-time `INLET TRIM` prefill — that command is
+`TIER_DRIVE`, and the device already broadcasts status on connect). README:
+command table, tunables table, status-push field table, `STAT`, the auth safe
+subset, and a new § Base + trim. **Bench drill: § NEXT item 14** — the
+acceptance list above has not been run on hardware.
 
 #### The one big idea, gated on the characterisation runs
 

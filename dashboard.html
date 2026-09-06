@@ -194,9 +194,19 @@
   <div class="tune-grid" style="margin-top:0.8em">
     <div>
       <h3>Setpoint</h3>
-      °C <input class="num" id="svIn">
+      base °C <input class="num" id="svIn">
       <button class="primary" onclick="sendWith('INLET','svIn')">INLET</button>
-      <button onclick="send('INLET OFF')">OFF</button>
+      <button onclick="send('INLET OFF')">OFF</button><br>
+      trim °C <input class="num" id="svTrim">
+      <button onclick="sendWith('INLET TRIM','svTrim')">TRIM</button>
+      <button onclick="send('INLET TRIM 0')">0</button>
+      <button onclick="send('INLET TRIM')">Read</button>
+      <div class="terms" style="margin-top:0.5em">
+        base <span id="inBase">–</span> + trim <span id="inTrim">–</span>
+        = SV <span id="inEff">–</span> °C
+      </div>
+      <div class="kv">base + trim is clamped to 0–300 °C; trim is bounded ±80 °C
+        and ramps out at 2 °C/s after 15 s with no TRIM update</div>
     </div>
     <div style="flex:2 1 420px">
       <h3>Manual</h3>
@@ -438,6 +448,9 @@ function connect() {
     ws.send("CURVE"); // prefill the curve selectors
     ws.send("COOL");  // prefill the cooldown panel
     ws.send("AMB");   // prefill the ambient panel
+    // No INLET TRIM prefill: the device broadcasts status on connect and that
+    // already carries inBase/inTrim/inSV. INLET TRIM is TIER_DRIVE, so asking
+    // for it here would only log an "AUTH required" line in FULL mode.
     ws.send("AUTH");  // report key/mode state (the challenge, if any, is pushed unprompted)
     authProbeStart(); // badge shows "no reply" if the device never answers AUTH
   };
@@ -529,8 +542,10 @@ function handleMessage(raw) {
       case "log":    cls = "log";    break;
       case "status": cls = "status"; applyStatus(obj.data); break;
       case "telem":  cls = "telem";  applyTelem(obj.data);  break;
-      case "tune": case "pid": case "ff": case "stat": case "il": case "curve": case "cool": case "amb": case "auth":
+      case "tune": case "pid": case "ff": case "stat": case "il": case "curve": case "cool": case "amb": case "auth": case "inlet":
         cls = "report";
+        if (obj.pushMessage === "inlet") applyInlet(obj.data);
+        if (obj.pushMessage === "stat")  applyInlet(obj.data);
         if (obj.pushMessage === "tune")  applyTune(obj.data);
         if (obj.pushMessage === "pid")   applyPid(obj.data);
         if (obj.pushMessage === "ff")    applyFF(obj.data);
@@ -545,9 +560,26 @@ function handleMessage(raw) {
   logLine(raw, cls);
 }
 
+// The setpoint split (INLET TRIM). It arrives three ways — the status push
+// (inBase/inTrim/inSV), the STAT report (same keys), and the INLET TRIM report
+// (base/trim/sv) — so accept either spelling and render once.
+function applyInlet(d) {
+  if (!d) return;
+  const base = d.base !== undefined ? d.base : d.inBase;
+  const trim = d.trim !== undefined ? d.trim : d.inTrim;
+  const eff  = d.sv   !== undefined ? d.sv   : d.inSV;
+  if (base === undefined || trim === undefined) return;
+  document.getElementById("inBase").textContent = Number(base).toFixed(1);
+  document.getElementById("inTrim").textContent =
+    (trim > 0 ? "+" : "") + Number(trim).toFixed(1);
+  document.getElementById("inEff").textContent =
+    eff === undefined ? "–" : Number(eff).toFixed(1);
+}
+
 function applyStatus(d) {
   if (!d) return;
   setMode(d.mode, d.inSV);
+  applyInlet(d);
   setLevels(d.heat, d.heatReq, d.fan, d.ilCap, d.ilSoft);
   if (d.cool !== undefined) {
     document.getElementById("coolText").textContent =

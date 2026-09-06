@@ -55,6 +55,9 @@ If `secrets.h.example` does not exist yet, create `secrets.h` manually:
 | `IL_HEAT_AT_MIN_DFLT` | `30` | Default heat cap (%) when fan is exactly at the fan minimum (soft mode) |
 | `WDT_TIMEOUT_MS` | `8000` | Task watchdog: panic→reset if the loop hangs this long |
 | `INLET_PV_STALE_MS` | `3000` | Closed loop / tune failsafe if the inlet reading is older than this |
+| `INLET_TRIM_MAX_C` | `80` | Bound on the `INLET TRIM` offset (°C, symmetric) |
+| `INLET_TRIM_STALE_MS` | `15000` | No `INLET TRIM` for this long → ramp the trim out |
+| `INLET_TRIM_DECAY_CPS` | `2` | Rate the stale trim ramps toward 0 (°C/s) |
 | `INLET_OVERTEMP_C` | `350` | Closed loop failsafe above this inlet temperature (°C) — overshoot margin above the 300 °C setpoint max |
 | `COOL_FAN_OFF_C` | `70` | Cooldown guard: the fan may stop only after the inlet stays below this (°C) — see [Cooldown guard](#cooldown-guard) |
 | `COOL_DWELL_S_DFLT` | `30` | Default dwell (s) the inlet must stay below `COOL_FAN_OFF_C` before a deferred fan level is applied (runtime-set via `COOL DWELL`, NVS-persisted) |
@@ -149,8 +152,10 @@ section, so anything the dashboard does can also be typed by hand.
 - **Inlet control chart** — rolling strip chart of IN, SV, and BT against
   heat/fan % , fed by the telemetry push; selectable window (1–60 min), pause,
   BT toggle, CSV export of the buffer.
-- **Setpoint / Manual** — engage or release the closed loop; direct heat and
-  fan entry with fan presets and ±1 % nudges.
+- **Setpoint / Manual** — engage or release the closed loop; set the base
+  setpoint and the [outer-loop trim](#base--trim-inlet-trim) separately, with a
+  `base + trim = SV` readout that follows the status push; direct heat and fan
+  entry with fan presets and ±1 % nudges.
 - **Tuning panels** — PID editor (prefilled from device reports); feedforward
   (set/read `ffK`, seed ambient, through-origin CAL, off); step test (start
   `TUNE`, then apply the tight or conservative gain suggestion); and **FF step
@@ -224,9 +229,11 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 | `OT2 <value>` | `OT2 50` | Set fan level (0–100%). A level below the cooldown fan minimum while the inlet is ≥ 70 °C is **deferred**, not obeyed — see [Cooldown guard](#cooldown-guard) |
 | `OT2 UP` | `OT2 UP` | Increase fan by `DUTY_STEP` |
 | `OT2 DOWN` | `OT2 DOWN` | Decrease fan by `DUTY_STEP` |
-| `INLET <degC>` | `INLET 165` | Set inlet setpoint and engage closed-loop control (see [Inlet temperature control](#inlet-temperature-control)) |
+| `INLET <degC>` | `INLET 165` | Set the **base** inlet setpoint and engage closed-loop control (see [Inlet temperature control](#inlet-temperature-control)) |
 | `INLET 0` | `INLET 0` | No setpoint: disengage closed-loop control and set heat to 0 (cooldown) |
 | `INLET OFF` | `INLET OFF` | Disengage closed-loop control; heat holds at its current level |
+| `INLET TRIM <degC>` | `INLET TRIM 12.5` | Set the outer-loop **trim** added to the base setpoint (±80 °C); see [Base + trim](#base--trim-inlet-trim) |
+| `INLET TRIM` | `INLET TRIM` | Report the base, the trim, and the effective setpoint (`inlet` push message) |
 | `PID` | `PID` | Report current PID gains, setpoint, and mode |
 | `PID <kp ki kd>` | `PID 1.5 0.05 0` | Set PID gains live (for manual tuning) |
 | `TUNE` | `TUNE` | Run an open-loop step test and suggest PI gains (see [Tuning](#tuning)) |
@@ -239,7 +246,7 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 | `FF AMB` | `FF AMB` | Seed ambient from the MAX31855 cold-junction temperature (board ambient; the enclosure runs a little warm) |
 | `FF CAL` | `FF CAL` | Auto-calibrate `ffK` from the current (steady) operating point |
 | `FF OFF` | `FF OFF` | Disable feedforward (`ffK = 0`) |
-| `STAT` | `STAT` | Report and reset the load counters: worst control-step late-fire and worst single loop pass (µs) |
+| `STAT` | `STAT` | Report and reset the load counters: worst control-step late-fire and worst single loop pass (µs). Also carries the setpoint split (`inBase`, `inTrim`, `inSV`) |
 | `TELEM <ms>` | `TELEM 500` | Set the telemetry push period (100–10000 ms); `TELEM OFF` disables; `TELEM` reports |
 | `IL` | `IL` | Report interlock mode, limits, and current heat cap (`il` push message) |
 | `IL HARD` / `IL SOFT` | `IL SOFT` | Set the interlock mode explicitly (see [Fan interlock](#fan-interlock)) |
@@ -290,7 +297,7 @@ All unsolicited messages use Artisan's push message envelope so any client can u
 **Status broadcast** (sent to all clients on any state change, and to new clients on connect):
 
 ```json
-{"pushMessage": "status", "data": {"heat": 60, "heatReq": 60, "fan": 50, "ilCap": 100, "ilSoft": false, "mode": "manual", "inSV": 0.0, "cool": false}}
+{"pushMessage": "status", "data": {"heat": 60, "heatReq": 60, "fan": 50, "ilCap": 100, "ilSoft": false, "mode": "manual", "inSV": 0.0, "inBase": 0.0, "inTrim": 0.0, "cool": false}}
 ```
 
 | `data` field | Description |
@@ -301,7 +308,9 @@ All unsolicited messages use Artisan's push message envelope so any client can u
 | `ilCap` | Current heat ceiling imposed by the interlock (0–100%); `0` means heat is fully blocked, `100` means unrestricted |
 | `ilSoft` | `true` if soft (linear) interlock mode is active; `false` for hard (binary) mode |
 | `mode` | `"manual"` (heat set directly by `OT1`), `"inlet"` (heat modulated by the closed loop), or `"tune"` (a step test is running) |
-| `inSV` | Inlet setpoint (°C) in use when `mode` is `"inlet"` |
+| `inSV` | **Effective** inlet setpoint (°C) in use when `mode` is `"inlet"` — i.e. `clamp(inBase + inTrim)` |
+| `inBase` | Base setpoint (°C) as last set by `INLET <degC>` (see [Base + trim](#base--trim-inlet-trim)) |
+| `inTrim` | Outer-loop trim (°C) as last set by `INLET TRIM <degC>`; 0 unless a client is driving it |
 | `cool` | `true` while the cooldown guard is holding the fan up with a deferred level pending (see [Cooldown guard](#cooldown-guard)) |
 
 **Telemetry broadcast** (periodic, default 1 Hz, 2 Hz during a tune — the
@@ -369,8 +378,11 @@ explicit `AUTH MODE` choice persists and overrides the default thereafter:
 reads (`LOG`, `STAT`, `TELEM`, bare `PID`/`FF`/`IL`/`COOL`/`CURVE`/`AMB`,
 `getData`) plus the safety-*increasing* commands `OT1 0`, `INLET OFF`,
 `INLET 0`, `COOL ON`, and `TUNE ABORT`. Any device on the network can stop the
-roaster; none can start it. `AUTH MODE` itself always requires auth when a key
-exists, so enforcement can be raised but never lowered by an unkeyed client.
+roaster; none can start it. **`INLET TRIM` is *not* in that subset — no form
+of it, `INLET TRIM 0` included**: the trim can be negative, so removing it
+*raises* the setpoint, which makes it a driving command however it looks.
+`AUTH MODE` itself always requires auth when a key exists, so enforcement can
+be raised but never lowered by an unkeyed client.
 
 **Key management** (`tools/auth_key.py`, no dependencies). The secret lives in
 one place — `#define AUTH_KEY` in the gitignored `secrets.h` — and every other
@@ -510,7 +522,7 @@ switchable mode layered on top of manual heat control.
 | `inlet` | Heat is modulated by a PI(D) loop to hold the inlet setpoint |
 
 - `INLET <degC>` engages `inlet` mode (bumpless — no heat step on engage) and
-  sets the setpoint. Sending `INLET` again just retargets the setpoint and keeps
+  sets the **base** setpoint. Sending `INLET` again just retargets and keeps
   the integrator, so a gradually-changing setpoint during a roast (e.g. driven
   from an Artisan background profile) does not reset the loop.
 - `INLET 0` (or any setpoint ≤ 0) means "no setpoint": returns to `manual`
@@ -519,6 +531,53 @@ switchable mode layered on top of manual heat control.
   the loop railed with heat pinned at 0.
 - `INLET OFF` returns to `manual`, holding heat at its current level.
 - `OT1 <value>` is an instant manual override (drops back to `manual`).
+
+#### Base + trim (`INLET TRIM`)
+
+The setpoint the loop holds is the sum of **two independently commanded
+numbers**, so an outer loop can hand the firmware a planned trajectory and a
+correction on it separately:
+
+```
+INLET <degC>        sets the base   (unchanged command, unchanged semantics)
+INLET TRIM <degC>   sets the trim   (±80 °C, INLET_TRIM_MAX_C)
+INLET TRIM          reports base, trim, and the effective setpoint
+effective SV = clamp(base + trim, INLET_SV_MIN_C, INLET_SV_MAX_C)
+```
+
+Why: driven as an *absolute* setpoint, an outer loop's integrator has to supply
+the whole operating point, so it ramps for the entire roast and leaves a
+standing tracking error behind it. With a precomputed inlet schedule replayed
+open-loop as the base, the outer loop only has to trim — the operating point is
+feedforward and the integrator sits still. Artisan can drive the two on
+separate custom-event sliders (background event playback is per event type),
+which is what makes the split worth having on the device rather than in the
+client's arithmetic.
+
+Everything downstream of the setpoint sees only the effective value: the
+control law, the feedforward, the OLED, the `getData` `SV` node, and the `inSV`
+status field are unchanged. `inBase` and `inTrim` are additional status fields
+(also carried by `STAT` and the `INLET TRIM` report).
+
+- The trim **does not engage the loop** and does not touch the integrator — it
+  is half a setpoint, not a mode. Sent in `manual` it just parks a value the
+  next `INLET` will pick up.
+- The trim **returns to 0** on `INLET OFF`, on `INLET 0` (or any base ≤ 0), on
+  an inlet failsafe, on entry to `tune` mode, and at boot. A stale trim is a
+  stuck heat offset, so it is never carried across a disengage.
+- **Staleness ramp.** In `inlet` mode, a trim not refreshed for
+  `INLET_TRIM_STALE_MS` (15 s, against a ~1 Hz outer loop) is ramped toward 0
+  at `INLET_TRIM_DECAY_CPS` (2 °C/s) and logged once. The base keeps running,
+  so a dead outer loop degrades the roaster to **open-loop feedforward**, not
+  to no heat — that is the intended degraded mode, and it is why the ramp is
+  gentle rather than a snap. It is *not* the same as a safe direction: the trim
+  may be negative, in which case decaying it raises the effective setpoint.
+  What bounds that is the setpoint clamp and the failsafes below, not the sign
+  of the decay. **Staleness of the *base* is deliberately not handled** — the
+  firmware has always held the last `INLET` indefinitely, and changing that is
+  a separate roast-safety decision.
+- The trim is bounded **on the device**, not only in the client's slider
+  mapping; out-of-range values are clamped, exactly as `INLET` clamps its own.
 
 **Failsafe.** The loop lets go — drops to `manual` at **heat 0** and logs/
 broadcasts an error — if the inlet reading goes stale (no accepted sample for

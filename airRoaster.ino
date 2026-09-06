@@ -193,6 +193,15 @@
 #define PID_D_FILTER_TC     1.0f    // derivative low-pass time constant (s); 0 = off
 #define PID_KAW             0.1f    // anti-windup back-calculation gain (1/s)
 
+// Inlet setpoint = base + trim (INLET / INLET TRIM). The base is an open-loop
+// feedforward schedule replayed by Artisan; the trim is what an outer loop
+// drives on top of it. Bounded on the device, never only in the client's
+// mapping — an outer loop that rails must not be able to command an arbitrary
+// setpoint offset.
+#define INLET_TRIM_MAX_C     80.0f    // |trim| bound (°C)
+#define INLET_TRIM_STALE_MS  15000    // no INLET TRIM for this long => ramp it out
+#define INLET_TRIM_DECAY_CPS 2.0f     // ramp rate toward 0 while stale (°C/s)
+
 // Open-loop step-test autotune (TUNE command). Holds the current heat to measure
 // a baseline, applies a heat step, records the inlet response, fits a first-order-
 // plus-dead-time (FOPDT) model, and suggests PI gains (SIMC/lambda). Run it with
@@ -302,6 +311,18 @@ volatile bool flagDisplayUpdate;
 enum ctrlMode_t { MODE_MANUAL, MODE_INLET, MODE_TUNE };
 volatile ctrlMode_t ctrlMode = MODE_MANUAL;
 volatile float       inletSV  = 0.0f;   // inlet setpoint (°C), valid in MODE_INLET
+
+// The setpoint is the sum of two independently commanded numbers, so an outer
+// loop can hand the firmware a feedforward schedule (the base, INLET <degC>,
+// replayed open-loop) and a bounded correction on top of it (the trim,
+// INLET TRIM <degC>). inletSV above stays the *effective* setpoint — the one
+// the control law, the feedforward, the OLED, the status push and the getData
+// SV node all use — and is recomputed from the pair by inletEffectiveSV().
+// Everything downstream of it is unaware the split exists.
+volatile float inletBase = 0.0f;   // open-loop base setpoint (°C), set by INLET
+volatile float inletTrim = 0.0f;   // outer-loop trim (°C), ±INLET_TRIM_MAX_C
+uint32_t inletTrimMs        = 0;       // millis() of the last INLET TRIM command
+bool     inletTrimStaleLog  = false;   // "ramping out" logged once per stale run
 
 // Autotune progress + last suggestion. Declared here (ahead of processCommand,
 // which starts/aborts/applies a tune) rather than beside the tune internals.
@@ -481,7 +502,9 @@ void initSensors();
 void updateSensors();
 void serviceRtd(Max31865Direct &dev, SensorFaultState &st, float &out, const char *name);
 float feedforward(float sv, uint8_t fan);
-void  engageInlet(float sv);
+float inletEffectiveSV();
+void  clearInletTrim();
+void  engageInlet(float base);
 void  controlStep(uint32_t dtMs);
 void  startTune(float deltaPct);
 void  abortTune(const char *why);
@@ -1169,9 +1192,11 @@ static const char* modeName() {
 }
 
 void broadcastStatus() {
-    char buf[176];
+    // inSV is the *effective* setpoint; inBase/inTrim are the two numbers it is
+    // the sum of (see INLET TRIM). Buffer 176 -> 224 for the added pair.
+    char buf[224];
     snprintf(buf, sizeof(buf),
-             "{\"pushMessage\":\"status\",\"data\":{\"heat\":%u,\"heatReq\":%u,\"fan\":%u,\"ilCap\":%u,\"ilSoft\":%s,\"mode\":\"%s\",\"inSV\":%.1f,\"cool\":%s}}",
+             "{\"pushMessage\":\"status\",\"data\":{\"heat\":%u,\"heatReq\":%u,\"fan\":%u,\"ilCap\":%u,\"ilSoft\":%s,\"mode\":\"%s\",\"inSV\":%.1f,\"inBase\":%.1f,\"inTrim\":%.1f,\"cool\":%s}}",
              heatLevel,
              requestedHeatLevel,
              fanLevel,
@@ -1179,6 +1204,8 @@ void broadcastStatus() {
              interlockSoft ? "true" : "false",
              modeName(),
              inletSV,
+             inletBase,
+             inletTrim,
              coolPending ? "true" : "false");
     webSocket.broadcastTXT(buf);
 }
@@ -1798,6 +1825,13 @@ static uint8_t cmdTier(const String &kw, String tokens[], int n) {
     }
     if (kw == "INLET") {
         if (a1 == "OFF") return TIER_OPEN;                  // disengage
+        // Every form of INLET TRIM drives, including "INLET TRIM 0": removing a
+        // *negative* trim raises the effective setpoint, so it is not
+        // safety-increasing the way INLET 0 / INLET OFF are and does not get
+        // their exemption. This is what the fall-through below would do anyway
+        // (a1 = "TRIM" does not parse as a float) — stated so the reasoning
+        // survives a later edit.
+        if (a1 == "TRIM") return TIER_DRIVE;
         float v;
         if (n >= 2 && parseFloatStrict(tokens[1], v) && v <= 0.0f)
             return TIER_OPEN;                               // INLET 0: manual + heat 0
@@ -1980,15 +2014,48 @@ void processCommand(String cmd, int8_t clientNum) {
         Serial.println(b);
 
     } else if (kw == "INLET") {
-        // INLET <degC> — set inlet setpoint and engage closed-loop control.
-        // INLET 0        — no setpoint: disengage and drop heat to 0.
-        // INLET OFF      — disengage; heat holds at its current level.
+        // INLET <degC>      — set the base setpoint and engage closed-loop control.
+        // INLET 0           — no setpoint: disengage and drop heat to 0.
+        // INLET OFF         — disengage; heat holds at its current level.
+        // INLET TRIM <degC> — set the outer-loop trim on top of the base.
+        // INLET TRIM        — report base, trim and the effective setpoint.
         if (n < 2) return;
         String upper = tokens[1];
         upper.toUpperCase();
+        if (upper == "TRIM") {
+            // Deliberately does NOT engage the loop and does NOT touch the
+            // integrator: the trim is one half of a setpoint, not a mode.
+            // Applied in MODE_MANUAL it just parks a value the next INLET will
+            // pick up — and since the staleness clock starts here, a trim that
+            // sat unrefreshed through a manual excursion is ramped straight
+            // back out once the loop closes.
+            if (n >= 3) {
+                float tv;
+                if (!parseFloatStrict(tokens[2], tv)) {
+                    replyBadArg(clientNum, "INLET TRIM");
+                    return;
+                }
+                if (tv < -INLET_TRIM_MAX_C) tv = -INLET_TRIM_MAX_C;
+                if (tv >  INLET_TRIM_MAX_C) tv =  INLET_TRIM_MAX_C;
+                inletTrim         = tv;
+                inletTrimMs       = millis();
+                inletTrimStaleLog = false;
+                if (ctrlMode == MODE_INLET) inletSV = inletEffectiveSV();
+                flagDisplayUpdate = true;
+                broadcastStatus();
+            }
+            char b[128];
+            snprintf(b, sizeof(b),
+                "{\"pushMessage\":\"inlet\",\"data\":{\"base\":%.1f,\"trim\":%.1f,\"sv\":%.1f,\"mode\":\"%s\"}}",
+                inletBase, inletTrim, inletEffectiveSV(), modeName());
+            if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
+            Serial.println(b);
+            return;
+        }
         if (upper == "OFF") {
             if (tunePhase != TUNE_IDLE) abortTune("inlet override");
             ctrlMode = MODE_MANUAL;   // leave requestedHeatLevel where it is
+            clearInletTrim();
         } else {
             float sv;
             if (!parseFloatStrict(tokens[1], sv)) {
@@ -2001,6 +2068,7 @@ void processCommand(String cmd, int8_t clientNum) {
                 // 0 — the loop would otherwise rail P negative and pin heat
                 // at 0 while still "engaged". Operator intent is cooldown.
                 ctrlMode = MODE_MANUAL;
+                clearInletTrim();
                 requestedHeatLevel = 0;
                 applyInterlock();
             } else {
@@ -2036,11 +2104,15 @@ void processCommand(String cmd, int8_t clientNum) {
     } else if (kw == "STAT") {
         // Report the control-cadence jitter watch (worst late-fire, µs) and the
         // worst single loop() pass, then zero both. Evidence on whether the
-        // cooperative loop ever needs a real core.
-        char b[112];
+        // cooperative loop ever needs a real core. Carries the setpoint split
+        // too (base/trim/effective), so one line answers "what is the loop
+        // doing" at the bench without a second command.
+        char b[176];
         snprintf(b, sizeof(b),
-            "{\"pushMessage\":\"stat\",\"data\":{\"ctrlMaxJitterUs\":%lu,\"loopMaxUs\":%lu}}",
-            (unsigned long)ctrlMaxJitterUs, (unsigned long)loopMaxUs);
+            "{\"pushMessage\":\"stat\",\"data\":{\"ctrlMaxJitterUs\":%lu,\"loopMaxUs\":%lu,"
+            "\"inBase\":%.1f,\"inTrim\":%.1f,\"inSV\":%.1f}}",
+            (unsigned long)ctrlMaxJitterUs, (unsigned long)loopMaxUs,
+            inletBase, inletTrim, inletEffectiveSV());
         if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
         Serial.println(b);
         ctrlMaxJitterUs = 0;
@@ -2378,23 +2450,54 @@ float feedforward(float sv, uint8_t fan) {
     return ff;
 }
 
+// The effective inlet setpoint: base + trim, clamped to the same plausibility
+// window a bare INLET has always been clamped to. Single definition — every
+// place that assigns inletSV goes through here, so base and trim can never
+// disagree with the setpoint the loop is actually holding.
+float inletEffectiveSV() {
+    float sv = inletBase + inletTrim;
+    if (sv < INLET_SV_MIN_C) sv = INLET_SV_MIN_C;
+    if (sv > INLET_SV_MAX_C) sv = INLET_SV_MAX_C;
+    return sv;
+}
+
+// Drop the trim. A stale trim is a stuck heat offset, so it is cleared
+// everywhere MODE_INLET is left or the loop lets go — not carried across into
+// the next engage. The base is deliberately left alone: it is the schedule,
+// and the next INLET rewrites it anyway.
+void clearInletTrim() {
+    inletTrim = 0.0f;
+    inletTrimStaleLog = false;
+    // Keep the reported setpoint consistent with the pair it is defined from.
+    // Only ever called on a transition out of MODE_INLET, where inletSV is no
+    // longer read by anything — and with no trim in play this is a no-op, so
+    // no path that never sends INLET TRIM sees a different number.
+    inletSV = inletEffectiveSV();
+}
+
 // Engage closed-loop control with a bumpless transfer: seed the integrator so
 // the first output equals the current heat level (u = Kp*e + iTerm + FF must
 // equal heatLevel  =>  iTerm = heatLevel - Kp*e - FF). No step on engage.
-void engageInlet(float sv) {
-    if (sv < INLET_SV_MIN_C) sv = INLET_SV_MIN_C;
-    if (sv > INLET_SV_MAX_C) sv = INLET_SV_MAX_C;
+// The argument is the *base* setpoint; the effective one adds the trim.
+void engageInlet(float base) {
+    if (base < INLET_SV_MIN_C) base = INLET_SV_MIN_C;
+    if (base > INLET_SV_MAX_C) base = INLET_SV_MAX_C;
+    inletBase = base;
 
     // Already closed-loop: just retarget and keep the integrator. The setpoint
     // changes gradually during a roast (Artisan drives INLET repeatedly), so
-    // re-seeding here would reset integral action on every update.
-    if (ctrlMode == MODE_INLET) { inletSV = sv; return; }
+    // re-seeding here would reset integral action on every update. This is also
+    // the one place the base half of the pair moves, so it is where the
+    // effective setpoint is recomputed.
+    if (ctrlMode == MODE_INLET) { inletSV = inletEffectiveSV(); return; }
 
     // Manual -> inlet: bumpless transfer. Seed the integrator so the first
     // output equals the current heat level (u = Kp*e + iTerm + FF == heatLevel).
-    inletSV = sv;
-    float e = sv - inTemp;
-    pidITerm  = (float)heatLevel - pidKp * e - feedforward(sv, fanLevel);
+    // Seeded against the *effective* setpoint — seeding against the base would
+    // put a Kp*trim step into the integrator the moment the loop closed.
+    inletSV = inletEffectiveSV();
+    float e = inletSV - inTemp;
+    pidITerm  = (float)heatLevel - pidKp * e - feedforward(inletSV, fanLevel);
     pidPvPrev = inTemp;
     pidDFilt  = 0.0f;
     ctrlPrimed = true;
@@ -2407,6 +2510,7 @@ void engageInlet(float sv) {
 // plausible-looking inTemp, and the integrator would wind against it forever.
 static void inletFailsafe(const char *why) {
     ctrlMode = MODE_MANUAL;
+    clearInletTrim();
     requestedHeatLevel = 0;
     applyInterlock();
     char msg[48];
@@ -2430,6 +2534,34 @@ void controlStep(uint32_t dtMs) {
     float dt = dtMs * 0.001f;
     if (dt <= 0.0f) return;
     if (dt > 1.0f) dt = 1.0f;   // clamp a pathological gap (e.g. post-stall)
+
+    // Trim staleness. The outer loop refreshes INLET TRIM at ~1 Hz; if it stops
+    // (Artisan quit, link dropped, proxy died) the trim is ramped out so the
+    // roaster falls back to the open-loop base schedule instead of holding an
+    // indefinite offset that nobody is still computing.
+    //
+    // Toward zero is the *intended degraded mode*, which is not the same as
+    // "safe": the base keeps running, and because the trim can be negative,
+    // decaying it can raise the effective setpoint. What bounds that is the
+    // clamp in inletEffectiveSV() and the failsafes above, not the direction of
+    // the decay. The ramp is gentle for the same reason — a roast in progress
+    // should degrade to feedforward, not step. Command staleness on the *base*
+    // is deliberately not handled here; the firmware has always held the last
+    // INLET indefinitely and changing that is a separate safety decision.
+    if (inletTrim != 0.0f && (millis() - inletTrimMs) > INLET_TRIM_STALE_MS) {
+        if (!inletTrimStaleLog) {
+            logError("inlet trim stale: ramping to 0");
+            inletTrimStaleLog = true;
+        }
+        float step = INLET_TRIM_DECAY_CPS * dt;
+        if (inletTrim > 0.0f) inletTrim = (inletTrim >  step) ? inletTrim - step : 0.0f;
+        else                  inletTrim = (inletTrim < -step) ? inletTrim + step : 0.0f;
+        inletSV = inletEffectiveSV();
+        // Announce the end state only. The ramp itself runs at the control
+        // cadence and telemetry already carries the moving sv; broadcasting
+        // every tick would be four status pushes a second for 40 s.
+        if (inletTrim == 0.0f) { flagDisplayUpdate = true; broadcastStatus(); }
+    }
 
     float pv = inTemp;
     if (!ctrlPrimed) { pidPvPrev = pv; ctrlPrimed = true; }  // belt-and-suspenders
@@ -2615,6 +2747,7 @@ void startTune(float deltaPct) {
     tuneCount    = 0;
     tunePhase    = TUNE_BASELINE;
     ctrlMode     = MODE_TUNE;
+    clearInletTrim();   // the step test owns heat now; no trim survives into it
     flagDisplayUpdate = true;
     broadcastStatus();
 }
@@ -2808,7 +2941,49 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
-// v0.19.0 2026-09-02  Artisan getData gains SV and HT: the commanded inlet
+// v0.19.0 2026-09-06  (second item) INLET TRIM: the inlet setpoint becomes the
+//                     sum of two independently commanded numbers. INLET <degC>
+//                     now sets a *base* — unchanged command, unchanged
+//                     semantics — which an outer loop replays open-loop as a
+//                     precomputed feedforward schedule, and the new
+//                     INLET TRIM <degC> sets a bounded correction on top of it
+//                     (±INLET_TRIM_MAX_C, 80 °C). The firmware adds them:
+//                     effective SV = clamp(base + trim, INLET_SV_MIN_C,
+//                     INLET_SV_MAX_C). Bare INLET TRIM reports all three.
+//                     Why: as an absolute setpoint the outer loop's integrator
+//                     has to supply the entire operating point, which is what
+//                     makes it ramp all roast and leaves a standing tracking
+//                     error; a feedforward base plus a trim removes that job
+//                     from the integrator instead of rebalancing it.
+//                     inletSV keeps its meaning — the *effective* setpoint — so
+//                     controlStep(), feedforward(), the OLED, the status push
+//                     and the getData SV node are untouched; inletBase and
+//                     inletTrim sit upstream of it and inletEffectiveSV() is
+//                     the single place the two are combined. The bumpless-
+//                     transfer seed in engageInlet() uses the effective
+//                     setpoint, and the early return for an already-engaged
+//                     loop (which must not re-seed the integrator on a
+//                     retarget) is where the recompute lives.
+//                     The trim is cleared on INLET OFF, on INLET <= 0, in
+//                     inletFailsafe(), on entry to MODE_TUNE and at boot — a
+//                     stale trim is a stuck heat offset. In MODE_INLET, a trim
+//                     unrefreshed for INLET_TRIM_STALE_MS (15 s, against a
+//                     1 Hz outer loop) is ramped toward 0 at
+//                     INLET_TRIM_DECAY_CPS (2 °C/s) and logged once: the base
+//                     keeps running, so the roaster degrades to open-loop
+//                     feedforward rather than to no heat. That is the intended
+//                     degraded mode, not a "safe" direction — the trim can be
+//                     negative, so decaying it can raise the setpoint, and what
+//                     bounds that is the SV clamp and the existing failsafes.
+//                     Command staleness on the *base* is deliberately out of
+//                     scope. All forms of INLET TRIM are TIER_DRIVE, including
+//                     INLET TRIM 0 (removing a negative trim raises the
+//                     setpoint, so it gets no INLET 0 / INLET OFF exemption).
+//                     base/trim join the status push (buffer 176 -> 224) and
+//                     the STAT report (112 -> 176). Inert until a client sends
+//                     INLET TRIM: nothing on the existing cascade path changes.
+// v0.19.0 2026-09-02  (first item) Artisan getData gains SV and HT: the
+//                     commanded inlet
 //                     setpoint (0 when not in MODE_INLET) and the applied heat
 //                     duty. Map them to spare WebSocket channels so the outer
 //                     loop's output and the inner loop's effort land in the

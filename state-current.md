@@ -99,15 +99,16 @@ firmware. `main` is at **v0.18.0** (2026-08-23): `feature/auth-proxy` (command
 authentication — challenge–response sessions + Artisan signing proxy) was
 fast-forwarded into `main`; its on-roaster validation is still pending
 (state-plan.md § NEXT item 13, as is the ambient drill, item 12). Current
-working branch is **`feature/artisan-pid`** (Artisan configuration + docs only
-— no firmware change). Note that `feature/vision-uvc-probe` holds two commits
+working branch is **`feature/artisan-pid`**, which now also carries **v0.19.0**
+(unflashed): the `SV`/`HT` `getData` nodes and `INLET TRIM`, on top of the
+Artisan configuration and documentation work it started as. Note that `feature/vision-uvc-probe` holds two commits
 that exist on no other branch and have never been pushed. Start each new effort
 on a fresh branch off `main`. Commit per phase with
 a message naming the phase. The user's Artisan config churn (`artisan/*.aset`,
 `*.alog`) may be present in the working tree — never sweep it into a firmware
 commit; stage files explicitly.
 
-## Active effort (2026-09-05)
+## Active effort (2026-09-06)
 
 **Artisan cascade PID** (`feature/artisan-pid`, off `main` at v0.18.0).
 Artisan's software PID becomes the **outer** loop of a cascade: PV = BT against
@@ -530,11 +531,33 @@ command — **`INLET TRIM`, now folded into v0.19.0** so the outer-loop
 instrumentation and the outer-loop restructuring land in one flash (spec in
 state-plan.md § Firmware now in scope; it is inert until Artisan is
 reconfigured) — and **steps 3-5 first**, because the schedule is exactly `1/a`
-and the loss curve. That is new **runbook step 9**, and it is why the characterisation
+and the loss curve. **The firmware half is written (2026-09-06) and v0.19.0 is
+now complete and unflashed** — see the paragraph below. That is new **runbook step 9**, and it is why the characterisation
 runs have recovered their priority. The relative-setpoint variant
 (`INLET = BT + trim`) was tried and is **worse** for a principled reason: it turns
 the plant into an integrator with 13.5 s of delay. Detail, the full table and the
 ruled-out list are in state-plan.md § Dip strategies.
+
+**v0.19.0 is written, compile-verified and unflashed (2026-09-06).** Both items
+are in: the `SV`/`HT` `getData` nodes (first item, done earlier) and now
+**`INLET TRIM`** (second item). `INLET <degC>` becomes the *base* setpoint —
+unchanged command, unchanged semantics — `INLET TRIM <degC>` sets a bounded
+trim (+-80 degC), and the effective setpoint is
+`clamp(base + trim, INLET_SV_MIN_C, INLET_SV_MAX_C)`. `inletSV` still means the
+*effective* setpoint, so `controlStep()`, `feedforward()`, the OLED, the status
+push and the `getData` `SV` node are untouched; `inletBase`/`inletTrim` sit
+upstream of it and `inletEffectiveSV()` is the only place they are combined.
+The trim is zeroed on `INLET OFF`, `INLET <= 0`, an inlet failsafe, entry to
+`MODE_TUNE` and at boot, and in `MODE_INLET` a trim unrefreshed for 15 s ramps
+to 0 at 2 degC/s (logged once) so a dead outer loop degrades to open-loop
+feedforward rather than to no heat. Every form of `INLET TRIM` is `TIER_DRIVE`,
+`INLET TRIM 0` included — removing a *negative* trim raises the setpoint.
+Dashboard, README and the version history are updated. **It is inert until
+Artisan is reconfigured**: nothing on the present cascade path changes when it
+is flashed, and the Artisan side must not be built until steps 3-5 have measured
+`1/a` and the loss curve. The acceptance list is a bench drill with the heater
+cold — **state-plan.md § NEXT item 14, not yet run**; the branch is
+compile-verified only.
 
 **Canonical config is `artisan/airRoaster_cascadePID.aset`** (one file; the
 brief `_edit` variant used while adding the alarms was folded back in and
