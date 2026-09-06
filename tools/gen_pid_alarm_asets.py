@@ -13,6 +13,13 @@ Variants
 ``kigate``              `pidKi` 0.07 -> 0 at CHARGE+1 s -> 0.07 at CHARGE+90 s
                         (state-plan.md § The dip is a different control problem)
 ``lookahead_kigate``    both
+``char``                no buttons, no alarms: **key overrides only**.  The
+                        open-loop characterisation config for runbook steps 3-5
+                        -- PID never arms at CHARGE, both alarms disabled, and
+                        background event playback enabled for event type 2
+                        (`T_inlet`) alone, so the test's inlet schedule replays
+                        onto slider 3 by itself instead of being hand-driven.
+                        (state-plan.md § Files for the characterisation runs)
 
 Why the two alarms per lever, and why 90 s
 ------------------------------------------
@@ -23,6 +30,22 @@ charge dip and handed to the ramp at a known value instead of one set by
 anti-windup saturation.  Restoring at 90 s rather than earlier is what makes it
 work: simulated over a 62 degC swing in charge temperature the handover spread is
 34.9 at a 30 s restore, 15.7 at 60 s and **0.6 at 90 s**.
+
+Why the ``char`` variant replays instead of hand-driving
+--------------------------------------------------------
+`specialeventplayback` is a **per-event-type** 4-element list (canvas.py:1848)
+and the master switch `backgroundPlaybackEvents` is separate, so enabling type 2
+alone drives slider 3 from the background and touches nothing else.  Playback
+fights the PID for slider 3 (§ Background event playback must be off) -- which is
+harmless here precisely because these runs are open-loop, and it makes the
+excitation identical between runs instead of hand-timed.  Two consequences worth
+knowing: `playbackevent()` only runs once the **foreground CHARGE** is marked
+(canvas.py:5381), so Test A must press CHARGE -- which is why `pidOnCHARGE` is
+forced off rather than relying on not pressing it -- and events after the
+background's DROP are never replayed (canvas.py:6444), which both test files
+already respect.  The DROP alarm is disabled because `autoDRY` can mark DRY END
+on an empty roaster (BT crosses the 149 threshold in `charstep_empty.alog`),
+which would arm a DeltaBT DROP in the middle of a step test.
 
 `p-i-d()` and `pidLookahead()` are both bumpless -- `setPID` (pid.py:552-564)
 assigns only the gains and leaves `Iterm` alone.
@@ -58,6 +81,19 @@ VARIANTS = {
     'lookahead': LOOKAHEAD,
     'kigate': KIGATE,
     'lookahead_kigate': LOOKAHEAD + KIGATE,
+    'char': [],
+}
+
+# whole-line key replacements applied after the buttons/alarms are appended
+OVERRIDES = {
+    'char': {
+        'pidOnCHARGE': 'false',                            # PID must never arm
+        'backgroundPlaybackEvents': 'true',                # master playback switch
+        'replayType': '0',                                 # replay by time
+        'specialeventplayback': 'false, false, true, false',   # T_inlet only
+        'specialeventplaybackramp': 'false, false, false, false',  # steps, not ramps
+        'alarmflag': '0, 0',                               # no auto-DROP in a step test
+    },
 }
 
 BUTTON_FIELDS = {
@@ -103,14 +139,19 @@ def build(name, buttons, lines):
     for key, fn in ALARM_FIELDS.items():
         append[key] = ''.join(', ' + fn(b, n) for b, n in zip(buttons, numbers))
 
-    seen, out = set(), []
+    overrides = OVERRIDES.get(name, {})
+
+    seen, overridden, out = set(), set(), []
     for line in lines:
         m = re.match(r'([A-Za-z_]+)=', line)
         if m and m.group(1) in append:
             seen.add(m.group(1))
             line += append[m.group(1)]
+        if m and m.group(1) in overrides:
+            overridden.add(m.group(1))
+            line = f'{m.group(1)}={overrides[m.group(1)]}'
         out.append(line)
-    missing = set(append) - seen
+    missing = (set(append) - seen) | (set(overrides) - overridden)
     if missing:
         sys.exit(f'keys not found in canonical file: {sorted(missing)}')
 
@@ -118,6 +159,8 @@ def build(name, buttons, lines):
     dst.write_text('\n'.join(out), encoding='utf-8')
     pairs = ', '.join(f'{b[1]} at CHARGE+{b[2]}s [button {n}]'
                       for b, n in zip(buttons, numbers))
+    if overrides:
+        pairs += ('; ' if pairs else '') + ', '.join(f'{k}={v}' for k, v in overrides.items())
     print(f'{dst.name}: {pairs}')
     return dst
 

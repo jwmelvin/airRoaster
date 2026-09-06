@@ -591,6 +591,38 @@ is flashed, and the Artisan side must not be built until steps 3-5 have measured
 cold — **state-plan.md § NEXT item 14, not yet run**; the branch is
 compile-verified only.
 
+**The run schedule is set and the Artisan side of v0.19.0 is now in the files
+(2026-09-06).** The operator is about to start testing runs, so the remaining
+runbook was collapsed onto the fewest sessions that keep every comparison to one
+variable: **bench (flash + `INLET TRIM` drill) → roast 1 = step 6 → bench (step 8)
+→ one session carrying steps 3-5 → desk work → roast 5 = step 9.** Five
+recordings, two of them real coffee, two sacrificial, one with no beans. Two
+orderings carry weight: step 6 must precede step 8 (its value is the one-variable
+comparison against roast 46, which step 8 would break), and step 8 must precede
+the characterisation runs (the fan is their subject). Flashing v0.19.0 first
+confounds nothing — both items are inert on the present cascade path. Table and
+rationale in state-plan.md § Runbook.
+
+**Two config changes came out of that, and both are in the repo.** First, the
+open question in state-history.md § Firmware now in scope — *"the device id is
+not guessed here because a wrong one silently mis-maps a curve"* — is closed:
+it is **113 = `WS_56`** (comm.py:491). It is appended as a **third** extra device,
+so the virtual `Temp_Drive` (`Y3-Y2`) survives; the ws channel index comes from
+the device *function*, not its position, and `WSread(0)` already fills every
+channel from the one `getData` reply, so there is no extra traffic. All five
+`.aset` files carry `extradevices = 112, 25, 113` with `SV`/`HT` named. Second,
+the characterisation runs are **replayed rather than hand-driven**: new
+`artisan/airRoaster_cascadePID_char.aset` (a key-override variant that
+`tools/gen_pid_alarm_asets.py` now also generates) forces `pidOnCHARGE` off,
+enables background event playback for event type 2 alone and disables both
+alarms, so the test schedule drives slider 3 by itself. That removes hand-timing
+as a variable between the two fan runs and rehearses the per-event-type playback
+that step 9 depends on. **Test B is merged into Test C** — two loaded doublets at
+fan 58 and 65 instead of three batches. The residual weakness is that a
+two-batch fan contrast is also a batch contrast; closing it needs fan excitation
+*within* a batch, which costs a new background file and no extra runs.
+state-plan.md § Files for the characterisation runs.
+
 **Canonical config is `artisan/airRoaster_cascadePID.aset`** (one file; the
 brief `_edit` variant used while adding the alarms was folded back in and
 removed), with background

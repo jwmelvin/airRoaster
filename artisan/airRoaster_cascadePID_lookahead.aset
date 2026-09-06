@@ -350,16 +350,16 @@ YTbacklinestyle=-
 YTbacklinewidth=1
 YTbackmarker=None
 YTbackmarkersize=6
-extradrawstyles1=default, default
-extradrawstyles2=default, default
-extralinestyles1=-, -
-extralinestyles2=-, -
-extralinewidths1=1, 1
-extralinewidths2=1, 1
-extramarkers1=, None
-extramarkers2=None, None
-extramarkersizes1=6, 6
-extramarkersizes2=6, 6
+extradrawstyles1=default, default, default
+extradrawstyles2=default, default, default
+extralinestyles1=-, -, -
+extralinestyles2=-, -, -
+extralinewidths1=1, 1, 1
+extralinewidths2=1, 1, 1
+extramarkers1=, None, None
+extramarkers2=None, None, None
+extramarkersizes1=6, 6, 6
+extramarkersizes2=6, 6, 6
 
 [DefaultButtons]
 buttonactions=0, 0, 0, 0, 0, 0, 20, 0
@@ -470,12 +470,12 @@ ratingunits_setup=0, 0, 0, 0
 sourcetypes_setup=0, 0, 0, 0
 
 [ExtraComm]
-extrabaudrate=19200, 9600
-extrabytesize=8, 8
-extracomport=COM1, COM1
-extraparity=E, N
-extrastopbits=1, 1
-extratimeout=0.5, 0.5
+extrabaudrate=19200, 9600, 9600
+extrabytesize=8, 8, 8
+extracomport=COM1, COM1, COM1
+extraparity=E, N, N
+extrastopbits=1, 1, 1
+extratimeout=0.5, 0.5, 0.5
 
 [ExtraDev]
 devicetablecolumnwidths=202, 100, 100, 100, 100, 256, 100, 45, 47, 56, 57, 59, 61, 63, 63
@@ -487,13 +487,13 @@ extraFill1=0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 extraFill2=0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 extraLCDvisibility1=true, true, false, false, false, false, true, true, false, false
 extraLCDvisibility2=true, false, false, false, false, false, true, true, false, false
-extradevicecolor1=#ff2600ff, #ff2f92ff
-extradevicecolor2=black, #000000ff
-extradevices=112, 25
-extramathexpression1=, Y3-Y2
-extramathexpression2=, 
-extraname1=Inlet, Temp_Drive
-extraname2=amb, Extra 2
+extradevicecolor1=#ff2600ff, #ff2f92ff, #ff9500ff
+extradevicecolor2=black, #000000ff, #8e8e93ff
+extradevices=112, 25, 113
+extramathexpression1=, Y3-Y2, 
+extramathexpression2=, , 
+extraname1=Inlet, Temp_Drive, SV
+extraname2=amb, Extra 2, HT
 
 [ExtraEventButtons]
 buttonlistmaxlen=25
