@@ -766,11 +766,20 @@ a true 0.40. Second, **Artisan can sample at up to 10 Hz** (`min_delay = 100`,
 canvas.py:608; Config › Sampling takes 0.10-999.99 s and only warns below 2 s),
 and the outer loop's tuning is **rate-independent** — `Ki` is applied as
 `Ki*err*dt` in real seconds and `svLookahead` is in seconds, so Kp 3.0 / Ki 0.07
-/ lookahead 3 carry over unchanged. `Delay=1000` today; **0.5 s doubles the
-resolution on every transient this project measures**, and 0.25 s is the floor
-worth having (the firmware's `controlStep()` period). What moves with it:
-WebSocket load, and `curvefilter`/`deltaBTsamples`, which are counts of samples,
-so their time spans halve. Detail in state-history.md § Roast 48.
+/ lookahead 3 carry over unchanged. **0.5 s doubles the resolution on every
+transient this project measures**, and 0.25 s is the floor worth having (the
+firmware's `controlStep()` period). What moves with it: WebSocket load, and
+`curvefilter`, a count of samples, so the PID's own PV filter goes from 0.67 s of
+lag to 0.33 s. RoR does not move — `deltaBTsamples` is derived from the stored
+`deltaBTspan` (20 s) and the interval (canvas.py:2796).
+
+**Both are applied** (operator decision 2026-09-06): `dropSpikes` true -> false
+and `Delay` 1000 -> 500 in `artisan/airRoaster_cascadePID.aset`, propagated to
+all four variants by `tools/gen_pid_alarm_asets.py`. `curvefilter` stays at 3 —
+it is the one setting whose time constant moves, and changing it in the same step
+would put two variables in one roast. **The files are ahead of the live Artisan
+session**: load the `.aset` (or set both in Config › Curves › Filters and
+Config › Sampling) before the next run. Detail in state-history.md § Roast 48.
 
 **Still open after roast 48: the loaded plant fit.** `a` and `theta` for
 `merge_inlet_base.py` and step 9 are not in the section above. Roast 48's inlet

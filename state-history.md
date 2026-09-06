@@ -3016,13 +3016,22 @@ does not depend on it**: `Iterm += getKi(i) * err * dt` with `dt = now -
 lastTime` in real seconds (pid.py:439), `Kp` is rate-free, and `svLookahead` is
 added to `tx` in **seconds** (pid_control.py:1707, and the comment at :50). So
 `Kp 3.0 / Ki 0.07 / svLookahead 3` carry over unchanged to a faster rate. Two
-things do move: every sample is one `getData` round trip, so the WebSocket load
-scales; and `curvefilter` (3) and `deltaBTsamples` are counts of *samples*, so
-their time spans halve at 0.5 s — including the decay-average that produces the
-PID's own PV, which state-current.md § Roast 44 costs at 0.67 s of lag. Below
-**0.25 s** there is nothing left to gain: that is the firmware's `controlStep()`
-period, so Artisan would be resampling the same control decision. `Delay=1000`
-in every cascade `.aset` is the key.
+things do move. Every sample is one `getData` round trip, so the WebSocket load
+scales. And `curvefilter` is a count of *samples* (3), so its time span halves —
+including the decay-average that produces the PID's own PV, which
+state-current.md § Roast 44 costs at 0.67 s of lag; at 0.5 s that becomes 0.33 s,
+which is less phase lag and slightly more noise into the loop. **RoR is not
+affected**: `deltaBTsamples` is *derived* from `deltaBTspan` (20 s, stored in the
+`.aset`) and the interval by `updateDeltaSamples` (canvas.py:2796), so the RoR
+span in seconds is preserved automatically. Below **0.25 s** there is nothing
+left to gain: that is the firmware's `controlStep()` period, so Artisan would be
+resampling the same control decision.
+
+**Both changes are made**: `Delay` 1000 -> 500 and `dropSpikes` true -> false in
+`artisan/airRoaster_cascadePID.aset`, propagated to all four variants by
+`tools/gen_pid_alarm_asets.py` (operator decision 2026-09-06). `curvefilter` is
+left at 3 deliberately — it is the one setting whose *time* constant moves, and
+changing it in the same step would put two variables in one roast.
 
 **A slope measurement costs ~45 s, and this run confirms it at load.** Roast 47
 measured heat reaching 95% of its final value within 2 s of a fan step; roast 48

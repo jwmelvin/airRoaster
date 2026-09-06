@@ -900,7 +900,7 @@ sacrificial and one uses no beans at all.
 | **2** | ~~**step 3** — Test A empty~~ **DONE, roast 47** — it measured the FF coefficients step 8 needs | free | `airRoaster_cascadePID_char.aset` + `charstep_empty_fan` |
 | bench | ~~**step 8** — `feedforward()`~~ **DONE, v0.20.0** — measured coefficients, enabled; flash before the loaded runs | — | firmware |
 | **3** | ~~**steps 4-5** — one 400 g loaded run~~ **DONE, roast 48** — the empty FF map transfers; the plant refit is still owed | 1 sacrificial | `airRoaster_cascadePID_char.aset` + `charsingle_400g` |
-| bench | **new** — untick **Drop Spikes**, and set **Sampling** to 0.5 s; regenerate the `.aset` set (state-history.md § Roast 48) | — | `gen_pid_alarm_asets.py` |
+| bench | ~~untick **Drop Spikes**, set **Sampling** to 0.5 s~~ **DONE in the files** — load the `.aset` before the next run, the live session is still on the old values | — | `gen_pid_alarm_asets.py` |
 | desk | refit **roast 48** (not 46) for `a`/`theta`, `--emit-plant`, `merge_inlet_base.py`, the `.aset` half, settle `--dip` | — | — |
 | **5** | **step 9** — the FF schedule with the PID as a trim | 1 real batch | new |
 
@@ -932,9 +932,14 @@ Spikes"** (Config › Curves › Filters): with it on — and it is on in every 
 constant-valued channel, which `SV` and `HT` are by construction. And **set
 Sampling to 0.5 s** (Config › Sampling; `min_delay` is 100 ms, and the outer
 loop's `Kp`/`Ki`/`svLookahead` are all rate-independent, so nothing is retuned).
-Both live in the `.aset`, as `dropSpikes` and `Delay`, so
-`tools/gen_pid_alarm_asets.py` regenerates the whole set from the canonical file
-once it is re-saved.
+Both live in the `.aset`, as `dropSpikes` and `Delay`, and **both are now applied
+to all five files** — `dropSpikes=false`, `Delay=500`, propagated by
+`tools/gen_pid_alarm_asets.py`. `curvefilter` stays at 3 on purpose: it is the
+one setting whose *time* constant moves with the sampling rate (the PID's own PV
+filter, 0.67 s of lag -> 0.33 s), and changing it in the same step would put two
+variables in one roast. RoR is unaffected — `deltaBTsamples` is derived from the
+stored `deltaBTspan` (20 s) and the interval (canvas.py:2796). **The live Artisan
+session is still on the old values; load the file before the next run.**
 
 **~~Step 1 — validate `pidKi` 0.07 + profile_003.~~ DONE — roast 46,
 2026-09-05.** Five of the six checks pass, item 5 (floor time) fails on batch
