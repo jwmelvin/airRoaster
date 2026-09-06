@@ -614,13 +614,28 @@ channel from the one `getData` reply, so there is no extra traffic. All five
 the characterisation runs are **replayed rather than hand-driven**: new
 `artisan/airRoaster_cascadePID_char.aset` (a key-override variant that
 `tools/gen_pid_alarm_asets.py` now also generates) forces `pidOnCHARGE` off,
-enables background event playback for event type 2 alone and disables both
-alarms, so the test schedule drives slider 3 by itself. That removes hand-timing
-as a variable between the two fan runs and rehearses the per-event-type playback
-that step 9 depends on. **Test B is merged into Test C** — two loaded doublets at
-fan 58 and 65 instead of three batches. The residual weakness is that a
-two-batch fan contrast is also a batch contrast; closing it needs fan excitation
-*within* a batch, which costs a new background file and no extra runs.
+enables background event playback for event types 0 and 2 alone and disables both
+alarms, so the test's inlet *and* fan schedules drive sliders 3 and 1 by
+themselves. That removes hand-timing as a variable and rehearses the
+per-event-type playback that step 9 depends on.
+
+**Test B is merged into Test C, and the fan excitation moved inside the batch**
+(operator decision 2026-09-06). Two loaded runs instead of three, but a
+between-batch fan contrast at n=2 is also a *batch* contrast, and roast 46 is the
+standing proof that batch differences are not small. `tools/gen_char_doublet.py`
+extends the doublet to nine minutes — inlet doublet unchanged over 3:00-5:00, an
+inlet hold from 5:20 that levels BT off near 185 degC, then a **fan square wave
+over 6:00-9:00**, phase-reversed between the two files (`chardoublet_fan57.alog`
+runs the ramp at 57 and modulates 57/65; `..._fan65.alog` the mirror). Three
+constraints set the numbers and each is a way the run could have been wasted
+rather than merely noisy: below fan **55** the interlock clips the heat and the
+inner loop stops holding the inlet (`IL_FAN_FULL_DFLT`, airRoaster.ino:111);
+above ~**65** is outside anything this roaster has run at — the operator's own
+`Fan FULL` button is 64 — and risks lifting beans out of the chamber; and the
+plateau sits at **185 degC, below first crack**, so the bean exotherm is not
+sitting on top of the signal being measured. The files' BT column is a forward
+simulation of the plant card and is **identical for both**, because the card has
+no fan term — which is exactly what the pair is for.
 state-plan.md § Files for the characterisation runs.
 
 **Canonical config is `artisan/airRoaster_cascadePID.aset`** (one file; the

@@ -423,13 +423,16 @@ Both are ordinary background profiles carrying the test's inlet schedule as
 | file | test | schedule |
 |---|---|---|
 | `artisan/charstep_empty.alog` | **A** - empty roaster, no beans | inlet 145 -> 185 at 2:00 -> 145 at 5:00 -> 185 at 7:00 -> 145 at 10:00 |
-| `artisan/chardoublet_loaded.alog` | **B** - loaded doublet, one sacrificial batch | roast 45's own commanded SV replayed, with **+30 degC over 3:00-4:00 and -30 degC over 4:00-5:00** |
+| `artisan/chardoublet_fan57.alog` | **B/C** - loaded, sacrificial | roast 45's SV + the inlet doublet, then a plateau and a fan square wave; ramp at fan **57** |
+| `artisan/chardoublet_fan65.alog` | **B/C** - loaded, sacrificial | the same, phase-reversed; ramp at fan **65** |
+| `artisan/chardoublet_loaded.alog` | superseded | the 7-minute inlet-doublet-only original the two above are generated from |
 
 **They are replayed, not hand-driven** (revised 2026-09-06; the original
 procedure was to follow the curve on slider 3 by hand). `specialeventplayback`
 is a **per-event-type** 4-element list (canvas.py:1848) and the master switch
-`backgroundPlaybackEvents` is separate, so enabling type 2 (`T_inlet`) alone
-replays the schedule onto slider 3 and touches nothing else. The collision that
+`backgroundPlaybackEvents` is separate, so enabling types 0 (`Air`, slider 1) and
+2 (`T_inlet`, slider 3) replays the inlet *and* fan schedules and touches nothing
+else. The collision that
 forced playback off for the cascade (§ Background event playback must be off) is
 *specifically* that playback and the PID both want slider 3 — which cannot arise
 here, because these runs are open-loop by construction. Replaying instead of
@@ -445,7 +448,7 @@ the fan comparison into a difference of one variable rather than of two) and
 pidOnCHARGE = false                        # the PID must never arm
 backgroundPlaybackEvents = true            # master playback switch
 replayType = 0                             # replay by time
-specialeventplayback = false, false, true, false   # T_inlet only
+specialeventplayback = true, false, true, false    # Air + T_inlet
 alarmflag = 0, 0                           # both alarms off
 ```
 
@@ -833,7 +836,7 @@ sacrificial and one uses no beans at all.
 | bench | flash v0.19.0, confirm the `SV`/`HT` curves, `INLET TRIM` drill (§ NEXT 14) | — | any cascade `.aset` |
 | **1** | **step 6** — the lookahead switch, *and step 7 for free* (hold fan 60 through preheat as well as the roast) | 1 real batch | `airRoaster_cascadePID_lookahead.aset` + `profile_003` |
 | bench | **step 8** — the affine `feedforward()` | — | firmware |
-| **2-4** | **steps 3-5** — Test A empty, then two loaded doublets at fan 58 and fan 65, one session off one warm-up | 1 free + 2 sacrificial | `airRoaster_cascadePID_char.aset` + the two char backgrounds |
+| **2-4** | **steps 3-5** — Test A empty, then the two 9-minute loaded runs at fan 57 and 65, one session off one warm-up | 1 free + 2 sacrificial | `airRoaster_cascadePID_char.aset` + `charstep_empty`, `chardoublet_fan57/65` |
 | desk | refit, `roast46_refit.py --emit-plant`, `merge_inlet_base.py`, the `.aset` half, settle `--dip` | — | — |
 | **5** | **step 9** — the FF schedule with the PID as a trim | 1 real batch | new |
 
@@ -960,22 +963,49 @@ characterisation runs). Run them back to back off one warm-up.
 `artisan/charstep_empty.alog`: inlet 145 -> **185 at 2:00** -> **145 at 5:00** ->
 **185 at 7:00** -> **145 at 10:00**. Press DROP by hand at the end and save.
 
-**Step 4/5 — Test B and Test C, merged: two loaded doublets at fan 58 and fan
-65.** Background `artisan/chardoublet_loaded.alog` — roast 45's own commanded SV
-plus **+30 degC over 3:00-4:00 and -30 degC over 4:00-5:00**, net energy ~zero so
-each batch lands near a normal roast. The pair is the fan measurement; each one
-on its own is the deliberate doublet that Test B was for. **Fill in `greens_temp`
-and weigh both batches the same**, because with only two runs the fan contrast is
-also a batch contrast.
+**Step 4/5 — Test B and Test C, merged: two loaded 9-minute runs.** Backgrounds
+`artisan/chardoublet_fan57.alog` then `artisan/chardoublet_fan65.alog`
+(`tools/gen_char_doublet.py`). Each carries the inlet doublet over 3:00-5:00,
+an inlet hold from 5:20 that levels BT off near 185 degC, and a fan square wave
+between 57 and 65 over 6:00-9:00 — phase-reversed between the two files. Set the
+fan to the file's base level before CHARGE; the schedule replays it from there.
+**DROP by hand at 9:00** (both alarms are off in the char config). **Fill in
+`greens_temp` and weigh both batches the same.**
 
-**The honest limit of two runs, and what would fix it.** A between-batch fan
-comparison at n=2 confounds the fan with everything else that differs between two
-batches, and roast 46 is the standing proof that batch differences are not small
-(a 55 g change manufactured a 30 degC error swing). The fix is fan excitation
-*within* a batch — an inlet doublet early and a fan doublet later, on a schedule
-that levels the inlet off after the inlet doublet so BT plateaus instead of
-running into second crack — which costs a new background file and no extra runs.
-Not authored yet; it is the one thing worth building before this session.
+**The fan excitation is inside each batch, not only between them** (operator
+decision 2026-09-06). A between-batch comparison at n=2 confounds the fan with
+everything else that differs between two batches, and roast 46 is the standing
+proof that batch differences are not small (55 g manufactured a 30 degC error
+swing). `tools/gen_char_doublet.py` therefore extends the original doublet to
+nine minutes: **0:00-5:00 unchanged**, the inlet then stepped down to a **200 degC
+hold** so BT levels off near 185 degC, and a **fan square wave over 6:00-9:00**.
+The two files are a **phase-reversed pair over the same two levels** — batch 1
+runs the ramp at 57 and modulates 57/65/57/65, batch 2 runs the ramp at 65 and
+modulates 65/57/65/57 — so the between-batch level contrast and the within-batch
+modulation both cover the full usable window, six transitions in both directions,
+and slow drift common to the two runs cancels in the difference.
+
+Three constraints shaped it, and each is a way the run could have been wasted
+rather than merely noisy:
+
+- **Fan floor 55.** Below `IL_FAN_FULL_DFLT` (airRoaster.ino:111) the interlock
+  stops giving the heater full authority, the heat clips, and the inner loop
+  stops holding the inlet — which is the one thing that invalidates an
+  open-loop identification run. The tool refuses a level under 57.
+- **Fan ceiling ~65.** The operator's own `Fan FULL` button is **64** and roast
+  46 held 60; a large upward excursion risks lifting beans out of the chamber.
+  That is a physical failure, not a measurement problem.
+- **Stay below first crack.** Replaying roast 45's SV to 9:00 would run BT into
+  second crack. The plateau at ~185 degC keeps the fan modulation clear of the
+  bean exotherm, which would otherwise sit on top of exactly the signal being
+  measured. The batches come out underdeveloped rather than burnt.
+
+The background's BT column is replaced from 3:00 by a forward simulation of the
+plant card, so it is an honest prediction rather than roast 45's closed-loop BT
+(which stopped being a prediction the moment the doublet was spliced in). It
+predicts **the same BT for both files**, because the card has no fan term — which
+is the whole point of the runs: the measured difference between the pair is the
+coefficient the card is missing.
 
 ~~After 3-5 the theta/tau ridge (state-history.md § Scheduling) collapses to
 real numbers~~ — **superseded**: roast 46's involuntary rail-to-rail SV

@@ -16,9 +16,10 @@ Variants
 ``char``                no buttons, no alarms: **key overrides only**.  The
                         open-loop characterisation config for runbook steps 3-5
                         -- PID never arms at CHARGE, both alarms disabled, and
-                        background event playback enabled for event type 2
-                        (`T_inlet`) alone, so the test's inlet schedule replays
-                        onto slider 3 by itself instead of being hand-driven.
+                        background event playback enabled for event types
+                        0 (`Air`, slider 1) and 2 (`T_inlet`, slider 3), so the
+                        test's inlet *and* fan schedules replay by themselves
+                        instead of being hand-driven.
                         (state-plan.md § Files for the characterisation runs)
 
 Why the two alarms per lever, and why 90 s
@@ -34,8 +35,11 @@ work: simulated over a 62 degC swing in charge temperature the handover spread i
 Why the ``char`` variant replays instead of hand-driving
 --------------------------------------------------------
 `specialeventplayback` is a **per-event-type** 4-element list (canvas.py:1848)
-and the master switch `backgroundPlaybackEvents` is separate, so enabling type 2
-alone drives slider 3 from the background and touches nothing else.  Playback
+and the master switch `backgroundPlaybackEvents` is separate, so enabling types 0
+and 2 drives sliders 1 and 3 from the background and touches nothing else.  The
+fan is replayed because `gen_char_doublet.py` puts a fan square wave *inside*
+each doublet batch -- hand-timing it would put the run's one measured variable
+back under a stopwatch.  Playback
 fights the PID for slider 3 (§ Background event playback must be off) -- which is
 harmless here precisely because these runs are open-loop, and it makes the
 excitation identical between runs instead of hand-timed.  Two consequences worth
@@ -90,7 +94,7 @@ OVERRIDES = {
         'pidOnCHARGE': 'false',                            # PID must never arm
         'backgroundPlaybackEvents': 'true',                # master playback switch
         'replayType': '0',                                 # replay by time
-        'specialeventplayback': 'false, false, true, false',   # T_inlet only
+        'specialeventplayback': 'true, false, true, false',    # Air + T_inlet
         'specialeventplaybackramp': 'false, false, false, false',  # steps, not ramps
         'alarmflag': '0, 0',                               # no auto-DROP in a step test
     },
