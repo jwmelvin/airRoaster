@@ -103,9 +103,10 @@ firmware. `main` is at **v0.18.0** (2026-08-23): `feature/auth-proxy` (command
 authentication — challenge–response sessions + Artisan signing proxy) was
 fast-forwarded into `main`; its on-roaster validation is still pending
 (state-plan.md § NEXT item 13, as is the ambient drill, item 12). Current
-working branch is **`feature/artisan-pid`**, which now also carries **v0.19.0**
-(unflashed): the `SV`/`HT` `getData` nodes and `INLET TRIM`, on top of the
-Artisan configuration and documentation work it started as. Note that
+working branch is **`feature/artisan-pid`**, which carries **v0.19.0** (flashed
+2026-09-06 and validated on roast 47: the `SV`/`HT` `getData` nodes are live;
+`INLET TRIM` is flashed but still un-drilled — state-plan.md § NEXT item 14) and
+now **v0.20.0** (unflashed): the measured `feedforward()` map. Note that
 `feature/vision-uvc-probe` holds two commits that exist on no other branch and
 have never been pushed. Start each new effort on a fresh branch off `main`.
 Commit per phase with a message naming the phase. The user's Artisan config
@@ -694,6 +695,32 @@ the affine form's 1.63, and it extrapolates better at roast 46's own preheat
 point). Carded in `tools/analysis/ff_roast47.json`; detail in
 state-history.md § Roast 47. **Step 8 is now the next thing to do**, and it is
 bench work.
+
+**Step 8 is done and `main`'s successor is now v0.20.0 (unflashed).**
+`feedforward()` gets roast 47's measured map,
+`heat_ff = 69.8685 - 0.8570*fan - 0.5101*sv + 1.1423*fan*sv/100` (rms 0.68 %),
+replacing the single-product form that was clamped at 100 for 430 of 430 samples
+of roast 46 — inert, with `d(FF)/d(fan) = 0`, and collapsing the anti-windup
+bound to `[-100, 0]`. It is **on by default**, which is a behaviour change at
+first boot: the old "`ffK = 0` disables" idiom cannot survive coefficients that
+are not sign-constrained, so there is an explicit `ffEnabled` behind `FF ON`/`FF
+OFF`, and NVS uses new keys so an upgrading device comes up on the measured
+defaults rather than a stale coefficient. `FF CAL` and `FF AMB` are removed and
+say so. Compile-verified; dashboard checked in browser preview against simulated
+pushes (the four-coefficient panel round-trips, a partial map is refused, and the
+step-cal panel emits `FF SLOPE`).
+
+**The map is empty-chamber and that is tracked, not forgotten** (operator,
+2026-09-06): a bean bed changes the pressure drop and so the flow a fan level
+delivers, so the fan terms will move once loaded. Every coefficient is
+runtime-settable and NVS-persisted, so **a loaded refit is a command, not a
+reflash** — and `FF SLOPE <%/fan-unit>` takes a fan slope measured from a single
+fan step and rescales both fan terms by the ratio while holding the current
+operating point fixed, which is exactly the bean-load correction. The two
+scheduled doublets deliver that number for free from their 60/70 square wave at
+SV 200; a dedicated loaded FF grid stays unscheduled unless those disagree,
+because it costs a batch and the bed's flow resistance drifts as the beans dry.
+state-plan.md § Step 8.
 
 **Canonical config is `artisan/airRoaster_cascadePID.aset`** (one file; the
 brief `_edit` variant used while adding the alarms was folded back in and

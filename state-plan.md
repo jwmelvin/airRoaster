@@ -898,7 +898,7 @@ sacrificial and one uses no beans at all.
 | bench | flash v0.19.0, confirm the `SV`/`HT` curves, `INLET TRIM` drill (§ NEXT 14) | — | any cascade `.aset` |
 | **1** | **step 6** — the lookahead switch, *and step 7 for free* (hold fan 60 through preheat as well as the roast) | 1 real batch | `airRoaster_cascadePID_lookahead.aset` + `profile_003` |
 | **2** | ~~**step 3** — Test A empty~~ **DONE, roast 47** — it measured the FF coefficients step 8 needs | free | `airRoaster_cascadePID_char.aset` + `charstep_empty_fan` |
-| bench | **step 8** — `feedforward()`, now with roast 47's measured coefficients | — | firmware |
+| bench | ~~**step 8** — `feedforward()`~~ **DONE, v0.20.0** — measured coefficients, enabled; flash before the loaded runs | — | firmware |
 | **3-4** | **steps 4-5** — the two 9-minute loaded runs, one session | 2 sacrificial | `airRoaster_cascadePID_char.aset` + `chardoublet_fan60/68` |
 | desk | refit, `roast46_refit.py --emit-plant`, `merge_inlet_base.py`, the `.aset` half, settle `--dip` | — | — |
 | **5** | **step 9** — the FF schedule with the PID as a trim | 1 real batch | new |
@@ -1157,43 +1157,46 @@ out — and the trace shows no air-schedule signature at all (state-history.md �
 yet that the ramp is not earning it. What is left is a roast that keeps 60
 through preheat too.
 
-**Step 8 — the feedforward term, firmware, bench only. Now measured, and the
-coefficients have changed (roast 47, 2026-09-06).** `feedforward()` is clamped at
-100 for every sample of a roast, so it is doing nothing except holding `pidITerm`
-at -45..-64 and forcing the anti-windup bound to `[-100, 0]`
-(state-history.md § Roast 46).
+**~~Step 8 — the feedforward term.~~ DONE — v0.20.0, 2026-09-06.** The map
+becomes `heat_ff = c0 + cfan*fan + csv*sv + cfansv*fan*sv/100`, replacing the
+single-product `ffK*fan*(sv-ambient)` that was clamped at 100 for 430 of 430
+samples of roast 46 — inert rather than merely miscalibrated, with
+`d(FF)/d(fan) = 0`, and collapsing the anti-windup bound to `[-100, 0]`.
+Coefficients are roast 47's measured fit (69.8685 / -0.8570 / -0.5101 / 1.1423,
+rms 0.68 % over nine steady windows), enabled by default, compile-verified.
+README § Feedforward and the v0.20.0 version-history entry carry the detail.
 
-**Do not use `heat = -30.6 + 0.99*fan + 0.0096*SV`.** That was fitted from five
-preheat fan steps over which SV barely moved, and roast 47 — nine steady windows,
-fan **58-80** crossed against SV **145/185** — shows it under-predicts by
-**10.8 to 25.9 %** across the whole grid, with the `SV` coefficient **26x too
-small**. The fan coefficient survives (0.99 against 1.099 measured); the setpoint
-term was simply never identified.
+**The affine model this step was going to install is retracted**
+(`-30.62 + 0.99*fan + 0.0096*sv`): it under-predicts the measured grid by
+11-26 % with its `sv` coefficient 26x too small, because the five preheat fan
+steps behind it held the setpoint nearly constant. Recorded because it is the
+generalisable lesson — a coefficient is only as good as the range its input
+moved over — and `tools/analysis/roast47_ff.py` now cards the fitted box next to
+the coefficients so an extrapolation is visible as one.
 
-Use the **product form**, which more than halves the residual and extrapolates
-better (at roast 46's preheat point of fan 60 / SV 240, measured 55 %, it
-predicts 60.5 against the affine form's 66.1):
+**What is NOT done, and it is deliberate: the map is empty-chamber.** A bean bed
+changes the pressure drop and so the flow a fan level delivers, so the fan terms
+are expected to move once loaded (operator, 2026-09-06). Every coefficient is
+therefore runtime-settable and NVS-persisted, and **a loaded refit is a command,
+not a reflash**. Two routes, in increasing cost:
 
-```
-heat = 69.87 - 0.8570*fan - 0.5101*SV + 1.1423*fan*SV/100     resid rms 0.68 %
-     = 0.011423*(fan - 44.7)*(SV - 75.0) + 31.6
-```
+1. **Free, from the runs already scheduled.** Each loaded doublet holds SV 200
+   through a 60/70 fan square wave over 6:00-9:00, which is `d(heat)/d(fan)`
+   loaded at the roast setpoint — the single number the bean load moves most.
+   Feed it to `FF SLOPE <m>`: the firmware rescales *both* fan terms by
+   `m / current_slope` while holding `heat_ff` at the present `(fan, sv)` fixed,
+   which is exactly "the flow this fan level delivers changed by a factor". The
+   split between `cfan` and `cfansv` is not identifiable from one setpoint, so
+   they scale together.
+2. **A loaded FF grid — only if 1 disagrees materially.** Test A's schedule with
+   beans in would give a full loaded refit, but it costs a batch and carries its
+   own confound: the bed's flow resistance drifts as the beans dry, so a 17-minute
+   loaded grid is not measuring one plant. Justify it with evidence from route 1,
+   not speculatively.
 
-It is one multiply more than the affine form and is the physically right shape
-(power = mass flow x temperature rise). The affine fit
-(`-60.66 + 1.0992*fan + 0.2536*SV`, rms 1.63 %) stays on the table as the
-conservative choice — nine points against four parameters is close to the noise
-floor. Both are carded in `tools/analysis/ff_roast47.json`
-(`tools/analysis/roast47_ff.py --emit-card`).
-
-**Clamp it.** Whatever form goes in, the term must be bounded to `[0, 100]` and
-the fitted box is fan 58-80 / SV 145-185, while a roast runs to SV ~270. The
-product form's extrapolation was checked at exactly one point outside that box.
-
-Bench-testable; no roast needed. **Do it before the loaded doublets**, whose
-whole subject is the fan compensation this term is supposed to provide — and
-which will show ~6 degC of inlet transient per fan transition until it lands
-(roast 47 measured 0.6 degC per fan unit, worst -13.2 degC on the 58->80 step).
+The dashboard's **FF step cal** panel is route 1 made one-click, and it got
+simpler in the process: with the map carrying its own intercept it reports the
+raw slope `dheat/dfan` and no longer needs an ambient at all.
 
 **Step 9 — the inlet feedforward schedule with the PID as a trim.** The
 structural fix, and the reason steps 1b/1c are demoted rather than deleted:

@@ -13,7 +13,7 @@ ESP32-based controller for a hot-air coffee roaster. Controls a heating element 
 | Dimmer interface | RBDimmer DimmerLink ([overview](https://www.rbdimmer.com/docs/dimmerlink-overview), [I2C protocol](https://www.rbdimmer.com/docs/dimmerlink-I2CCommunication)), I2C address heat: `0x51`; fan: `0x52`. Curve is set to RMS (mode `1`) at startup; switchable at runtime with the `CURVE` command. |
 | Dimmers |Dimmers purchased from RobotDyn Official Store on AliExpress. "Dimmer AC module High Power for 40A 600V High Load, 1 Channel, 3.3V/5V logic"; "Dimmer AC module for 16A/24A 600V High Load, 1 Channel, 3.3V/5V logic with current load control" |
 | RTD amplifiers (BT/ET) | 2× MAX31865, https://www.adafruit.com/product/3648 (PT1000 version, 4.3 kΩ reference), on the shared SPI bus. BT (bean) probe on CS `GPIO 10`, 4-wire PT1000; ET board on CS `GPIO 9` has no probe yet (`RTD_ET_ENABLED 0`, channel reads 0.0). Driven register-direct in continuous auto-convert mode via `max31865_direct.h`, not the Adafruit library — see [Dependencies](#dependencies) for why, and `hardware/emi.md` for the RTD noise/fault history. |
-| Thermocouple amplifier (IN) | MAX31855, https://www.adafruit.com/product/269, K-type inlet probe, on the shared SPI bus (CS `GPIO 8`). Read via the Adafruit library (non-blocking, free-running conversions). Its cold-junction temperature doubles as the board-ambient estimate for `FF AMB` and is a selectable ambient source for Artisan's `AT` channel (`AMB SRC CJ`). |
+| Thermocouple amplifier (IN) | MAX31855, https://www.adafruit.com/product/269, K-type inlet probe, on the shared SPI bus (CS `GPIO 8`). Read via the Adafruit library (non-blocking, free-running conversions). Its cold-junction temperature is a selectable ambient source for Artisan's `AT` channel (`AMB SRC CJ`). |
 | Heater | from sdm2020_tools on eBay and listed as "1 set 230V 3600W 132.387 Heating Element & mica casing for hot air blower guns". Its power in my use is a little higher because I use 240V.|
 | Blower | Ametek 116392-00 |
 
@@ -157,9 +157,10 @@ section, so anything the dashboard does can also be typed by hand.
   `base + trim = SV` readout that follows the status push; direct heat and fan
   entry with fan presets and ±1 % nudges.
 - **Tuning panels** — PID editor (prefilled from device reports); feedforward
-  (set/read `ffK`, seed ambient, through-origin CAL, off); step test (start
-  `TUNE`, then apply the tight or conservative gain suggestion); and **FF step
-  cal**, a client-side calibration that measures `ffK` from a fan step while
+  (read/set the four map coefficients, one-point `TRIM`, on/off); step test
+  (start `TUNE`, then apply the tight or conservative gain suggestion); and
+  **FF step cal**, a client-side calibration that measures the fan slope from a
+  fan step while
   the loop holds (the preferred method — see
   [Feedforward](#feedforward-airflow-compensation)).
 - **Interlock** — hard/soft mode and the three limits, read/set live
@@ -240,12 +241,11 @@ Artisan sliders and any other client send plain-text commands. Token delimiters 
 | `TUNE <pct>` | `TUNE 20` | Step test with a specific heat step (% points) |
 | `TUNE ABORT` | `TUNE ABORT` | Cancel a running step test |
 | `TUNE APPLY` | `TUNE APPLY` | Apply the last test's "tight" suggested gains |
-| `FF` | `FF` | Report feedforward params and current value (see [Feedforward](#feedforward-airflow-compensation)) |
-| `FF <k>` | `FF 0.0045` | Set the feedforward coefficient `ffK` directly |
-| `FF AMB <degC>` | `FF AMB 24` | Set the ambient reference temperature |
-| `FF AMB` | `FF AMB` | Seed ambient from the MAX31855 cold-junction temperature (board ambient; the enclosure runs a little warm) |
-| `FF CAL` | `FF CAL` | Auto-calibrate `ffK` from the current (steady) operating point |
-| `FF OFF` | `FF OFF` | Disable feedforward (`ffK = 0`) |
+| `FF` | `FF` | Report the feedforward map, its current value and its fan slope (see [Feedforward](#feedforward-airflow-compensation)) |
+| `FF SET <c0> <cfan> <csv> <cfansv>` | `FF SET 69.87 -0.857 -0.5101 1.1423` | Install a whole map (and enable it) |
+| `FF SLOPE <%/fan-unit>` | `FF SLOPE 1.42` | Rescale the fan dependence to a measured fan slope, holding the current operating point |
+| `FF TRIM` | `FF TRIM` | Shift the intercept so the map matches the heat the loop is applying now (offset only) |
+| `FF ON` / `FF OFF` | `FF OFF` | Enable / disable the feedforward term |
 | `STAT` | `STAT` | Report and reset the load counters: worst control-step late-fire and worst single loop pass (µs). Also carries the setpoint split (`inBase`, `inTrim`, `inSV`) |
 | `TELEM <ms>` | `TELEM 500` | Set the telemetry push period (100–10000 ms); `TELEM OFF` disables; `TELEM` reports |
 | `IL` | `IL` | Report interlock mode, limits, and current heat cap (`il` push message) |
@@ -277,8 +277,9 @@ linearly to V<sub>rms</sub>, so heater power would go as level². Commanded heat
 passes through a √ map at the hardware write, making **heat % proportional to
 watts** — constant plant gain for the PID across the range, and the
 feedforward's heat ∝ power assumption holds. The map is active only while the
-heat curve is RMS (`CURVE` reports `heatPowerMap`). Gains/`ffK` identified
-before v0.11.0 are in raw dimmer units — **re-run `TUNE` and `FF CAL`**.
+heat curve is RMS (`CURVE` reports `heatPowerMap`). Gains identified before
+v0.11.0 are in raw dimmer units — **re-run `TUNE`**; the feedforward map has
+been re-measured since (v0.20.0) and ships with the result.
 
 > **Quantization note.** The map's slope falls below 1 above ~25% power, so
 > some adjacent heat commands collapse to the same dimmer level (~2:1 near full
@@ -707,49 +708,82 @@ mechanism for robustness against airflow changes.
 
 ### Feedforward (airflow compensation)
 
-Steady-state heater power scales with airflow × temperature rise, so the
-controller adds a feedforward term:
+Steady-state heater power is airflow × temperature rise plus standing losses, so
+the controller adds a feedforward term:
 
 ```
-heat_ff = ffK · fan · (SV − ambient)
+heat_ff = c0 + cfan·fan + csv·sv + cfansv·fan·sv/100
 ```
 
-summed into the control output. The PID then only has to trim the residual. The
-payoff is **airflow rejection**: when the fan changes mid-roast, `heat_ff` moves
-*immediately* in proportion, instead of waiting for the inlet temperature to
-drift and the integrator to catch up. One coefficient covers the narrow fan band.
+summed into the control output, clamped to 0..100. The PID then only has to trim
+the residual. The payoff is **airflow rejection**: when the fan changes mid-roast
+`heat_ff` moves *immediately*, instead of waiting for the inlet temperature to
+drift and the integrator to catch up.
 
-Feedforward is **off by default** (`ffK = 0`), and `ffK` persists in NVS with
-the tuning set — check `FF` before trusting an old value.
-
-**Preferred calibration — fan-step slope (dashboard "FF step cal" panel).**
-FF's job is fan rejection, so calibrate the fan *sensitivity* directly: with
-the inlet loop holding a roast-representative setpoint, the routine measures
-steady heat, steps the fan (default +7), waits for re-settle, restores the
-fan, and computes
+**The coefficients are measured.** Roast 47 (2026-09-06) ran an empty chamber
+through nine steady windows — fan **58-80** crossed against SV **145/185** on a
+grid deliberately offset so no fan step landed within 30 s of an inlet step — and
+this form fits them to **rms 0.68 %**. The defaults are that fit:
 
 ```
-ffK = Δheat / (Δfan · (SV − ambient))
+c0 69.8685   cfan −0.8570   csv −0.5101   cfansv 1.1423
+   ≡ 0.011423·(fan − 44.7)·(sv − 75.0) + 31.6
 ```
 
-then offers the result for one-click apply (`FF <k>`). Run it from the
-dashboard's **FF step cal** panel — the logic is entirely client-side (the
-firmware only sees ordinary `OT2`/`FF` commands). Requires `amb` to be set
-(`FF AMB`) and a setpoint comfortably above ambient.
+Feedforward is **on by default** since v0.20.0, and the coefficients persist in
+NVS with the tuning set — check `FF` before trusting an old value.
 
-**Why not `FF CAL` at low temperature:** `FF CAL` fits a line *through the
-origin* from a single operating point (`ffK = heat / (fan·(inlet−ambient))`).
-This plant has a significant standing-loss intercept (measured: 25% heat at
-ΔT≈25 °C but only ~50% at ΔT≈115 °C), so a through-origin fit calibrated
-during warmup over-predicts badly at roast temperature — observed as `FF=80`
-when the plant needed 50. The slope method is immune to the intercept. If you
-do use `FF CAL`, run it at a steady roast-representative temperature.
+**What replaced what, and why it matters.** Before v0.20.0 the map was a single
+product through the origin, `ffK·fan·(sv − ambient)`. It fits the same measured
+grid to only 2.99 %, and as calibrated it sat **clamped at 100 for 430 of 430
+samples** of roast 46 — so `d(FF)/d(fan)` was zero and the term was not merely
+miscalibrated but inert, while holding `pidITerm` at −45..−64 purely to cancel
+itself. The affine model proposed as its replacement
+(`−30.62 + 0.99·fan + 0.0096·sv`) came from five *preheat* fan steps over which
+the setpoint barely moved; against the measured grid it under-predicts by 11-26 %
+with its `sv` coefficient **26× too small**. A coefficient is only as good as the
+range its input moved over.
 
-The integral term absorbs whatever the feedforward gets wrong — including
-negative trim against an over-prediction (its bounds are `I ∈ [−ff, 100−ff]`,
-keeping the steady command `I+FF` within 0..100). `FF` reports as an `ff`
-push message: `{"ffK":0.00451,"amb":24.0,"ff":38.7}`; `FF <k>` sets the
-coefficient by hand; `FF OFF` disables.
+**The map is empty-chamber, and the fan terms are expected to move once loaded.**
+A bean bed changes the pressure drop and therefore the flow a given fan level
+delivers. That is why every coefficient is runtime-settable and persisted — a
+loaded refit is a command, never a reflash — and why `FF SLOPE` exists.
+
+**Recalibrating the fan sensitivity (the one to re-run with beans in).** Use the
+dashboard's **FF step cal** panel: with the inlet loop holding a steady
+roast-representative setpoint it measures steady heat, steps the fan (default +7),
+waits for re-settle, restores the fan, and reports
+
+```
+slope = Δheat / Δfan          % per fan level, at this setpoint
+```
+
+then offers one-click apply, which sends `FF SLOPE <m>`. The firmware rescales
+**both** fan terms by `m / current_slope` while holding `heat_ff` at the present
+`(fan, sv)` fixed — i.e. "the flow this fan level delivers changed by a factor",
+which is exactly what loading the chamber does. The split between `cfan` and
+`cfansv` is not identifiable from a single setpoint, so they scale together. The
+routine works the same with FF on or off during the test, since total steady heat
+is total steady heat regardless of how P/I/FF split it.
+
+**`FF TRIM` is an offset correction only.** It shifts `c0` so the map matches the
+heat the loop is applying right now, and leaves the shape — and therefore the fan
+rejection the term exists for — untouched. That is the honest limit of one steady
+point.
+
+**Validity.** The fit covers fan 58-80 and sv 145-185, and was checked once
+outside it at fan 60 / sv 240, where it predicts 60.5 % against roast 46's
+measured 55. It is a local fit: below sv ≈ 120 the intercept dominates and the map
+over-predicts. The integrator absorbs that — its bounds are `I ∈ [−ff, 100−ff]`,
+keeping the steady command `I+FF` within 0..100 — but `ff` at a low setpoint means
+nothing.
+
+`FF` reports as an `ff` push message:
+`{"on":true,"c0":69.8685,"cfan":-0.857,"csv":-0.5101,"cfansv":1.1423,"ff":60.5,"slope":1.884}`.
+`FF SET` installs all four at once (a partially applied map is not a model of
+anything); `FF ON`/`FF OFF` gate the term. **`FF CAL` and `FF AMB` were removed in
+v0.20.0** — both fitted a coefficient that no longer exists — and reply saying so
+rather than failing as a malformed number.
 
 ---
 
@@ -772,7 +806,11 @@ dashboard).
    Eyeball the reported `dT`/`Kp`/`tau`/`theta` for sanity.
 4. **Apply gains.** `TUNE APPLY` uses the `tight` suggestion; if it looks twitchy,
    enter the `cons` set by hand with `PID <kp> <ki> <kd>`.
-5. **Calibrate feedforward.** Still steady, send `FF AMB <ambient>` then `FF CAL`.
+5. **Check feedforward.** The map ships measured and enabled, so there is
+   nothing to calibrate from cold — send `FF` at a roast-representative setpoint
+   and confirm the reported value is near the heat the loop is applying. `FF TRIM`
+   corrects an offset; the **FF step cal** panel corrects the fan sensitivity,
+   and that is the one to re-run with beans in the chamber.
 6. **Close the loop.** `INLET <degC>` near the current inlet temp (bumpless), then
    nudge the setpoint and watch tracking.
 7. **The real test.** With the loop holding, deliberately change fan speed and

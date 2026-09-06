@@ -23,7 +23,7 @@
 // ---------------------------------------------------------------------------
 // Firmware identity
 // ---------------------------------------------------------------------------
-#define FW_VERSION  "0.19.0"
+#define FW_VERSION  "0.20.0"
 
 // ---------------------------------------------------------------------------
 // WiFi credentials (defined in secrets.h — do not commit that file)
@@ -349,14 +349,40 @@ uint16_t telemPeriodMs = TELEM_PERIOD_MS;
 // Only meaningful while mode is "inlet"; the mode field says whether to trust.
 float ctlP = 0.0f, ctlI = 0.0f, ctlD = 0.0f, ctlFF = 0.0f;
 
-// Feedforward power map (the main robustness-to-airflow mechanism). Physically,
-// steady-state heat scales with airflow × temperature rise, so
-//   heat_ff = ffK · fan · (SV − ffAmbient)
-// One coefficient suffices across the narrow fan band; a fan change moves the
-// feedforward immediately and the PID only trims the residual. ffK defaults to 0
-// (feedforward off) until calibrated — see the FF command / FF CAL.
-float ffK       = 0.0f;    // %·/(fan-level·°C); 0 disables feedforward
-float ffAmbient = 25.0f;   // reference/ambient temp the rise is measured from (°C)
+// Feedforward power map (the main robustness-to-airflow mechanism). Steady-state
+// heat is airflow × temperature rise plus standing losses, so the map is a
+// product of fan and setpoint with an intercept:
+//
+//   heat_ff = ffC0 + ffCfan·fan + ffCsv·sv + ffCfansv·fan·sv/100
+//
+// A fan change moves the feedforward immediately and the PID only trims the
+// residual — that rejection is the whole point of the term.
+//
+// The defaults are measured, not guessed: roast 47 (2026-09-06) ran an empty
+// chamber through nine steady windows, fan 58-80 crossed against SV 145/185,
+// and this form fits them to rms 0.68 %. It factors as
+//   0.011423·(fan − 44.7)·(sv − 75.0) + 31.6
+// which is the product the physics asks for, with the offsets absorbing the
+// loss curve. The single-product form the firmware used before v0.20.0
+// (ffK·fan·(sv−amb), no intercept) fits the same grid to only 2.99 %.
+//
+// **These are EMPTY-CHAMBER coefficients and the fan terms are expected to
+// move once loaded.** A bean bed changes the pressure drop and so the flow the
+// fan delivers at a given level. That is why all four coefficients are
+// runtime-settable and persisted: a loaded refit is a command (FF SET, or
+// FF SLOPE from a single fan step), never a reflash.
+//
+// Validity: measured over fan 58-80 / sv 145-185 and checked once outside it at
+// fan 60 / sv 240, where it predicts 60.5 % against roast 46's measured 55. It
+// is a local fit — below sv ≈ 120 the intercept dominates and the map
+// over-predicts. The integrator absorbs that (I ∈ [−ff, 100−ff]), but do not
+// read anything into ff at a low setpoint.
+float ffC0     =  69.8685f;   // %
+float ffCfan   =  -0.8570f;   // %/fan-level
+float ffCsv    =  -0.5101f;   // %/°C
+float ffCfansv =   1.1423f;   // %/(fan-level·°C) × 100
+bool  ffEnabled = true;       // FF OFF/ON; the coefficients are not sign-constrained,
+                              // so "zero disables" is no longer expressible
 
 // Cooperative-cadence jitter watch (worst control-step late-fire, µs). This is
 // the evidence that decides whether a dedicated core is ever warranted — read
@@ -502,6 +528,7 @@ void initSensors();
 void updateSensors();
 void serviceRtd(Max31865Direct &dev, SensorFaultState &st, float &out, const char *name);
 float feedforward(float sv, uint8_t fan);
+float ffFanSlope(float sv);
 float inletEffectiveSV();
 void  clearInletTrim();
 void  engageInlet(float base);
@@ -667,8 +694,17 @@ void loadTuning() {
     pidKp     = prefs.getFloat("kp",    pidKp);
     pidKi     = prefs.getFloat("ki",    pidKi);
     pidKd     = prefs.getFloat("kd",    pidKd);
-    ffK       = prefs.getFloat("ffK",   ffK);
-    ffAmbient = prefs.getFloat("ffAmb", ffAmbient);
+    // v0.20.0 replaced the single-product map with a four-coefficient one; the
+    // old "ffK"/"ffAmb" keys are deliberately not read. A device upgrading from
+    // <= v0.19.0 therefore comes up on the *measured* defaults above rather than
+    // on a stale single coefficient that no longer means anything. The orphaned
+    // keys are left in NVS rather than erased — they cost nothing and they are
+    // the only record of what the device had been calibrated to.
+    ffC0       = prefs.getFloat("ff0",   ffC0);
+    ffCfan     = prefs.getFloat("ffF",   ffCfan);
+    ffCsv      = prefs.getFloat("ffS",   ffCsv);
+    ffCfansv   = prefs.getFloat("ffFS",  ffCfansv);
+    ffEnabled  = prefs.getBool ("ffOn",  ffEnabled);
     prefs.end();
 }
 
@@ -677,8 +713,11 @@ void saveTuning() {
     prefs.putFloat("kp",    pidKp);
     prefs.putFloat("ki",    pidKi);
     prefs.putFloat("kd",    pidKd);
-    prefs.putFloat("ffK",   ffK);
-    prefs.putFloat("ffAmb", ffAmbient);
+    prefs.putFloat("ff0",  ffC0);
+    prefs.putFloat("ffF",  ffCfan);
+    prefs.putFloat("ffS",  ffCsv);
+    prefs.putFloat("ffFS", ffCfansv);
+    prefs.putBool ("ffOn", ffEnabled);
     prefs.end();
 }
 
@@ -2155,53 +2194,94 @@ void processCommand(String cmd, int8_t clientNum) {
         }
 
     } else if (kw == "FF") {
-        // FF            — report feedforward params + current value.
-        // FF <k>        — set ffK directly.
-        // FF AMB <degC> — set the ambient reference temp.
-        // FF AMB        — seed ambient from the MAX31855 cold junction (board
-        //                 ambient; the enclosure runs a little warm — override
-        //                 with an explicit value if that matters).
-        // FF CAL        — derive ffK from the current (assumed steady) point.
-        // FF OFF        — disable feedforward (ffK = 0).
+        // FF                              — report the map, its value and its fan slope.
+        // FF ON | FF OFF                  — enable / disable the term.
+        // FF SET <c0> <cfan> <csv> <cfansv> — install a whole map (and enable).
+        // FF TRIM                         — shift c0 so the map matches the heat
+        //                                   the loop is applying right now.
+        // FF SLOPE <%/fan-unit>           — rescale the fan dependence to a
+        //                                   measured slope, holding the current
+        //                                   operating point fixed.
+        //
+        // The setpoint the map is evaluated at: the commanded inlet SV while the
+        // loop is closed, otherwise the measured inlet, which is what a bench
+        // check at steady state wants.
+        float ffSv = (ctrlMode == MODE_INLET) ? inletSV : inTemp;
         if (n >= 2) {
             String up = tokens[1];
             up.toUpperCase();
             if (up == "OFF") {
-                ffK = 0.0f;
-            } else if (up == "AMB") {
-                if (n >= 3) {
-                    float amb;
-                    if (!parseFloatStrict(tokens[2], amb)) {
-                        replyBadArg(clientNum, "FF AMB");
+                ffEnabled = false;
+            } else if (up == "ON") {
+                ffEnabled = true;
+            } else if (up == "SET") {
+                float c[4];
+                if (n < 6) { replyBadArg(clientNum, "FF SET"); return; }
+                for (int i = 0; i < 4; i++) {
+                    if (!parseFloatStrict(tokens[2 + i], c[i])) {
+                        replyBadArg(clientNum, "FF SET");
                         return;
                     }
-                    ffAmbient = amb;
-                } else {
-                    double cj = tcIN.readInternal();
-                    if (isnan(cj)) {
-                        replyBadArg(clientNum, "FF AMB");   // cold junction unreadable
-                        return;
-                    }
-                    ffAmbient = (float)cj;
                 }
-            } else if (up == "CAL") {
-                float denom = (float)fanLevel * (inTemp - ffAmbient);
-                if (heatLevel > 0 && denom > 1.0f) ffK = (float)heatLevel / denom;
-            } else {
-                float k;
-                if (!parseFloatStrict(tokens[1], k)) {
-                    replyBadArg(clientNum, "FF");
+                ffC0 = c[0]; ffCfan = c[1]; ffCsv = c[2]; ffCfansv = c[3];
+                ffEnabled = true;
+            } else if (up == "TRIM") {
+                // One-point offset correction. It moves the map onto the current
+                // operating point and nothing else: the *shape* — and therefore
+                // the fan rejection the term exists for — is untouched. That is
+                // the honest limit of one steady point, and it is why a bean load
+                // (which changes flow per fan unit, i.e. the shape) wants
+                // FF SLOPE or a refit rather than this.
+                if (ctrlMode != MODE_INLET && heatLevel == 0) {
+                    replyBadArg(clientNum, "FF TRIM");   // nothing to match against
                     return;
                 }
-                ffK = k;
+                ffEnabled = true;   // evaluate and leave it on; TRIM is a calibration
+                ffC0 += (float)heatLevel - feedforward(ffSv, fanLevel);
+            } else if (up == "SLOPE") {
+                // Rescale the fan dependence so d(ff)/d(fan) at the present
+                // setpoint equals a measured slope, while holding ff at the
+                // present (fan, sv) fixed — i.e. "the flow this fan level
+                // delivers changed by a factor", which is exactly what putting
+                // beans in the chamber does. The split between the two fan terms
+                // is not identifiable from one setpoint, so both scale together.
+                float m;
+                if (n < 3 || !parseFloatStrict(tokens[2], m)) {
+                    replyBadArg(clientNum, "FF SLOPE");
+                    return;
+                }
+                float cur = ffFanSlope(ffSv);
+                if (fabsf(cur) < 1e-6f) { replyBadArg(clientNum, "FF SLOPE"); return; }
+                float k    = m / cur;
+                float fanF = (float)fanLevel;
+                ffC0     += (1.0f - k) * (ffCfan * fanF + ffCfansv * fanF * ffSv * 0.01f);
+                ffCfan   *= k;
+                ffCfansv *= k;
+                ffEnabled = true;
+            } else if (up == "CAL" || up == "AMB") {
+                // Removed in v0.20.0 with the single-product map. Say so rather
+                // than failing as a malformed number: both fitted a coefficient
+                // that no longer exists.
+                char b[144];
+                snprintf(b, sizeof(b),
+                    "{\"pushMessage\":\"error\",\"data\":\"FF %s removed in v0.20.0 -"
+                    " use FF TRIM (offset) or FF SLOPE (fan sensitivity)\"}",
+                    up == "CAL" ? "CAL" : "AMB");
+                if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
+                Serial.println(b);
+                return;
+            } else {
+                replyBadArg(clientNum, "FF");
+                return;
             }
-            saveTuning();   // OFF / AMB / CAL / direct-set all mutate the tuning set
+            saveTuning();   // every branch above mutates the tuning set
         }
-        char b[160];
+        char b[224];
         snprintf(b, sizeof(b),
-            "{\"pushMessage\":\"ff\",\"data\":{\"ffK\":%.5f,\"amb\":%.1f,\"ff\":%.1f}}",
-            ffK, ffAmbient,
-            feedforward(ctrlMode == MODE_INLET ? inletSV : inTemp, fanLevel));
+            "{\"pushMessage\":\"ff\",\"data\":{\"on\":%s,\"c0\":%.4f,\"cfan\":%.4f,"
+            "\"csv\":%.4f,\"cfansv\":%.4f,\"ff\":%.1f,\"slope\":%.4f}}",
+            ffEnabled ? "true" : "false", ffC0, ffCfan, ffCsv, ffCfansv,
+            feedforward(ffSv, fanLevel), ffFanSlope(ffSv));
         if (clientNum >= 0) webSocket.sendTXT((uint8_t)clientNum, b);
         Serial.println(b);
 
@@ -2438,16 +2518,24 @@ static float    pidDFilt  = 0.0f;   // filtered derivative term
 static bool     ctrlPrimed = false; // false until the first step seeds pvPrev
 // (ctrlMaxJitterUs is declared up in the state section, ahead of processCommand.)
 
-// Static feedforward heat estimate: heat_ff = ffK · fan · (sv − ffAmbient),
-// clamped to 0..100. Returns 0 when ffK <= 0 (feedforward disabled). Wired into
-// the control law, the engage-seed, and the anti-windup so they all stay
-// consistent when it is active.
+// Static feedforward heat estimate (see the coefficient block up top), clamped
+// to 0..100. Returns 0 when disabled. Wired into the control law, the
+// engage-seed, and the anti-windup so they all stay consistent when it is active.
 float feedforward(float sv, uint8_t fan) {
-    if (ffK <= 0.0f) return 0.0f;
-    float ff = ffK * (float)fan * (sv - ffAmbient);
+    if (!ffEnabled) return 0.0f;
+    float f  = (float)fan;
+    float ff = ffC0 + ffCfan * f + ffCsv * sv + ffCfansv * f * sv * 0.01f;
     if (ff < 0.0f)   ff = 0.0f;
     if (ff > 100.0f) ff = 100.0f;
     return ff;
+}
+
+// d(heat_ff)/d(fan) at a given setpoint — the fan sensitivity the term exists to
+// deliver, and the one number a bean load is expected to change. Reported by FF
+// and used by FF SLOPE. Note this is the *unclamped* slope; it says nothing
+// about a map that is railed at 0 or 100.
+float ffFanSlope(float sv) {
+    return ffCfan + ffCfansv * sv * 0.01f;
 }
 
 // The effective inlet setpoint: base + trim, clamped to the same plausibility
@@ -2941,6 +3029,66 @@ void loop() {
 // ===========================================================================
 // Version history
 // ---------------------------------------------------------------------------
+// v0.20.0 2026-09-06  feedforward() gets a measured model. The map becomes
+//                     heat_ff = ffC0 + ffCfan·fan + ffCsv·sv + ffCfansv·fan·sv/100
+//                     replacing the single-product ffK·fan·(sv − ffAmbient).
+//                     Why: the old form was clamped at 100 for 430 of 430
+//                     samples of roast 46, so it was not merely miscalibrated
+//                     but inert — d(FF)/d(fan) = 0, which is the one thing the
+//                     term exists to provide — and it collapsed the anti-windup
+//                     bound I ∈ [−ff, 100−ff] to [−100, 0], leaving pidITerm at
+//                     −45..−64 purely to cancel it.
+//                     The coefficients are measured, not fitted to a guess.
+//                     Roast 47 (2026-09-06, Test A) ran an empty chamber
+//                     through nine steady windows, fan 58-80 crossed against
+//                     SV 145/185 on a deliberately offset grid, and this form
+//                     fits them to rms 0.68 %; the old single-product form fits
+//                     the same grid to 2.99 %. Defaults 69.8685 / −0.8570 /
+//                     −0.5101 / 1.1423, which factor as
+//                     0.011423·(fan − 44.7)·(sv − 75.0) + 31.6.
+//                     Note what this corrects: the affine model previously
+//                     proposed for this change (−30.62 + 0.99·fan + 0.0096·sv)
+//                     came from five *preheat* fan steps over which sv barely
+//                     moved, and it under-predicts the measured grid by 11-26 %
+//                     with its sv coefficient 26x too small. A coefficient is
+//                     only as good as the range its input moved over.
+//                     Enabled by default, which is a behaviour change at first
+//                     boot after the upgrade: the old "ffK = 0 disables" idiom
+//                     is gone, because the coefficients are not sign-
+//                     constrained (ffCfan is negative), so there is now an
+//                     explicit ffEnabled flag behind FF ON / FF OFF. NVS uses
+//                     new keys (ff0/ffF/ffS/ffFS/ffOn); the old ffK/ffAmb keys
+//                     are deliberately not read, so an upgrading device comes
+//                     up on the measured defaults rather than on a stale
+//                     coefficient that no longer means anything.
+//                     The map is EMPTY-CHAMBER. A bean bed changes the pressure
+//                     drop and so the flow a given fan level delivers, so the
+//                     fan terms are expected to move once loaded — which is why
+//                     every coefficient is runtime-settable and persisted, and
+//                     why FF SLOPE exists: given a fan slope measured from one
+//                     fan step at the current setpoint, it rescales both fan
+//                     terms by that ratio while holding ff at the present
+//                     (fan, sv) fixed, i.e. "the flow this fan level delivers
+//                     changed by a factor", which is exactly what loading the
+//                     chamber does. The split between the two fan terms is not
+//                     identifiable from a single setpoint, so they scale
+//                     together. A loaded refit is a command, never a reflash.
+//                     Command surface: FF reports the map, its current value
+//                     and its fan slope; FF ON/OFF; FF SET <c0> <cfan> <csv>
+//                     <cfansv>; FF TRIM (one-point *offset* only — it moves the
+//                     map onto the current operating point and leaves the shape,
+//                     and therefore the fan rejection, untouched); FF SLOPE
+//                     <%/fan-unit>. FF CAL and FF AMB are removed and reply
+//                     saying so rather than failing as a malformed number —
+//                     both fitted a coefficient that no longer exists.
+//                     Validity is a local fit: fan 58-80 / sv 145-185 measured,
+//                     checked once outside it at fan 60 / sv 240 where it
+//                     predicts 60.5 % against roast 46's measured 55. Below
+//                     sv ≈ 120 the intercept dominates and the map
+//                     over-predicts; the integrator absorbs that, but ff at a
+//                     low setpoint means nothing. Output stays clamped to
+//                     0..100 as before.
+//
 // v0.19.0 2026-09-06  (second item) INLET TRIM: the inlet setpoint becomes the
 //                     sum of two independently commanded numbers. INLET <degC>
 //                     now sets a *base* — unchanged command, unchanged
