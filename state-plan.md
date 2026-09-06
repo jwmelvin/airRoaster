@@ -899,7 +899,7 @@ sacrificial and one uses no beans at all.
 | **1** | **step 6** — the lookahead switch, *and step 7 for free* (hold fan 60 through preheat as well as the roast) | 1 real batch | `airRoaster_cascadePID_lookahead.aset` + `profile_003` |
 | **2** | ~~**step 3** — Test A empty~~ **DONE, roast 47** — it measured the FF coefficients step 8 needs | free | `airRoaster_cascadePID_char.aset` + `charstep_empty_fan` |
 | bench | ~~**step 8** — `feedforward()`~~ **DONE, v0.20.0** — measured coefficients, enabled; flash before the loaded runs | — | firmware |
-| **3-4** | **steps 4-5** — the two 9-minute loaded runs, one session | 2 sacrificial | `airRoaster_cascadePID_char.aset` + `chardoublet_fan60/68` |
+| **3** | **steps 4-5** — one 400 g loaded run (617 g of sacrificial stock), or the two 9-minute runs if 800 g turns up | 1-2 sacrificial | `airRoaster_cascadePID_char.aset` + `charsingle_400g`, or `chardoublet_fan60/68` |
 | desk | refit, `roast46_refit.py --emit-plant`, `merge_inlet_base.py`, the `.aset` half, settle `--dip` | — | — |
 | **5** | **step 9** — the FF schedule with the PID as a trim | 1 real batch | new |
 
@@ -1052,7 +1052,68 @@ does **not** replace Test C; an empty chamber measures the machine's heat demand
 against airflow, not the bean-bed loss term that step 9's schedule is built
 from.
 
-**Step 4/5 — Test B and Test C, merged: two loaded 9-minute runs.** Backgrounds
+**Step 4/5, the 617 g variant — one 400 g batch instead of two
+(operator, 2026-09-06).** The sacrificial stock is 617 g, which is one 400 g
+batch or two 308 g ones. **Two 308 g batches are the wrong answer**: charge mass
+sets both quantities these runs measure — the bed's pressure drop, hence the flow
+a fan level delivers (what `FF SLOPE` corrects), and the thermal mass in the
+plant fit — so a 308 g pair would characterise a roaster the operator does not
+run, with a single mass and nothing to extrapolate from.
+
+Background **`artisan/charsingle_400g.alog`** (`tools/gen_char_single.py`), 12:15,
+DROP by hand, same `airRoaster_cascadePID_char.aset`:
+
+```
+0:00  fan 64 (circulation), roast 45's ramp replayed
+1:30  fan 60
+2:45  SV 245 flat   3:15 fan 66   4:00 fan 60     slope @ 245, BT 145 -> 182
+4:30  SV 150        valley -- pulls BT back down
+5:30  SV 215 flat   6:00 fan 66   6:45 fan 60     slope @ 215
+7:15  SV 150        valley
+8:15  SV 190 flat   8:45/9:45/10:45/11:45 fan 70/60/70/60
+                                                  slope @ 190 + the outer fan gain
+```
+
+**It measures strictly more than the two-batch plan could.** Roast 47 showed
+heat reaches 95 % of its final value **within 2 s** of a fan step, so a slope
+costs ~45 s rather than a plateau, and can be taken at several setpoints. The
+model's fan sensitivity is a line in the setpoint,
+`slope(sv) = cfan + cfansv*sv/100`; one setpoint only supports `FF SLOPE`
+(rescaling both terms together, since their split is not identifiable from a
+single point), while **three flat setpoints — 190, 215, 245 — identify `cfan`
+and `cfansv` separately, loaded.** The two-batch plan had one, at SV 200.
+
+Three things shape the schedule and the tool enforces them:
+
+- **Every fan step sits at a dead-flat inlet**, ≥20 s from any inlet change.
+  Heat depends on fan and setpoint and essentially *not* on BT — the inlet
+  thermocouple is upstream of the bed — so BT climbing through a block does not
+  contaminate the slope. What BT constrains is only how long a block can last.
+- **The valleys are not filler.** A steady inlet drags BT to within ~`loss/a`
+  (~15 degC) of itself, so SV 245 cannot simply be held — the plateau would be
+  BT ~230, deep into second crack. Dropping to 150 pulls BT back at ~0.2 degC/s,
+  and those up-and-down inlet steps *are* the plant-identification excitation,
+  which is why this file needs no separate 3:00-5:00 doublet. Simulated BT peaks
+  at **185.7 degC**; the tool refuses to write a schedule that reaches 196.
+- **Block C steps ±10, not ±6.** The small pulses are sized for the heat signal
+  (resolved to 0.4-1.5 %); the outer plant's fan gain is read from *BT* and needs
+  a much larger push, so block C doubles as slope point and BT excitation.
+
+What is given up: the between-batch fan-level contrast, and with it the
+moisture-loss question — a roast-quality question, not a characterisation one,
+and answerable later with two real roasts. And there is **no retry**: 217 g is
+left, under the 250 g minimum. Roast 47 was the first outing of a new schedule
+and hit an unforeseen trap, so if 800 g of other sacrificial beans can be found,
+prefer the two-batch pair below and keep this as the fallback.
+
+**The 1:30 circulation bump is a free fan step on every real roast.** 64 -> 60 at
+400 g, 5-8 % of heat against 0.4-1.5 % noise, and `HT` is recorded from v0.19.0
+on. It is messier than a flat-inlet step — BT and SV are both moving — but the
+2 s response means a ±10 s window is nearly all fan. Averaged over a few normal
+roasts it is an independent read on the loaded slope for no beans at all.
+
+**Step 4/5, the 800 g version — Test B and Test C, merged: two loaded 9-minute
+runs.** Backgrounds
 `artisan/chardoublet_fan60.alog` then `artisan/chardoublet_fan68.alog`
 (`tools/gen_char_doublet.py`). Each opens at **fan 64 for circulation**, drops to
 its ramp base at 1:30, carries the inlet doublet over 3:00-5:00, holds the inlet

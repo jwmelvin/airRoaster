@@ -722,6 +722,33 @@ SV 200; a dedicated loaded FF grid stays unscheduled unless those disagree,
 because it costs a batch and the bed's flow resistance drifts as the beans dry.
 state-plan.md § Step 8.
 
+**The loaded run is now one 400 g batch, not two (operator, 2026-09-06).** The
+sacrificial stock is 617 g — one 400 g batch or two 308 g ones — and **two 308 g
+batches would characterise a roaster that is not run**: charge mass sets the
+bed's pressure drop (hence flow per fan unit, what `FF SLOPE` corrects) and the
+thermal mass in the plant fit, and one mass gives nothing to extrapolate from.
+`artisan/charsingle_400g.alog` (`tools/gen_char_single.py`), 12:15, same char
+config.
+
+**It measures strictly more than the pair could**, because roast 47 showed heat
+reaches 95 % of its final value **within 2 s** of a fan step. A slope therefore
+costs ~45 s rather than a plateau, so it is taken at **three flat setpoints —
+245, 215, 190** — and since `slope(sv) = cfan + cfansv*sv/100` is a line, three
+points **identify both loaded fan coefficients separately** instead of only
+rescaling them together, which is all a single setpoint (the pair's SV 200) can
+support. Every fan step sits at a dead-flat inlet ≥20 s from any inlet change;
+heat depends on fan and setpoint and essentially not on BT, so BT climbing
+through a block is harmless. The SV 150 valleys between blocks are what keep BT
+under first crack — a steady inlet drags BT to within ~15 degC of itself, so
+SV 245 cannot be held — and they double as the plant-ID excitation, so the file
+needs no separate inlet doublet. Simulated BT peaks at 185.7 degC and the tool
+refuses to write a schedule that reaches 196.
+
+Given up: the between-batch fan-level contrast and the moisture-loss question
+(roast quality, not characterisation), and **there is no retry** — 217 g is left,
+under the 250 g minimum. If 800 g of other sacrificial beans turns up, the
+two-batch pair is still on disk and is the safer run. state-plan.md § Step 4/5.
+
 **Canonical config is `artisan/airRoaster_cascadePID.aset`** (one file; the
 brief `_edit` variant used while adding the alarms was folded back in and
 removed), with background
