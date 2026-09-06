@@ -808,7 +808,8 @@ authoring source for `merge_inlet_base.py`**; the new card says so in a
 same windows with `theta` collapsing to **~0** and a 10-25 s first lag in its
 place, taking about a third off the residual on every well-excited window. The
 13.5 s "deadtime" is at least partly a lag — which matters, because the two cost
-very different phase margin.
+very different phase margin. **That question is now settled at the desk — see the
+paragraph below the roast 49 entry.**
 
 **The tuning does not move.** Roast 48's plant gives Kp 3.0 / Ki 0.07 a 44.5 deg
 margin and would allow more; roast 46's gives 33.7. The tie-breaker is empirical:
@@ -870,6 +871,80 @@ So roast 49 is the accidental **warm arm** of the ambient-vs-freezer pair; one
 deliberate frozen batch closes it. `greens_temp` was left at `0.0` for the fourth
 roast running, which is the only reason any of this had to be inferred.
 Detail in state-history.md § Roast 49.
+
+**The deadtime-versus-lag question is settled, and the answer changes a claim
+rather than a number (2026-09-06, desk work — state-plan.md § What roasts 47-49
+jointly say, item 4).** Tool `tools/analysis/deadtime_vs_lag.py`; `plantfit.py`
+and `margins.py` gained the second lag. **No roast was needed and none is
+proposed.**
+
+**Roast 49 was checked first and it cannot contribute.** It is closed-loop with
+one 1:30 SV step: independent inlet motion 5.08 degC rms against roast 48's
+23.68, and on the tau2 grid `roast48_plant.py` itself uses (0-120 s) its two-lag
+fit runs away to the edge and returns a **negative gain**. Its sub-window `a`
+spans a factor of three. Excluded.
+
+**The residual cannot settle it either, and that is worth knowing.** Roast 48's
+BT residuals are correlated at rho > 0.99, so the AR(1) effective sample size of
+a 300-450 sample window is **5 to 9** — no residual reduction of any size clears
+an honest F-test there. What settles it is **identifiability**. On roast 48 the
+`(theta, tau2)` minimum is a *point*: the 1%-of-minimum contour is one or two
+grid cells, `theta` sits hard at 0 and bootstraps to 0-2 s, and forcing pure
+deadtime costs **42-131%** more residual. On roast 46 it is a *ridge*: only the
+**sum** is determined (a 1-2 s band at 13-14 s) while `theta` and `tau2` each
+range over 6-13 s, and which of pure-deadtime and pure-lag is better *flips*
+between windows. That is not a contradiction — roast 48 has four inlet steps of
+-95 to +65 degC and **a step is the only excitation that separates a lag from a
+delay**; roast 46 has the smooth charge recovery, whose content sits below the
+corner where the two part company.
+
+**So the 13.5 s was never 13.5 s of transport.** What is identified everywhere is
+`theta + tau2`, which bootstraps to 9-11 / 13-15 / 12-14 s on the three
+well-excited windows — and the single-lag `theta` the deadtime fits report (8.5 s
+roast 48, 13.5 s roast 46) **is that sum**. The real transport delay is 0-2 s
+where roast 48 can see it. The structure also **fixes `theta`'s
+non-stationarity** — 7.8-14.5 s across roast 48's sub-windows becomes a flat
+0.0-1.0 s, so that spread was a structural artefact — but it makes `a` *worse*
+(0.0074-0.0142 against 0.0062-0.0085), because a late window can buy a slow
+response with a long lag and a large gain. Better structure, not a finished
+plant.
+
+**The tuning does not move and this is the strongest form of that statement.**
+Walking roast 46's entire ridge from all-delay to all-lag moves the phase margin
+at Kp 3.0 / Ki 0.07 by **32.8 to 37.7 deg**, over a span across which the
+residual moves 11%. Five degrees is inside the model error these cards already
+carry. **`pidKi` 0.07 stands.** What *does* move along the ridge is the
+closed-loop period, 156 to 196 s — so roast 45's measured **177 s** ring at
+Ki 0.10 is informative where the residual is not, and it picks out `theta` 6-7 /
+`tau2` 6.5-7, within 1% of roast 46's own residual minimum. Compared against the
+least-damped closed-loop mode (**not** the crossover period — the earlier notes
+compared the wrong quantity), roast 46's two-lag card gives **173 s** against the
+measured 177, its single-lag card 194 s, and roast 48's cards 143-152 s. The
+ranking § Roast 48 drew survives and improves.
+
+**And `plant_roast46.json` and `merge_inlet_base.py` both stand unchanged.** The
+two-lag inversion is `ff(t) = X(t+theta) + tau2*dX/dt(t+theta)` with
+`X = bg + (dbg/dt - loss)/a`; built from roast 46's own two-lag card against
+`profile_003` — through the authoring tool's own pipeline, so the one-lag column
+reproduces `merge_inlet_base.py --dry-run` exactly — it differs from today's
+schedule by **mean -0.04, rms 0.84, worst 3.25 degC** on a base running
+200-256 degC — against the ~0.5 degC whole-degree
+event quantisation floor and the 0.87 degC replay error the tool already reports.
+The reason is arithmetic: on a ramp of slope `r`, advancing `bg` by `theta` adds
+`theta*r` and the lag inversion adds `tau2*r`, and roast 46 puts
+`theta + tau2 = 13` against the single-lag 13.5. **The `bg(t+theta)` lead is a
+valid first-order stand-in for the lag inversion**, and what needs correcting is
+the description of `theta`, not the construction. Two things for whoever does
+rewrite it: the two-lag lead carries `tau2/a * d²bg/dt²`, so a rough background
+costs far more and the tail blend would have to be C1; and `a`, `theta`, `tau2`
+and the loss curve are **one set** (`a` is 22% larger under two lags), so no card
+is emitted here and no authoring tool is touched. **`charge_state.py` is
+unaffected as well**: its proxy assumes the heater is blocked over `0..theta`,
+which under two lags it is not, but the difference is 0.19-0.24 degC/100 g across
+roasts 43/44/46/49 — a spread of 0.05 against the 3.3 degC/100 g gap the proxy
+measures, so it is common-mode. Detail, tables and the excitation that would
+settle what is left (it is `a`, not the delay) in state-history.md § Deadtime
+versus lag.
 
 **Canonical config is `artisan/airRoaster_cascadePID.aset`** (one file; the
 brief `_edit` variant used while adding the alarms was folded back in and

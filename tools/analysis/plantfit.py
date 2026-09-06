@@ -78,6 +78,20 @@ def _delayed(t, theta, t_in, inlet):
     return np.interp(t - theta, t_in, inlet, left=np.nan, right=np.nan)
 
 
+def lag1(u, tau2, dt):
+    """Exact first-order discretisation of ``1/(1 + tau2 s)`` driven by ``u``.
+
+    ``x[0] = u[0]`` -- the lag starts settled, which is what a fit window opened
+    well after CHARGE wants.  ``tau2 <= 0`` is the pass-through.
+    """
+    if tau2 <= 0:
+        return np.asarray(u, dtype=float)
+    from scipy.signal import lfilter
+
+    alpha = np.exp(-dt / tau2)
+    return lfilter([1.0 - alpha], [1.0, -alpha], u, zi=[alpha * u[0]])[0]
+
+
 def _solve(X, y):
     beta, *_ = np.linalg.lstsq(X, y, rcond=None)
     r = y - X @ beta
@@ -216,15 +230,27 @@ def fit_integral_fan(t, bt, t_in, inlet, fan, order=4,
     return f
 
 
-def replay(t, inlet_fn, bt0, a, theta, slow_fn, fan_fn=None, kf=0.0, dt=0.25):
-    """Forward-simulate the plant.  ``inlet_fn``/``slow_fn`` take seconds."""
+def replay(t, inlet_fn, bt0, a, theta, slow_fn, fan_fn=None, kf=0.0, dt=0.25,
+           tau2=0.0):
+    """Forward-simulate the plant.  ``inlet_fn``/``slow_fn`` take seconds.
+
+    ``tau2 > 0`` puts the second lag in front of the gain, matching
+    :func:`fit_integral_2lag`: ``Inlet -> delay -> 1/(1+tau2 s) -> a/(s+a)``.
+    The lag starts settled at the initial inlet, as the fit does.
+    """
     n = int(round((t[-1] - t[0]) / dt)) + 1
     ts = t[0] + dt * np.arange(n)
     bt = np.empty(n)
     bt[0] = bt0
+    x = inlet_fn(ts[0] - theta)
     for k in range(n - 1):
         s = 1.0 if fan_fn is None else 1.0 + kf * (fan_fn(ts[k]) - 60.0)
-        d = a * s * (inlet_fn(ts[k] - theta) - bt[k]) + slow_fn(ts[k])
+        u = inlet_fn(ts[k] - theta)
+        if tau2 > 0:
+            d = a * s * (x - bt[k]) + slow_fn(ts[k])
+            x += dt * (u - x) / tau2
+        else:
+            d = a * s * (u - bt[k]) + slow_fn(ts[k])
         bt[k + 1] = bt[k] + dt * d
     return ts, bt
 
@@ -249,15 +275,7 @@ def fit_integral_2lag(t, bt, t_in, inlet, order=4,
         if np.isnan(u).any():
             raise ValueError("input series does not cover t - max(theta)")
         for tau2 in tau2s:
-            if tau2 <= 0:
-                x = u
-            else:                       # exact first-order discretisation
-                alpha = np.exp(-dt / tau2)
-                x = np.empty_like(u)
-                x[0] = u[0]
-                for k in range(1, len(u)):
-                    x[k] = alpha * x[k - 1] + (1 - alpha) * u[k]
-            d = x - bt
+            d = lag1(u, tau2, dt) - bt
             U = np.concatenate([[0.0], np.cumsum(0.5 * (d[1:] + d[:-1])) * dt])
             X = np.column_stack([U, P])
             beta, r = _solve(X, bt)
@@ -275,18 +293,23 @@ def fit_integral_2lag(t, bt, t_in, inlet, order=4,
     return f
 
 
-def fit_disturbance(t, bt, t_in, inlet, a, theta, knot_spacing=20.0, lam=0.0):
+def fit_disturbance(t, bt, t_in, inlet, a, theta, knot_spacing=20.0, lam=0.0,
+                    tau2=0.0):
     """With ``a`` and ``theta`` held fixed, recover ``slow(t)`` on a B-spline basis.
 
     Used only to give the simulator a full-roast disturbance to run against --
     including the charge recovery, which no low-order polynomial can represent.
     The plant parameters must come from :func:`fit_integral` on a window where
     the disturbance *is* low-order; fitting both here would be circular.
+
+    ``tau2 > 0`` recovers ``slow`` under the two-lag structure instead, so a
+    loss curve stays matched to the ``(a, theta, tau2)`` it was fitted with --
+    the two are not interchangeable, since ``a`` differs between structures.
     """
     from scipy.interpolate import BSpline
 
     dt = float(np.median(np.diff(t)))
-    d = _delayed(t, theta, t_in, inlet) - bt
+    d = lag1(_delayed(t, theta, t_in, inlet), tau2, dt) - bt
     U = np.concatenate([[0.0], np.cumsum(0.5 * (d[1:] + d[:-1])) * dt])
 
     interior = np.arange(t[0] + knot_spacing, t[-1], knot_spacing)
@@ -310,3 +333,52 @@ def fit_disturbance(t, bt, t_in, inlet, a, theta, knot_spacing=20.0, lam=0.0):
     slow = B @ beta[1:]
     resid = y - X @ beta
     return slow, float(np.sqrt(np.mean(resid ** 2)))
+
+
+def block_bootstrap_2lag(t, bt, t_in, inlet, order, thetas, tau2s, n_boot=200,
+                         block=60, seed=0):
+    """:func:`block_bootstrap` for :func:`fit_integral_2lag`.
+
+    Returns ``(base_fit, samples)`` with samples as ``(theta, tau2, a)`` rows.
+    The same block-length caution applies: these residuals are smooth, so a
+    block shorter than the residual correlation time reports a spread that is
+    far too tight.  Because the grid is two-dimensional, keep it coarse here --
+    the bootstrap answers "how far does the minimum move", not "where is it".
+    """
+    base = fit_integral_2lag(t, bt, t_in, inlet, order=order, thetas=thetas,
+                             tau2s=tau2s)
+    dt = float(np.median(np.diff(t)))
+    d = lag1(_delayed(t, base.theta, t_in, inlet), base.tau2, dt) - bt
+    U = np.concatenate([[0.0], np.cumsum(0.5 * (d[1:] + d[:-1])) * dt])
+    P = _cheb_basis(t, order + 1)
+    X = np.column_stack([U, P])
+    yhat = X @ np.concatenate([[base.a], base.coeffs])
+    resid = bt - yhat
+
+    rng = np.random.default_rng(seed)
+    nb = int(np.ceil(len(t) / block))
+    out = []
+    for _ in range(n_boot):
+        starts = rng.integers(0, max(1, len(resid) - block), size=nb)
+        rs = np.concatenate([resid[s:s + block] for s in starts])[: len(t)]
+        f = fit_integral_2lag(t, yhat + rs, t_in, inlet, order=order,
+                              thetas=thetas, tau2s=tau2s)
+        out.append((f.theta, f.tau2, f.a))
+    return base, np.array(out)
+
+
+def neff(r):
+    """Effective sample size of an AR(1)-correlated residual series.
+
+    An F-test between the one-lag and two-lag structures on the raw sample count
+    is meaningless here: consecutive BT residuals are correlated at rho > 0.9, so
+    ``n`` overstates the information by an order of magnitude.  This is the
+    standard ``n * (1-rho)/(1+rho)`` correction, and it is what makes the extra
+    parameter's F statistic honest.
+    """
+    r = np.asarray(r, dtype=float)
+    if len(r) < 10:
+        return float(len(r))
+    rho = float(np.corrcoef(r[:-1], r[1:])[0, 1])
+    rho = min(max(rho, 0.0), 0.999)
+    return float(len(r) * (1.0 - rho) / (1.0 + rho))

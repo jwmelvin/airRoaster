@@ -2,12 +2,23 @@
 
 Loop, breaking at the PID output (duty)::
 
-    L(s) = (Kp + Ki/s + Kd*s/(1 + s/wd)) * Kact * a/(s + a) * exp(-tot*s)
+    L(s) = (Kp + Ki/s + Kd*s/(1 + s/wd)) * Kact * a/(s + a)
+           * 1/(1 + tau2*s) * exp(-tot*s)
 
 ``Kact`` is the actuator gain of the target subrange -- ``(max-min)/100`` degC of
 inlet setpoint per duty unit, 1.6 for the 140/300 range in use.  ``tot`` is the
 plant transport delay plus the loop's own small lags (inner loop, BT smoothing,
 the one-sample ordering between ``pid.update()`` and ``setSV``).
+
+``tau2`` is the plant's **second lag** and defaults to 0, which reproduces every
+number these functions returned before it existed.  It is not cosmetic: roast 48
+identifies the ``Inlet -> BT`` path as ``theta ~ 0`` plus a 10-13 s lag rather
+than 8-13 s of pure deadtime (state-history.md § Deadtime versus lag), and a lag
+and a delay of the same size cost different phase -- ``-arctan(w*tau2)``, which
+saturates at 90 deg, against ``-w*theta``, which does not.  Below the crossover
+the two are nearly the same, which is exactly why the open-loop residual on a
+smooth roast cannot separate them; the arithmetic here is where the difference
+would show up if it were large.
 """
 
 from __future__ import annotations
@@ -38,17 +49,23 @@ EXTRA_LAG = INNER_LOOP_LAG + BT_SMOOTHING + SAMPLE_ORDERING
 
 
 def loop_tf(w, a, theta, Kp, Ki, Kd=0.0, Kact=1.6, extra=EXTRA_LAG,
-            deriv_filter_hz=0.1):
+            deriv_filter_hz=0.1, tau2=0.0):
     s = 1j * np.asarray(w, dtype=complex)
     C = Kp + Ki / s
     if Kd:
         wd = 2 * np.pi * deriv_filter_hz
         C = C + Kd * s / (1.0 + s / wd)
-    return C * Kact * (a / (s + a)) * np.exp(-(theta + extra) * s)
+    L = C * Kact * (a / (s + a)) * np.exp(-(theta + extra) * s)
+    if tau2 > 0:
+        L = L / (1.0 + tau2 * s)
+    return L
 
 
 def margins(a, theta, Kp, Ki, Kd=0.0, **kw):
-    """Return (gain-crossover rad/s, phase margin deg, period s at crossover)."""
+    """Return (gain-crossover rad/s, phase margin deg, period s at crossover).
+
+    ``tau2`` passes through to :func:`loop_tf`.
+    """
     w = np.logspace(-4, 0, 40001)
     L = loop_tf(w, a, theta, Kp, Ki, Kd, **kw)
     mag = np.abs(L)
@@ -64,16 +81,21 @@ def margins(a, theta, Kp, Ki, Kd=0.0, **kw):
 
 
 def closed_loop_modes(a, theta, Kp, Ki, Kd=0.0, Kact=1.6, extra=EXTRA_LAG,
-                      npade=6):
+                      npade=6, tau2=0.0):
     """Dominant closed-loop poles via a Pade approximation of the delay.
 
-    Returns the least-damped oscillatory mode as (period_s, zeta).
+    Returns the least-damped oscillatory mode as (period_s, zeta).  This is the
+    period a ring would actually be observed at; :func:`margins` returns the
+    *crossover* period, which is a different quantity and runs longer.  Roast 45's
+    measured 177 s ring is a closed-loop period, so compare it against this.
     """
     tot = theta + extra
     num_d, den_d = _pade(tot, npade)
-    # plant a/(s+a) * delay
+    # plant a/(s+a) * delay, and the second lag if there is one
     num_p = np.polymul([a], num_d)
     den_p = np.polymul([1.0, a], den_d)
+    if tau2 > 0:
+        den_p = np.polymul(den_p, [tau2, 1.0])
     # controller (Kp*s + Ki)/s   (Kd omitted: it needs its own filter pole)
     num_c, den_c = np.array([Kp, Ki]), np.array([1.0, 0.0])
     if Kd:

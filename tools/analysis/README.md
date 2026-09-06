@@ -6,16 +6,17 @@ reproduces the outer loop so tuning can be tested before it is roasted.
 | file | what it is |
 |---|---|
 | `roastdata.py` | loaders for Artisan `.alog` and the dashboard CSV, plus the CHARGE alignment |
-| `plantfit.py` | first-order-plus-deadtime identification of `Inlet -> BT` |
+| `plantfit.py` | identification of `Inlet -> BT`: first-order-plus-deadtime, the two-lag variant, the fan-scaled gain, block bootstraps for both structures |
 | `artisan_pid.py` | a faithful port of Artisan v4.2.0's software PID and its Follow-Background plumbing |
 | `sim.py` | the closed-loop simulator: background -> PID -> inlet SV -> inner loop -> plant |
 | `margins.py` | frequency-domain phase margin for the same loop |
 | `roast46_refit.py` | driver that reproduces the numbers in state-plan.md § Roast 46 refit |
-| `roast48_plant.py` | the plant from roast 48's **designed** inlet steps: the fan term (`kf = 0`), the sub-window instability, and the two-lag alternative to the deadtime |
+| `roast48_plant.py` | the plant from roast 48's **designed** inlet steps: the fan term (`kf = 0`), the sub-window instability, and the two-lag alternative to the deadtime (followed up in `deadtime_vs_lag.py`) |
 | `dip_strategies.py` | charge-state robustness of the dip strategies; state-plan.md § Dip strategies |
 | `roast47_ff.py` | refits `feedforward()` from roast 47's fan x SV grid; **stdlib only**, no venv needed |
 | `roast48_ff.py` | the same grid **loaded** (roast 48, 400 g): does the empty map transfer, is `slope(SV)` a line, and the pooled 47+48 fit; **stdlib only** |
 | `roast49_step6.py` | roast 49 against state-plan.md § Step 6's predictions, and the PID replay at 0.5 s sampling |
+| `deadtime_vs_lag.py` | is `Inlet -> BT` a deadtime or a lag?  Excitation screen, the `(theta, tau2)` identifiability surface, the two-lag bootstrap, the margin arithmetic under both structures, and what it does to the step-9 lead |
 | `charge_state.py` | how cold the beans were: the control-independent mixing proxy, air-corrected; **stdlib only** |
 | `plant_roast46.json` | the plant card `tools/merge_inlet_base.py` reads: `a`, `theta` and the loss cubic, with provenance |
 | `plant_roast48.json` | roast 48's plant, **not** an authoring source (`supersedes_plant_roast46: false`); its settled content is `kf` |
@@ -27,6 +28,7 @@ python3 -m venv .venv && .venv/bin/pip install numpy scipy   # .venv/ is gitigno
 .venv/bin/python tools/analysis/roast46_refit.py
 .venv/bin/python tools/analysis/roast46_refit.py --emit-plant   # refresh plant_roast46.json
 .venv/bin/python tools/analysis/roast48_plant.py                # the designed-excitation refit
+.venv/bin/python tools/analysis/deadtime_vs_lag.py              # ~2 min; --no-bootstrap is faster
 ```
 
 `--emit-plant` is the seam between this directory and the authoring tools: it
@@ -48,7 +50,7 @@ python3 tools/analysis/charge_state.py              # run this after every roast
 has on the charge state, and it stops being an inference the moment `greens_temp`
 is filled in.
 
-Four traps the code encodes so they cannot be repeated:
+Seven traps the code encodes so they cannot be repeated:
 
 - The CHARGE origin is `timex[timeindex[0]]`, and `timeindex[0] == 0` is a
   **valid** index, not "unset" (`profile_003` relies on it).
@@ -69,10 +71,25 @@ Four traps the code encodes so they cannot be repeated:
   are constant by construction and trip it constantly. Window means survive
   (0.10 %); transient timing does not. `roast48_ff.py` opens every guard
   `FILTER` seconds *before* a step. Untick **Drop Spikes** and this goes away.
+- **`theta` in a first-order-plus-deadtime fit is *total apparent lag*, not
+  transport delay.**  The two are only separable by a **step**: below the corner
+  where they part company `exp(-theta s)` and `1/(1+theta s)` are the same
+  function, so a fit to a smooth ramp or a closed-loop recovery will happily call
+  a lag a delay.  `plant_roast46.json`'s 13.5 s is a sum; roast 48's steps put the
+  real transport delay at 0-2 s (`deadtime_vs_lag.py`).  The sum is what the loop
+  and the base schedule actually depend on, which is why nothing had to change --
+  but do not quote `theta` as a transport time, and do not mix an `a` fitted under
+  one structure with a `theta`, `tau2` or loss curve fitted under the other.
+- **An F-test on these residuals is meaningless and `plantfit.neff` says why.**
+  Consecutive BT residuals correlate at rho > 0.99, so a 400-sample window carries
+  5-9 independent samples.  Model comparison here has to rest on identifiability,
+  stationarity and a bootstrap, not on a residual ratio.
 - **A plant card is not automatically the best one available.** Roast 48's
   excitation is designed and roast 46's is accidental, yet `plant_roast46.json`
-  is still what `merge_inlet_base.py` reads: roast 48's `a` and `theta` are not
-  stationary across its own sub-windows, and the one closed-loop behaviour on
-  record (roast 45's 177 s ring at Ki 0.10) is predicted by roast 46's card and
-  not by roast 48's. Check a fit against a *measured closed-loop* response before
-  letting it move any tuning.
+  is still what `merge_inlet_base.py` reads: roast 48's `a` is not stationary
+  across its own sub-windows (its `theta` spread turned out to be the structural
+  artefact above), and the one closed-loop behaviour on record — roast 45's 177 s
+  ring at Ki 0.10 — is predicted by roast 46's card (173-194 s) and not by roast
+  48's (143-152 s). Check a fit against a *measured closed-loop* response before
+  letting it move any tuning, and compare against the least-damped closed-loop
+  mode rather than the crossover period; they are different quantities.

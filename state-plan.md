@@ -1409,14 +1409,29 @@ argument for doing anything about the dip at all.
    (dbg/dt - loss)/a`, and roast 48 found `a` and `theta` **not stationary within
    one roast** (`a` 0.0062-0.0085, `theta` 7.8-14.5). The trim absorbs that — the
    simulation survives +-20% of gain error — but it caps how good the base can
-   be. (1) and (2) also settle its open `--dip` question outright: with a charge
+   be. **Half of that is now retracted** (item 4 below): `theta`'s spread was a
+   structural artefact and goes to 0.0-1.0 s under the two-lag fit, and the lead
+   term is sound as written. `a`'s spread is real and, under two lags, slightly
+   wider. (1) and (2) also settle its open `--dip` question outright: with a charge
    model the dip can be *computed* into the base rather than back-extrapolated
    around.
-4. **Desk: settle the deadtime-versus-lag question.** `fit_integral_2lag` takes a
-   third off the residual on every well-excited window of roast 48 with `theta`
-   collapsing to ~0 and a 10-25 s lag in its place. It costs no roast, it changes
-   the phase margin arithmetic, and it changes the `bg(t+theta)` lead that (3)
-   would be built on. Do it before step 9, not before (1).
+4. ~~**Desk: settle the deadtime-versus-lag question.**~~ **Done, 2026-09-06**
+   (`tools/analysis/deadtime_vs_lag.py`; state-history.md § Deadtime versus lag).
+   The answer changes a claim rather than a number, so nothing below it moves.
+   Roast 49 was checked and **cannot support the fit** — closed-loop, one 1:30
+   step, and its two-lag fit runs away to a negative gain on the tau2 grid
+   `roast48_plant.py` uses. Roast 48's steps identify the split as **all lag**
+   (`theta` 0-2 s, pure deadtime costs 42-131% more residual); roast 46 is a
+   ridge in which only **`theta + tau2` is determined**, at 12-14 s — and that
+   sum *is* the single-lag `theta` both cards report. So the 13.5 s is total
+   apparent lag, not transport. Consequences: the phase margin at Kp 3.0 /
+   Ki 0.07 moves 32.8 -> 37.7 deg across the **entire** ridge, so **`pidKi` 0.07
+   stands**; and the `bg(t+theta)` lead is a valid first-order stand-in for the
+   lag inversion `X + tau2*dX/dt`, differing by rms 0.83 degC on profile_003, so
+   **`plant_roast46.json` and `merge_inlet_base.py` need no change** and (3)
+   loses the "live cost roast 48 raised" caveat below. What is *not* settled is
+   `a`, which is non-stationary under both structures and slightly worse under
+   two lags; that is a separate question and no run is proposed for it.
 5. **Drop the remaining characterisation runs.** Test C's two loaded doublets
    existed to measure the fan; roast 48 measured it (`kf = 0` in the plant, and
    the loaded FF check needs no correction, so `FF SLOPE` has nothing to do). A
