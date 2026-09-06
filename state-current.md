@@ -427,6 +427,55 @@ The charge dip is the weak part of the simulation — floor times are good to ab
 +-10 s and the 0-30 s SV replay is uncheckable at this resolution — so dip
 *rankings* above are trustworthy and dip absolute numbers are not.
 
+**Then two operator corrections landed and they change the order of work
+(2026-09-05).**
+
+**First: roast 46 was a frozen charge**, and green beans arrive anywhere between
+-20 degC and room temperature. `greens_temp` is `0.0` in every roast on record, so
+the dataset could not say — but the refit supplied a control-independent
+measurement. **The plant delay is 13.5 s, so nothing the heater does reaches BT
+before ~14 s after CHARGE**, and the BT fall over 0-13 s is charge mixing alone.
+Per 100 g it is **14.46 +- 0.48 (3.3%)** across roasts 43-46, where a
+room-temperature batch should read ~28% lower than a freezer one — so **all four
+were frozen**, and roast 45 vs 46 really is a pure batch-size comparison. The
+batch-size diagnosis of roast 46 and the plant fit both stand; what changes is
+that **profile_004 would encode a *frozen* dip**, so its fragility points at warm
+charges (BT above target -> negative error -> floor -> windup), the dangerous
+direction. Keep `(CHARGE_BT - BT at CHARGE+13 s) / mass` as a free charge-state
+proxy, and **start filling in `greens_temp`**.
+
+**Second, and much the more valuable: the dip is a different control problem, so
+gate `Ki` off through it.** The operator asked whether coarse parameters could
+ride through the initial stage and be swapped after equalisation. They can, and
+the earlier "no" in § Scheduling was to a different question (gain scheduling for
+the *ramp*, where the plant moves by only +-6%). The mechanism is that
+`_back_calculate_integral` is gated on `getKi(PV) != 0` (pid.py:314-333), so
+**`Ki = 0` closes both windup paths at once** and `Iterm` is simply frozen —
+`p-i-d(3,0,0)` at CHARGE+1 s, `p-i-d(3,0.07,0)` at CHARGE+90 s, both bumpless,
+both the same alarm-plus-hidden-button pattern `gen_lookahead_aset.py` already
+generates. Simulated over a 62 degC swing in charge temperature, the integrator
+handed to the ramp goes from a spread of **36.5 to 0.3**, worst error in
+1:30-3:00 from -14.5 to +0.3 degC, and time-to-BT-150 from 9.2 s of range to
+1.8 s, with `Iterm` at DROP unchanged at 71.2 in every run. It removes the
+*sensitivity* to the dip rather than cancelling one instance of it, which is why
+it is worth more than profile_004. Costs: the SV sits on the 140 floor longer and
+cannot lift off it before 1:30; `p-i-d()` is sticky so a Save Settings before
+1:30 writes `pidKi = 0` into the `.aset`; and a missed 1:30 alarm leaves the loop
+P-only for the roast. Lowering `Kp` in the dip is *worse*, not better (handover
+spread 91.5) — `Kp = 3.0` everywhere.
+
+**A documentation error was also fixed**: § Scheduling listed `pidILF`, `pidIWP`,
+`pidIRoC`, `pidDerivativeLimit` and `pidDerivativeFilter` as runtime-settable.
+**None of those commands exist.** The complete PID command surface is
+`p-i-d(p,i,d)`, `pidWeights(beta,gamma)`, `pidLookahead(n)`, `pidSource(n)`, the
+SV/RS commands and `pidmode(...)`. The three gains, the two weights and the
+lookahead are the only runtime levers — and they are enough.
+
+**Revised order: step 6 (lookahead switch), then step 1c (gate `Ki`), then
+step 1b (profile_004, now a refinement rather than a fix).** Runbook and detail
+in state-plan.md § The dip is a different control problem and § Charge
+temperature.
+
 **Canonical config is `artisan/airRoaster_cascadePID.aset`** (one file; the
 brief `_edit` variant used while adding the alarms was folded back in and
 removed), with background

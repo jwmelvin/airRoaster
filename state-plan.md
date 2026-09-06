@@ -1777,11 +1777,21 @@ CHARGE button action (buttonactions[0], currently empty) -> a button with pidLoo
 alarm: From CHARGE, offset ~90 s, source -3 (time only)  -> a button with pidLookahead(6)
 ```
 
-Also runtime-settable the same way if ever wanted: `p-i-d(p,i,d)`, `pidILF`,
-`pidIWP`, `pidIRoC`, `pidDerivativeLimit`, `pidDerivativeFilter`,
-`pidWeights(beta,gamma)`. One good use for `p-i-d()` that is *not* scheduling:
-a panic button carrying a known-safe gain set, for the characterisation runs
-below.
+> **Corrected 2026-09-05.** This paragraph previously listed `pidILF`, `pidIWP`,
+> `pidIRoC`, `pidDerivativeLimit` and `pidDerivativeFilter` as runtime-settable
+> Artisan Commands. **None of them exist.** Enumerating every
+> `cs.startswith('...(')` branch in `main.py`'s Artisan Command handler, the
+> complete PID-related set is `p-i-d(p,i,d)` (10759), `pidWeights(beta,gamma)`
+> (10796), `pidLookahead(n)` (10936), `pidSource(n)` (10851), `pidSV`/`pidSVC`/
+> `pidRS`/`pidSVbuttons` (10811-10841, 10599) and `pidmode(...)` (10359). The
+> PID object *has* `setIntegralLimitFactor` and friends, but nothing in the
+> command surface reaches them — ILF, IWP, IRoC, `Dlimit` and the derivative
+> filter can only be changed in the dialog, i.e. between roasts.
+
+So the runtime levers are **the three gains, the two setpoint weights and the
+lookahead** — and that turns out to be enough (§ The dip is a different control
+problem). One good use for `p-i-d()` that is *not* scheduling: a panic button
+carrying a known-safe gain set, for the characterisation runs below.
 
 Cautions: alarm time and temperature conditions are **OR'd** (§ Auto-DROP
 detection), so a time-only alarm needs source -3 and the temperature row left
@@ -2596,6 +2606,13 @@ the lookahead and `profile_004`, and it must not be combined with either.
 
 ##### (e) profile_004 -- it and the `pidLookahead(0)` leg belong together
 
+> **Partly superseded, 2026-09-05.** Two things landed after this was written.
+> Roast 46 was a **frozen** charge, so profile_004 encodes a frozen dip and its
+> fragility points at *warm* charges, not cold ones (§ Charge temperature). And
+> gating `Ki` off through the dip removes the sensitivity that made the dip shape
+> matter at all (§ The dip is a different control problem). The ranking below is
+> still right *at a fixed charge state*; it is no longer the thing to fix first.
+
 `profile_004` simulated as specified in runbook step 1b: roast 46's own measured
 BT for 0:00-1:30, blended into `profile_003`'s unchanged ramp over the following
 20 s. TP becomes **57.6 degC at 0:22** instead of 67.4 at 0:37.
@@ -2671,13 +2688,181 @@ So the two changes are not independent and the order matters:
   exogenous to the controller, so using it in a closed-loop what-if is sound, but
   it is roast-46's disturbance, not a general one.
 
+### The dip is a different control problem — gate Ki through it (operator, 2026-09-05)
+
+Operator question: *"there must be a way to let some coarse parameters ride
+through the initial stage, and then change tuning after the initial
+equalization."* **Yes, and it is the single most valuable change found so far.**
+The earlier "no" in § Scheduling was to *gain scheduling for the ramp*, on the
+grounds that the plant moves by only +-6% across a roast. That answer stands and
+it is not this question. The dip and the ramp are not two operating points of one
+control problem, they are two different problems, and the thing that connects
+them — the integrator handed over at 1:30 — is exactly what has been going wrong.
+
+#### The mechanism: `Ki = 0` freezes the integrator completely
+
+`_back_calculate_integral` (pid.py:314-333) is gated on **`if self.getKi(PV) != 0`**.
+So setting `Ki = 0` closes *both* windup paths at once: the `Ki*err*dt` term
+contributes nothing, and back-calculation does not run, so the output can sit on
+the floor or the ceiling for as long as it likes without `Iterm` moving. With
+`beta = 1` and `Kd = 0` the loop through the dip is then **pure proportional with
+a frozen bias** — which is what "coarse parameters riding through the initial
+stage" should mean.
+
+`p-i-d(<p>,<i>,<d>)` (main.py:10759 -> `confPID` -> `pid.setPID`) only assigns the
+three gains; `Iterm` is untouched, so both switches are bumpless. Wiring is the
+same pattern `tools/gen_lookahead_aset.py` already generates:
+
+```
+alarm, from CHARGE, offset  1 s, source -3 (time only) -> button: p-i-d(3,0,0)
+alarm, from CHARGE, offset 90 s, source -3 (time only) -> button: p-i-d(3,0.07,0)
+```
+
+#### What it does: the roast stops caring about the charge state
+
+Simulated on the validated model, step-6 lookahead in place, sweeping the charge
+temperature over a **62 degC range** (the sweep is relative to roast 46's own
+charge, so it brackets freezer-to-room whichever end that sat at). `I@1:30` is the
+integrator handed to the ramp:
+
+**profile_004, `Ki` as now (0.07 throughout):**
+
+| charge, relative | +20 warmer | roast 46 | 22 colder | 42 colder |
+|---|---|---|---|---|
+| `I@1:30` | 22.7 | 29.7 | **59.2** | 54.0 |
+| worst error 1:30-3:00 | -6.41 | -3.61 | **-14.50** | -7.38 |
+| steady error mean/rms | +0.25 / 0.37 | +0.18 / 0.39 | +0.68 / 1.18 | +0.39 / 1.07 |
+| time to BT 150 vs profile | +3.5 s | -0.3 s | +5.3 s | -3.9 s |
+
+**profile_004, `Ki = 0` until 1:30:**
+
+| charge, relative | +20 warmer | roast 46 | 22 colder | 42 colder |
+|---|---|---|---|---|
+| `I@1:30` | **7.9** | **8.1** | **8.1** | **8.2** |
+| worst error 1:30-3:00 | -1.54 | +0.30 | +0.25 | +0.05 |
+| steady error mean/rms | +0.01 / 0.36 | -0.03 / 0.41 | -0.03 / 0.42 | -0.04 / 0.44 |
+| time to BT 150 vs profile | +1.3 s | +0.1 s | -0.0 s | -0.5 s |
+
+**The spread in the handover integrator collapses from 36.5 to 0.3**, and
+`dt150` from 9.2 s of range to 1.8 s. `Iterm` at DROP is 71.2 in every single
+run, so the loop still reaches the same operating point — it just stops arriving
+there from a random starting point. Against `profile_003` the same switch takes
+the `I@1:30` spread from 20.8 to 3.7.
+
+That is a better answer than matching the background's dip to the charge, because
+it removes the *sensitivity* rather than trying to cancel one instance of it.
+
+#### The alternatives, all worse
+
+| variant | `I@1:30` spread over the 62 degC sweep | steady rms | verdict |
+|---|---|---|---|
+| baseline, `Ki` 0.07 throughout | 36.6 | 0.37 - 1.18 | the problem |
+| **`Ki = 0` to 1:30, then 0.07** | **0.3** | **0.36 - 0.44** | **take this** |
+| `Ki = 0` to 1:30, 0.20 to 3:00, then 0.07 | 0.9 | 2.89 - 3.12 | over-integrates; no |
+| `Kp = 1` to 1:30, `Ki` left at 0.07 | 91.5 | 0.48 - 2.52 | *worse* — a soft P term leaves a big error for Ki to chew on |
+| `Kp = 1` and `Ki = 0` to 1:30 | 1.6 | 0.35 - 3.28 | tight handover but the dip is under-driven |
+
+Note the fourth row: **lowering Kp in the dip is actively harmful**, for the same
+reason § Correction gives for the ramp. Keep `Kp = 3.0` everywhere.
+
+#### The one behaviour change to expect, and the traps
+
+- **The SV will sit on the 140 floor for longer in the dip, and stay there.**
+  With `Ki = 0` there is no back-calculation to lift the output off the floor, so
+  if the background's dip is deeper than the BT actually achieved, the loop is
+  open-loop at the floor until 1:30 — 40-64 s in the warm-charge simulations
+  against 16-23 s ungated. That is the objection § profile_003 raised to
+  profile_002's 39 s of saturation, and the answer is that the objection was
+  really about the *entry state being set by an anti-windup side effect*, which is
+  precisely what this fixes. The floor time is now cosmetic; `I@1:30` is 8
+  regardless.
+- **`p-i-d()` is sticky.** It writes `pidcontrol.pidKp/Ki/Kd`, so a **Save
+  Settings while `Ki = 0` is in force writes `pidKi = 0` into the `.aset`** — and
+  an abandoned roast, or a save before 1:30, does exactly that. Same trap class as
+  Artisan stamping settings at save time (§ Correction). Check `pidKi` in the
+  dialog before every roast, or re-load the `.aset` from file.
+- **If the 1:30 alarm fails to fire the loop is P-only for the whole roast** —
+  roast 40's failure mode, a large standing BT deficit. Visible immediately: SV
+  flat and low while BT falls behind. The CONTROL button is the escape. The
+  CHARGE+1 alarm failing is harmless (`Ki` stays 0.07, i.e. today's behaviour).
+- It composes with the lookahead switch: both are time-from-CHARGE alarms driving
+  hidden Artisan-Command buttons, and `gen_lookahead_aset.py` already builds
+  exactly that structure. Four buttons and four alarms in total.
+
+### Charge temperature — roast 46 was frozen, and what that does and does not change (2026-09-05)
+
+**Operator, correcting the assumption underneath the section above: roast 46 was
+a frozen charge.** Green beans arrive anywhere between freezer (-20 degC) and room
+temperature, a ~42 degC range.
+
+**`greens_temp` is `0.0` in every roast on record.** Artisan has the field
+(Roast Properties) and it has never been filled in, so the existing dataset cannot
+tell a cold-charge roast from a warm one, and nothing below can be checked
+retrospectively. **Start recording it.** One number per roast.
+
+#### All four of roasts 43-46 were at the same charge state
+
+There is a clean control-independent measurement available, and it exists because
+of the refit: **the identified plant delay is 13.5 s, so nothing the heater does
+can reach BT before ~14 s after CHARGE.** The BT trajectory over 0-13 s is charge
+mixing alone. Normalised by charge mass (all four are the same lot C1043, same
+density 745.2, CHARGE_BT within 1.2 degC, and the preheat inlet differences are
+worth under 0.7 degC of BT over that window):
+
+| | #43 400 g | #44 400 g | #45 345 g | #46 400 g |
+|---|---|---|---|---|
+| BT fall over 0-13 s | 59.2 | 57.2 | 47.8 | 59.6 degC |
+| per 100 g of charge | 14.80 | 14.30 | 13.86 | **14.90** |
+
+**14.46 +- 0.48, a 3.3% spread.** If the fall scales with `CHARGE_BT - T_charge`,
+a room-temperature batch should read about **28% lower** than a freezer one — so
+the metric has a signal-to-noise of roughly 8, and it says these four roasts were
+all at the same charge temperature. Roast 46 is confirmed frozen, so **roasts
+43, 44 and 45 were frozen too** (same lot, same storage, three of them
+back-to-back within an hour). Corroborating: the heat draw `-slow(t)` evaluated
+at matched BT shows no systematic excess for roast 46 over roast 44 — and a 42
+degC charge difference at 400 g is 29 kJ, which would have to appear somewhere.
+
+**Keep this diagnostic.** `(CHARGE_BT - BT at CHARGE+13 s) / mass` is a free,
+control-independent proxy for the charge's thermal state, computable from any
+`.alog`, and it becomes a calibrated thermometer as soon as a few roasts carry a
+real `greens_temp`.
+
+#### What this changes
+
+- **The batch-size diagnosis of roast 46 stands.** Roasts 45 and 46 were at the
+  same charge temperature, so profile_003's TP being matched to 345 g and roast 46
+  running 400 g is the whole of that story, exactly as § Roast 46 has it.
+- **The plant fit stands.** Its window starts at CHARGE+45 s and charge
+  temperature enters as an initial condition, not as a plant property.
+- **profile_004 encodes a *frozen* 400 g dip**, not a warm one. So the fragility
+  is pointed the other way from the first reading of it: a *warmer* charge would
+  make the actual dip shallower than the authored one, which puts BT above the
+  target, drives the error negative, and floors the output — the profile_002
+  failure mode. **With `Ki` gated off through the dip that no longer matters**,
+  which is the main reason the gate is worth more than the profile.
+- **A calibrated `TP = T_charge + Q/(m*c)` is withdrawn.** Fitting `Q` and
+  `T_charge` jointly to the four `(mass, TP)` pairs gives `T_charge = +6 degC,
+  Q = 36.2 kJ`, but shifting the three 400 g turning points by one standard
+  deviation of their own scatter (1.3 degC) moves that to `-3.5 degC / 41.8 kJ`
+  or `+15.4 degC / 30.6 kJ`. With only two distinct batch sizes and no recorded
+  charge temperature, **the data cannot pin either number**, and any figure of the
+  form "TP moves 1:1 with charge temperature" is a model statement, not a
+  measurement. It is also not needed now that the loop is being made insensitive
+  to it.
+
 ### Runbook — the agreed order of work (2026-09-02, re-pointed 2026-09-05)
 
-One variable per roast. Order after roast 46 and the refit (§ Roast 46 refit):
-**step 6, then step 1b** — those two are the whole of the remaining tuning work
-and they compose. Steps 2-5 and 7-8 are independent; the characterisation runs
-(3-5) drop in priority now that the plant is identified, but Test C keeps its
-value because the fan is still one weakly-identified coefficient.
+One variable per roast. Order after roast 46, the refit and the charge-temperature
+finding: **step 6, then step 1c, then step 1b.** Steps 2-5 and 7-8 are
+independent; the characterisation runs (3-5) drop in priority now that the plant
+is identified, but Test C keeps its value because the fan is still one
+weakly-identified coefficient.
+
+**Do this on every roast from now on, it costs nothing: fill in `greens_temp`**
+(Artisan Roast Properties). It is `0.0` on every roast on record, which is why
+the charge state of the existing set had to be inferred rather than read
+(§ Charge temperature).
 
 **~~Step 1 — validate `pidKi` 0.07 + profile_003.~~ DONE — roast 46, 2026-09-05.**
 Five of the six checks pass, item 5 (floor time) fails on batch size rather than
@@ -2691,8 +2876,13 @@ things came out of it that set the order below:
   which cost 30 degC of manufactured error, a rail-to-rail SV excursion and 11 s
   on the floor in the first minute. That is **new step 1b, profile_004**.
 
-**Step 1b — profile_004, a 400 g dip. Run it *after* step 6, and only with the
-lookahead-switching config.** Take 0:00-1:30 from roast 46's own measured BT,
+**Step 1b — profile_004, a 400 g dip. Run it *after* step 6 and step 1c, and only
+with the lookahead-switching config.** Its value drops sharply once `Ki` is gated
+(step 1c does the same job without an authoring step, and does it for every charge
+state rather than one) — and note that roast 46 was a **frozen** charge, so
+profile_004 would encode a frozen dip and would be wrong in the *dangerous*
+direction (floor plus windup) for a warm one. Keep it on the list, but as a
+refinement rather than a fix. Take 0:00-1:30 from roast 46's own measured BT,
 keep profile_003's ramp and finish unchanged (the same operation that produced
 profile_003 from profile_002 — § profile_003, § Roast 46). Simulated in
 § Roast 46 refit: paired with the step-6 file it is the best configuration found
@@ -2701,6 +2891,25 @@ steady error +0.18 degC — but at the present constant `svLookahead = 3` the sa
 background is *worse* than profile_003 (`Iterm` 41 at 1:30, a 9.1 degC undershoot
 over 1:30-3:00), because three seconds of lead against a steeper, earlier dip
 manufactures a bigger negative error. The two changes are not independent.
+
+**Step 1c — gate `Ki` off through the charge dip.** Two more hidden
+Artisan-Command buttons and two more time-from-CHARGE alarms, regenerated the
+same way as the lookahead pair: `p-i-d(3,0,0)` at CHARGE+1 s and
+`p-i-d(3,0.07,0)` at CHARGE+90 s. `Ki = 0` closes both windup paths at once —
+the integral term and, because `_back_calculate_integral` is gated on
+`getKi(PV) != 0` (pid.py:314-333), back-calculation as well — so `Iterm` is
+frozen through the dip and handed to the ramp at a known value. Simulated over a
+62 degC swing in charge temperature the handover integrator goes from a spread of
+**36.5 to 0.3**, and time-to-BT-150 from 9.2 s of range to 1.8 s
+(§ The dip is a different control problem). Expect the SV to sit on the 140 floor
+longer and not lift off it before 1:30 — that is the mechanism working, not
+failing. Watch the two traps: `p-i-d()` is sticky, so a Save Settings before 1:30
+writes `pidKi = 0` into the `.aset`; and if the 1:30 alarm misses, the loop is
+P-only for the rest of the roast (roast 40's failure mode, CONTROL button to
+escape).
+
+**This is worth more than step 1b** and should come first — it removes the
+*sensitivity* to the dip shape rather than cancelling one instance of it.
 
 **Step 2 — flash v0.19.0 and wire up the new channels.** After step 1, so that
 roast stays clean. `./verify.sh upload`, then in Artisan **Config > Device >

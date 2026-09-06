@@ -53,6 +53,10 @@ class LoopConfig:
     charge_detect_delay: float = 0.0   # autoCHARGE backdating, in ticks/seconds
     # runtime lookahead switching: list of (t_since_charge, new_svLookahead)
     lookahead_schedule: list = field(default_factory=list)
+    # runtime gain switching via Artisan's p-i-d(<p>,<i>,<d>) command
+    # (main.py:10759 -> pid_control.confPID -> pid.setPID, which assigns the
+    # gains and leaves Iterm alone -- bumpless).  List of (t, Kp, Ki, Kd).
+    gain_schedule: list = field(default_factory=list)
 
 
 def make_pid(cfg: LoopConfig, bg: Background, iterm0=0.0, target0=None):
@@ -87,6 +91,9 @@ def _apply_schedule(cfg, ctl, t):
     for ts, L in cfg.lookahead_schedule:
         if t >= ts:
             ctl.svLookahead = L
+    for ts, kp, ki, kd in cfg.gain_schedule:
+        if t >= ts:
+            ctl.pid.Kp, ctl.pid.Ki, ctl.pid.Kd = kp, ki, kd
 
 
 def replay_pid(bg: Background, t, bt_measured, cfg: LoopConfig, iterm0=0.0,
