@@ -532,7 +532,15 @@ instrumentation and the outer-loop restructuring land in one flash (spec in
 state-plan.md § Firmware now in scope; it is inert until Artisan is
 reconfigured) — and **steps 3-5 first**, because the schedule is exactly `1/a`
 and the loss curve. **The firmware half is written (2026-09-06) and v0.19.0 is
-now complete and unflashed** — see the paragraph below. That is new **runbook step 9**, and it is why the characterisation
+now complete and unflashed** — see the paragraph below. The Artisan half has a
+gap that was not costed: `artisan/make_inlet_background.py` does **not** emit the
+file step 9 needs — its events mode blanks BT by construction, so the base
+schedule has to be *merged* into profile_003/004 rather than generated, and two
+assumptions about playback were wrong (it keys on the numeric event type, not the
+type name; and events after the background's DROP never replay, which the
+`bg(t+theta)` lead runs into). state-plan.md § Dip strategies § The base-curve
+authoring gap. Not on the critical path — there is no `ff(t)` to author until
+steps 3-5 run. That is new **runbook step 9**, and it is why the characterisation
 runs have recovered their priority. The relative-setpoint variant
 (`INLET = BT + trim`) was tried and is **worse** for a principled reason: it turns
 the plant into an integrator with 13.5 s of delay. Detail, the full table and the

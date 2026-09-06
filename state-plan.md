@@ -2151,10 +2151,11 @@ is per event type (canvas.py:1848), so background playback drives the base on on
 slider while `pidPositiveTarget` (any of sliders 1-4, pid_control.py:1252) points
 the PID at a second slider bound to `INLET TRIM {}`. That is the collision that
 forced playback off for the cascade (§ Background event playback must be off),
-and putting the two on different sliders is what dissolves it. The base curve is
-authored by `artisan/make_inlet_background.py`, kept unmodified for exactly this
-path. **Do not configure any of this until steps 3-5 have measured `1/a` and the
-loss curve** — the schedule *is* those two things.
+and putting the two on different sliders is what dissolves it. The base curve
+goes into the background as replayable events — **not** something
+`artisan/make_inlet_background.py` emits today; see § Dip strategies § The
+base-curve authoring gap. **Do not configure any of this until steps 3-5 have
+measured `1/a` and the loss curve** — the schedule *is* those two things.
 
 **Acceptance.** Compile-verified via `./verify.sh`; bench-checkable with the
 heater cold — `INLET 200` then `INLET TRIM 20` must show an effective 220 with no
@@ -3198,8 +3199,9 @@ slider 3. So:
 
 - **Artisan**: re-enable playback for the inlet-base event type only; point
   `pidPositiveTarget` at the trim slider; map that slider's target subrange onto
-  the trim range. `artisan/make_inlet_background.py` — kept for exactly this path
-  and never modified — authors the base curve into the background `.alog`.
+  the trim range. The base curve goes into the background `.alog` as replayable
+  events — **but `artisan/make_inlet_background.py` does not currently emit a
+  file of that shape**; see § The base-curve authoring gap below.
 - **Firmware**: one new command, `INLET TRIM <degC>`, bounded, defaulting to 0,
   cleared on disengage and on `INLET 0`. The inner loop's setpoint becomes
   base + trim. Everything else, including the `INLET 0` DROP chain and the
@@ -3223,6 +3225,79 @@ range must be bounded on the device, not only in the Artisan mapping. And an
 authoring error in the base curve is a whole-roast error rather than a transient,
 so the base must be regenerated from the background whenever the background
 changes.
+
+#### The base-curve authoring gap — `make_inlet_background.py` does not emit this file (2026-09-06)
+
+The structural fix above needs **one** background carrying three things at once:
+profile_003/004's **BT curve** (the outer PID's target — `pidSource = 1`), the
+**base schedule as replayable special events** on the base slider, and the real
+**`timeindex` marks**. Neither of the script's two output modes is that file,
+and it is not a matter of flags:
+
+- **default mode** writes the continuous curve into `extradevices = [58, 22]`
+  (channel B3) for *Follow-Background* mode. That is a different mechanism —
+  no special events at all, so nothing for `playbackevent` to replay.
+- **`--events N` mode** (`build_events_alog`) does emit the events, and on the
+  right type — but it **hard-codes `temp2 = [-1.0] * len(timex)`**, blanks
+  `extradevices`, puts the mirrored playback polyline in the *ET* slot
+  (`temp1`), and sets `timeindex = [0, 0, 0, 0, 0, 0, len-1, 0]`: CHARGE at
+  sample 0, DROP at the last sample, **no DRY END and no FCs**. It is an
+  inlet-only background by construction, which is exactly right for the
+  inner-loop event-playback path it was written for and gives the outer PID
+  nothing to follow.
+
+Measured on the files in the repo: `bkgd_inlet_150+25-255@420.alog` has
+`temp2 = -1.0` for all 421 samples and 8 type-2 events; `profile_003.alog` has
+BT 67.4-201.6 degC over 427 samples and **zero** special events.
+
+**So the step-9 background is a merge, not a generation.** Take profile_003 (or
+004) and add the four `specialevents` / `specialeventstype` /
+`specialeventsvalue` / `specialeventsStrings` arrays to it. That is additive to a
+recorded profile and disturbs nothing: profile_003 already carries
+`etypes[2] = 'T_inlet'`, its own `extradevices = [112, 25]`, and
+`timeindex = [0, 192, 399, 0, 0, 0, 425, 0]`. The two pieces the script already
+has and the merge should reuse are `events_ext_to_internal` (the
+`specialeventsvalue` encoding, whole-degree quantised, and it already handles
+negatives) and `place_event_times`.
+
+**Two assumptions corrected against v4.2.0 while checking this.**
+
+1. **Playback does not match event-type *names*.** The script's inline comment
+   says *"playback only fires when the background's event-type name matches the
+   foreground's (canvas.py:playbackevent)"*. It does not: `playbackevent`
+   reads `event_type = self.backgroundEtypes[i]` (canvas.py:6436), admits it on
+   `0 <= event_type < 4` (:6438), and gates it on `end_reached[event_type]`
+   (:6443), which is seeded as `[not flag for flag in self.specialeventplayback]`
+   (:6420) — a 4-element per-type bool list (canvas.py:1848). **No name is
+   compared anywhere in the function.** So the merged background does not need its
+   `etypes` list aligned with the `.aset`'s — only the numeric type index has to
+   agree. Names still drive labels and annotations. This *simplifies* the merge;
+   it also means a mismatched name will not save you from a wrong index.
+2. **Events after the background's DROP are never replayed** —
+   `(self.timeindexB[6]==0 or bge <= self.timeindexB[6])`, canvas.py:6444.
+   With profile_003 that caps the base schedule at index **425 (~416 s)**, the
+   same window constraint § Auto-DROP detection found for `svLookahead`. It bites
+   harder here: `ff(t) = bg(t+theta)` reads the background **ahead** by
+   `theta = 13.5 s`, so the last ~14 s of the schedule has no background left to
+   read and needs an explicit tail rule rather than the script's flat-outside-
+   range `_interp`.
+
+**One thing to choose rather than inherit: the event count.** Playback
+interpolates linearly between successive events, so `N` events is an
+`(N-1)`-segment polyline. The script's default of 8, tail-biased, was tuned for
+the smooth inner-loop ramp; `ff(t) = bg(t+theta) + (dbg/dt - loss)/a` carries a
+curvature term the ramp did not have. Pick `N` from the residual of the polyline
+against `ff` — a free offline check once `ff` exists — not from the default.
+The whole-degree quantisation is not the constraint: 1 degC of base against
+`a = 0.0049` is ~0.005 degC/s of BT rate.
+
+**Do not build this yet, and it is not on the critical path.** There is no
+`ff(t)` to write until steps 3-5 have measured `1/a` and the loss curve, which is
+the same gate § The structural fix already puts on the Artisan side. When it is
+time, it is array surgery on a dict — either a `--merge-into <profile.alog>` mode
+on the script or a small tool beside `tools/gen_pid_alarm_asets.py`; the encoder
+and the event placement already exist. Recorded as a gap now so that step 9 is
+not costed as "run the existing script".
 
 #### Ruled out, so they are not proposed again
 
@@ -3410,9 +3485,10 @@ structural fix, and the reason steps 1b/1c are demoted rather than deleted:
 today the outer integrator has to supply the entire operating point, so it ramps
 at 0.09 duty/s all roast, `e_ss = (dI/dt)/Ki` exists, `svLookahead` is needed to
 hide it, and the value handed over at 1:30 matters. Give the firmware a base
-inlet schedule (`ff(t) = bg(t+theta) + (dbg/dt - loss)/a`, authored by
-`artisan/make_inlet_background.py` and replayed through Artisan's per-event-type
-background playback on its own slider) and make the PID's output a bounded trim
+inlet schedule (`ff(t) = bg(t+theta) + (dbg/dt - loss)/a`, merged into the
+background as replayable events and replayed through Artisan's per-event-type
+background playback on its own slider — **the authoring step does not exist
+yet**, § The base-curve authoring gap) and make the PID's output a bounded trim
 on it via a new `INLET TRIM <degC>` firmware command. Simulated: `dI/dt` 0.09 ->
 0.01, `I@DROP` 63 -> 50, steady rms **0.11-0.14 degC**, `svLookahead` 0, and with
 the `Ki` gate the handover integrator and `dt150` are **identical at every charge
