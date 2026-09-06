@@ -2090,27 +2090,213 @@ into a measured event. The RoR margin is currently ample but roast-dependent
 (-10.4 to +5.4 across the armed windows seen so far), and DROP drives the whole
 heat-off chain.
 
-### Runbook — the agreed order of work (2026-09-02)
+### Roast 46 (2026-09-05, 19:48) — step 1 passes; the ramp is solved, the dip is not
+
+Step 1 of the runbook, run exactly as specified: `airRoaster_cascadePID.aset`
+unmodified (`pidKp` 3.0, `pidKi` **0.07**, `pidKd` 0, `svLookahead` **3**, floor
+140 / ceiling 300, `createEvents` true), background **profile_003**, ON -> PID on
+-> PID-driven preheat -> CHARGE, no intervention. 400 g in / 355 g out. The only
+config drift in the saved `.aset` is `batchcounter`. Dashboard CSV captured;
+aligned to the `.alog` by cross-correlating CSV `BT` against profile `BT`,
+**residual rms 0.13 degC**, CHARGE at 23:48:07.85Z.
+
+**Fan was deliberately held constant through the roast** (60, with the operator's
+usual 63-64 blip over 0:09-1:26), so nothing in the trace below is air-schedule
+disturbance. The fan steps the operator did make are all in preheat and are
+analysed separately at the end.
+
+#### Scorecard against the step-1 checklist
+
+| # | criterion | result | |
+|---|---|---|---|
+| 1 | time to BT 120/150/180/196.5 vs profile | **+8.5 / +3.4 / +4.9 / +4.8 s** | pass |
+| 2 | quiet-window error 3:10-4:20, 5:40-6:40 under ~1 degC | **-1.02, -0.80 degC** | pass |
+| 3 | is the 177 s ring still there? | **no** | pass |
+| 4 | no SV reversal over 10 degC after 1:00 | SV **monotone**, worst drawdown 0.7 degC | pass |
+| 5 | floor time at the charge dip, predicted 0 s | **11 s** (0:00-1:04) | **fail** |
+| 6 | inner loop rms ~1 degC, heat off both rails | **1.25 degC** after 1:00; 4 s at 100%, 1 s at 0% of 430 | pass |
+
+Item 1 is the yardstick that matters, and the comparison is with **roast 44**,
+the other 400 g batch: roast 44 lagged profile_002 by +8.9 to +13.9 s over the
+same BT range, roast 46 lags profile_003 by **+3.4 to +5.9 s**. (Roast 45 is not
+a fair comparison — 345 g.) Marks: DRYe 3:14 vs the profile's 3:12, FCs 6:44 vs
+6:39, DROP 7:09 vs 7:05 at BT 200.8 vs 201.5.
+
+**Item 3 is emphatic.** The PID error (`target(t+3) - BT`) peaks at **+6.12 at
+2:10** and then decays **monotonically** to +1.06 at 6:40. Extremum-finding on the
+15 s-smoothed trace after 3:30 returns only quantisation wiggle at **+/-0.05
+degC** — against roast 45's 2.82 degC peak-to-peak at a 177 s period. Ki 0.07
+bought the predicted ~30 deg of margin and the lightly-damped mode is gone.
+
+#### The residual above DRY END is pure type-1 ramp error, and Kp is not in it
+
+From 3:00 on the tracking error is remarkably flat: BT sits **1.0 degC below**
+the background (mean -1.02 in 3:10-4:20, -0.80 in 5:40-6:40), equivalently **4-5
+s behind**. Reconstructing the outer loop's integrator from the commanded SV
+(`duty = (SV-140)/1.6`, `Iterm = duty - Kp*err`) shows `Iterm` climbing 41.9 ->
+61.8 over 3:30-7:00, i.e. **dI/dt = 0.095 duty/s**, still monotone — the loop is
+tracking a ramp, exactly as § Roast 44 outer-loop analysis found.
+
+```
+e_ss = (dI/dt) / Ki = 0.095 / 0.07 = 1.36 degC of PID error
+```
+
+`svLookahead = 3` already cancels `3 x 0.2275 = 0.68 degC` of that at the
+mid-roast background slope, leaving **~1.0 degC** — which is what the profile
+comparison measures. The prediction in § profile_003 was +0.59 degC at Ki 0.07 /
+L=3; the outturn is 1.0 because a 400 g batch demands a steeper `dI/dt` than the
+roast-45-fitted plant. **Kp appears nowhere in `e_ss`.**
+
+#### The measured optimum lookahead is 6 s — the step-6 file is already right
+
+Required lead is `L = e_ss(t) / (background slope at t)`, evaluated per sample:
+
+| t | 3:00 | 3:40 | 4:00 | 4:40 | 5:20 | 6:00 | 6:40 |
+|---|---|---|---|---|---|---|---|
+| background slope (degC/s) | 0.343 | 0.296 | 0.276 | 0.240 | 0.208 | 0.180 | 0.157 |
+| `e_ss = (dI/dt)/Ki` (degC) | 2.51 | 1.60 | 1.46 | 1.66 | 1.51 | 1.17 | 0.94 |
+| **L needed (s)** | 7.3 | 5.4 | 5.3 | 6.9 | 7.3 | 6.5 | 6.0 |
+
+Mean **6.3 s** over 3:00-7:00. `artisan/airRoaster_cascadePID_lookahead.aset`
+switches 0 -> **6** at CHARGE+90 s (§ The lookahead-switching config). That value
+was chosen before this roast on margin grounds and the data independently picks
+it out. Nothing needs re-deriving; the file needs running.
+
+**A constant L=6 is not an option**, which is why the switch exists. Replaying
+roast 46's own BT against the background at each L:
+
+| L | 0 | 1 | 2 | **3** *(run)* | 4 | 6 |
+|---|---|---|---|---|---|---|
+| worst dip error (degC) | -9.9 @0:56 | -9.1 @0:56 | -10.6 @0:01 | **-13.9 @0:01** | -17.1 @0:01 | -23.0 @0:01 |
+| `Kp*|e|` back-calculation preload | 29.7 | 27.4 | 31.7 | **41.7** | 51.2 | 69.1 |
+
+Below L=2 the worst error is no longer the charge cliff at all — it is the 400 g
+dip mismatch at 0:56 (below). **L=0 is genuinely the best choice through the
+dip**, so the switching config improves the dip as well as the ramp.
+
+**One thing to expect when it runs.** At CHARGE+90 s the background slope is
+0.680 degC/s, so the 0 -> 6 switch is a **+4.08 degC target step -> +12.2 duty of
+P -> a ~+20 degC jump in the commanded inlet SV**, in one 1 Hz tick. The inner
+loop swallows a 20 degC setpoint step in about 5 s (see item 6), so this is a
+visible bump, not a hazard. If it reads badly on the roast, the gentler shape is
+**0 -> 3 at 1:30 (a +9.8 degC SV step) and 3 -> 6 at 3:00 (+4.9 degC)** — three
+buttons and three alarms instead of two, regenerated the same way with
+`tools/gen_lookahead_aset.py`. Run the file as generated first; one variable.
+
+#### Item 5 failed, and the cause is the batch size, not the loop
+
+profile_003's TP was matched to **roast 45 at 345 g**. Roast 46 was **400 g**:
+
+| | profile_003 | roast 46 |
+|---|---|---|
+| TP | 67.4 degC at 0:37 | **57.6 degC at 0:21** |
+
+9.8 degC deeper and 16 s earlier. § profile_003 predicted this in the box headed
+*"the TP match is batch-specific"* (roasts 43/44 at 400 g bottomed at 58.8/60.2)
+and roast 46 lands right on that prediction. The consequences are the whole of
+the first three minutes:
+
+- PID error swings **+16.6 at 0:17 to -13.9 at 0:01** — a 30.5 degC swing in
+  twenty seconds, essentially all of it manufactured by the profile mismatch.
+- Commanded SV goes **rail to rail, 261 degC at 0:20 down to the 140 floor at
+  0:56-1:04** (the 11 s of item 5).
+- At the floor, `_back_calculate_integral` re-seeds `Iterm` to `Kp*|err|` ~ 30
+  (pid.py:314-333) — the mechanism from § Roast 44 outer-loop analysis, now
+  observed a third time.
+- BT consequently overshoots the background by **+9.3 degC at 1:00**, then the
+  unwind puts it **4.0 degC behind at 2:00-2:20**, and the loop only recovers to
+  its steady 1 degC lag by 3:00.
+
+So the ramp is solved and the dip is not. **The fix is a background whose dip is
+a 400 g dip**: profile_004, taking 0:00-1:30 from roast 46's own measured BT and
+keeping profile_003's ramp and finish unchanged. That removes ~30 degC of
+manufactured error, the rail-to-rail SV excursion, the floor time and the
+preload, in one edit, and it is the same operation that produced profile_003 from
+profile_002.
+
+#### The firmware's feedforward is saturated and has been doing nothing
+
+New, and unrelated to the outer loop. The dashboard CSV reports `FF = 100.0` for
+**430 of 430 samples** from CHARGE to DROP, and for all of preheat above SV ~140.
+Fitting `feedforward()`'s model to the three unclamped samples (fan 53, SV
+130/140.5/144 -> FF 84.7/93.1/96.0) recovers **`ffK` ~ 0.0151, `ffAmbient` ~
+24.1 degC** — which at roast conditions (fan 60, SV 240) predicts **196% heat**
+against an actual demand of 55%.
+
+Consequences, none of them fatal but all of them worth clearing before Tests A-C:
+
+- The term is a **constant +100** for the entire roast, so `pidITerm` sits at
+  **-45 to -64** to cancel it, and the anti-windup bound `I ∈ [-ff, 100-ff]`
+  collapses to `[-100, 0]` — the integrator can never be positive.
+- **The fan compensation it exists for is dead.** `d(FF)/d(fan) = 0` while
+  clamped, so every fan step is absorbed by the integrator instead. This is
+  precisely the mechanism Test C is meant to measure.
+
+The model form is also wrong for this roaster, not just the gain — see the
+preheat measurement below.
+
+#### The preheat fan steps: 0.99 % heat per fan unit
+
+Five clean fan steps during preheat, empty roaster, inner loop closed, inlet SV
+140-165. Heat before (20 s mean) vs after (the 25-45 s window):
+
+| t | fan | heat | d(heat)/d(fan) | worst \|IN-SV\| in the 30 s after |
+|---|---|---|---|---|
+| -4:22 | 53 -> 64 | 37.3 -> 46.2 | 0.81 %/unit | 7.2 degC |
+| -3:16 | 64 -> 60 | 46.2 -> 42.4 | 0.97 | 1.5 |
+| -2:20 | 60 -> 53 | 42.5 -> 36.5 | 0.86 | 3.6 |
+| -1:33 | 53 -> 55 | 36.5 -> 38.7 | 1.11 | 1.3 |
+| -0:51 | 55 -> 60 | 37.8 -> 42.3 | 0.89 | 2.1 |
+
+OLS over the whole preheat window (n = 300 s, inlet mode):
+
+```
+heat = -30.62 + 0.992*fan + 0.0096*SV        residual rms 1.85 %
+```
+
+**0.99 % heat per fan unit** — five independent steps spanning 0.81-1.11 agree
+with the regression to within the noise. This is the first properly measured fan
+number in the project; § Fan vs batch size and § Correction had only a regression
+coefficient inside a loaded-roast fit.
+
+The SV coefficient is weakly identified (SV moved only 140-165, and the outer
+loop moved it *in response to* the fan) but its magnitude is the point:
+**~1 % of heat per 10 degC of inlet setpoint**, against the feedforward model's
+`ffK*fan = 0.0151*60 = 9.1 %` per 10 degC. The model form
+`ffK * fan * (SV - ambient)` is **~9x too steep in SV and ~1.8x too steep in
+fan**, and cannot represent a fit with a large negative intercept. Recalibrating
+`ffK` alone cannot fix it; either the term needs the affine form
+`a + b*fan + c*SV`, or `FF OFF` (`ffK = 0`) is the honest setting until it does —
+which costs nothing today, since the term is a constant.
+
+**The inner loop absorbed every one of these steps**, worst case 7.2 degC on the
+largest (11-unit) step and 1.3-3.6 degC on the rest, with no outer-loop
+involvement — the inlet was back on setpoint before the outer loop's next tick
+mattered. That is the answer to whether the fan schedule needs feedforward help
+at all: at these step sizes, no.
+
+### Runbook — the agreed order of work (2026-09-02, re-pointed 2026-09-05)
 
 One variable per roast. Steps 1-4 are the critical path; 5-7 are independent and
 can slot in anywhere after step 1.
 
-**Step 1 — validate `pidKi` 0.07 + profile_003. Next roast, no other changes.**
-Load `artisan/airRoaster_cascadePID.aset`, background `artisan/profile_003.alog`.
-Normal procedure: **ON** (zeroes the integrator — RESET does not, so start from
-a fresh OFF -> ON), PID on, PID-driven preheat, CHARGE, no intervention. Capture the dashboard CSV as well — this is the last
-roast that needs it. What to read afterwards:
+**~~Step 1 — validate `pidKi` 0.07 + profile_003.~~ DONE — roast 46, 2026-09-05.**
+Five of the six checks pass, item 5 (floor time) fails on batch size rather than
+on the loop, and the mid-roast ring is gone. Full reading in § Roast 46. Two
+things came out of it that set the order below:
 
-1. Time to reach BT 120 / 150 / 180 / 196.5 against the profile. Ignore DRYe and
-   FCs mark times; they are Phases thresholds (§ Roast 45).
-2. Quiet-window error (3:10-4:20, 5:40-6:40) — expect under ~1 degC.
-3. **Is the 177 s ring still there?** Extrema in the error trace, and their
-   spacing. At Ki 0.07 the model says ~30 deg of margin, so the swing should be
-   markedly smaller and slower than roast 45's.
-4. No SV reversal over 10 degC after 1:00; SV ripple against a 61 s mean under
-   ~6 degC.
-5. Floor time at the charge dip — profile_003 predicts **0 s** (§ profile_003).
-6. Inner loop rms ~1 degC, heat off both rails.
+- The residual above DRY END is **pure type-1 ramp error, ~1.0 degC / 4-5 s**,
+  and the **measured optimum `svLookahead` is 6.3 s** — the value the step-6 file
+  already carries. That makes **step 6 the next roast**, not an afterthought.
+- profile_003's dip is matched to a **345 g** batch and roast 46 was **400 g**,
+  which cost 30 degC of manufactured error, a rail-to-rail SV excursion and 11 s
+  on the floor in the first minute. That is **new step 1b, profile_004**.
+
+**Step 1b — profile_004, a 400 g dip.** Take 0:00-1:30 from roast 46's own
+measured BT, keep profile_003's ramp and finish unchanged (the same operation
+that produced profile_003 from profile_002 — § profile_003, § Roast 46). Not
+urgent to run *before* step 6: at `L=0` the switching config already handles the
+dip better than roast 46's `L=3` did.
 
 **Step 2 — flash v0.19.0 and wire up the new channels.** After step 1, so that
 roast stays clean. `./verify.sh upload`, then in Artisan **Config > Device >
@@ -2141,15 +2327,34 @@ After 3-5 the theta/tau ridge (§ Scheduling) collapses to real numbers, and onl
 then are these worth deciding: a Ki retune against true margin, and whether the
 **predicted-BT channel** (§ Firmware now in scope) is worth building.
 
-**Step 6 — the lookahead experiment, independent.** Load
-`artisan/airRoaster_cascadePID_lookahead.aset` with background profile_003 and
-roast normally. Only after step 1 has produced a clean baseline to compare
-against. Watch for a target step at 1:30 when the switch fires.
+**Step 6 — the lookahead switch. Promoted: this is the next roast (2026-09-05).**
+Load `artisan/airRoaster_cascadePID_lookahead.aset` with background profile_003
+and roast normally. Roast 46 is the clean baseline it needed, and it independently
+measures the required lead at **6.3 s** against the file's 6 (§ Roast 46), so this
+is now a confirmation rather than an experiment. Expect at 1:30, when the switch
+fires, a **+4.1 degC target step -> ~+20 degC jump in commanded SV** in one tick;
+the inner loop settles it in ~5 s. What to read afterwards: the same six checks,
+plus whether the 1.0 degC / 4-5 s steady lag has gone to ~0, and whether the dip
+is better at `L=0` than roast 46's `L=3` (predicted worst error -9.9 vs -13.9
+degC, preload 30 vs 42, § Roast 46). If the 1:30 kick reads badly, the gentler
+regenerate is **0 -> 3 at 1:30, 3 -> 6 at 3:00** (+9.8 and +4.9 degC of SV).
 
 **Step 7 — a fixed fan, independent.** § Fan vs batch size says the level does
 not depend on charge mass and the loop barely notices the level, only the step.
 One roast at a flat **fan 60** with no changes tests whether the ramp is
-earning its disturbance.
+earning its disturbance. Roast 46 already went most of the way: the fan was held
+at 60 through the whole roast and the trace shows no air-schedule signature at
+all (§ Roast 46), which is the cleanest evidence yet that the ramp is not earning
+it. What is left is a roast that keeps 60 through preheat too.
+
+**Step 8 — the feedforward term, firmware, bench only.** `feedforward()` is
+clamped at 100 for every sample of a roast and its model form is ~9x too steep in
+SV and ~1.8x too steep in fan (§ Roast 46). It is doing nothing except holding
+`pidITerm` at -45..-64 and forcing the anti-windup bound to `[-100, 0]`. Either
+give it the affine form the preheat measurement supports
+(`heat = -30.6 + 0.99*fan + 0.0096*SV`, resid rms 1.85 %) or set `FF OFF` until
+it has one. Bench-testable; no roast needed. **Do it before Test C**, whose whole
+subject is the fan compensation this term is supposed to provide.
 
 #### The dump-lever switch
 

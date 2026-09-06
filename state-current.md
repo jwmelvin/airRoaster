@@ -107,7 +107,7 @@ a message naming the phase. The user's Artisan config churn (`artisan/*.aset`,
 `*.alog`) may be present in the working tree — never sweep it into a firmware
 commit; stage files explicitly.
 
-## Active effort (2026-09-02)
+## Active effort (2026-09-05)
 
 **Artisan cascade PID** (`feature/artisan-pid`, off `main` at v0.18.0).
 Artisan's software PID becomes the **outer** loop of a cascade: PV = BT against
@@ -306,6 +306,51 @@ constraint. Full analysis, the option-by-option review of Artisan's other
 control modes (gain scheduling, beta/gamma, Dlimit, IRoC, ILF, Ramp/Soak,
 sv/duty filters, BT-RoR control) and the single-roast validation checklist are
 in state-plan.md § Roast 44 outer-loop analysis.
+
+**Roast 46 (2026-09-05, 400 g) is runbook step 1, and it passes.** Config
+unmodified (Kp 3.0, **Ki 0.07**, Kd 0, `svLookahead` 3, floor 140), background
+profile_003, PID-driven preheat, no intervention, **fan held constant at 60 for
+the whole roast** so nothing in the trace is air-schedule disturbance. Five of
+six checks pass: time-to-BT **+3.4 to +5.9 s** against the profile (roast 44, the
+other 400 g batch, was +8.9 to +13.9); quiet-window error -1.02 and -0.80 degC;
+inner loop rms 1.25 degC with heat 4 s at 100% and 1 s at 0% of 430; SV monotone
+after 1:00. **The 177 s ring is gone** — the PID error peaks +6.12 at 2:10 and
+decays monotonically to +1.06 at 6:40, with only +/-0.05 degC of quantisation
+wiggle where roast 45 had 2.82 degC peak-to-peak.
+
+**Two things came out of it, and they set the order of work.** First, the
+residual above DRY END is **pure type-1 ramp error** — `Iterm` climbs 41.9 -> 61.8
+at 0.095 duty/s, so `e_ss = (dI/dt)/Ki = 1.36 degC`, of which `svLookahead=3`
+already cancels 0.68, leaving the measured ~1.0 degC / 4-5 s. Kp is not in that
+expression. Solving `L = e_ss/slope` per sample over 3:00-7:00 gives **6.3 s** —
+which is the value `artisan/airRoaster_cascadePID_lookahead.aset` already
+carries. **Step 6 is therefore promoted to the next roast**; expect a +4.1 degC
+target step (~+20 degC of SV) at 1:30 when the switch fires.
+
+Second, **check 5 failed and the cause is batch size, not the loop**: profile_003's
+TP is matched to roast 45 at 345 g, roast 46 was 400 g and bottomed 9.8 degC
+deeper and 16 s earlier, exactly as § profile_003 predicted. That manufactured a
+30.5 degC error swing in the first twenty seconds, drove SV rail-to-rail
+(261 -> the 140 floor), put 11 s on the floor, and re-seeded `Iterm` to ~30 by
+back-calculation — after which BT overshot the background by 9.3 degC at 1:00 and
+sat 4.0 degC behind at 2:00. The fix is **profile_004**, a 400 g dip spliced onto
+profile_003's unchanged ramp (new runbook step 1b).
+
+**A separate firmware finding: the feedforward term is saturated and inert.**
+`FF = 100.0` for 430 of 430 roast samples; fitting the model to the three
+unclamped preheat samples recovers `ffK` ~ 0.0151 / `ffAmbient` ~ 24.1, which
+predicts 196% heat at fan 60 / SV 240 against an actual 55%. So `pidITerm` sits
+at -45..-64 purely to cancel it, the anti-windup bound collapses to `[-100, 0]`,
+and **the fan compensation the term exists for is dead** (`d(FF)/d(fan) = 0`
+while clamped). The operator's five preheat fan steps measure the real number:
+**0.99 % heat per fan unit** (five steps spanning 0.81-1.11; OLS over 300 s gives
+`heat = -30.62 + 0.99*fan + 0.0096*SV`, resid rms 1.85 %) — so the model form is
+~9x too steep in SV and ~1.8x too steep in fan and cannot be fixed by
+recalibrating `ffK` alone. New runbook step 8, bench-only, and it must come
+before Test C. The inner loop absorbed every one of those steps unaided (worst
+7.2 degC on an 11-unit step, 1.3-3.6 degC on the rest).
+
+Detail in state-plan.md § Roast 46.
 
 **Canonical config is `artisan/airRoaster_cascadePID.aset`** (one file; the
 brief `_edit` variant used while adding the alarms was folded back in and
