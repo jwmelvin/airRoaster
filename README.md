@@ -948,6 +948,7 @@ companion documents alongside this README:
 | [max31865_direct.h](max31865_direct.h) | The register-direct MAX31865 RTD driver (continuous auto-convert mode) and the rationale for not using the Adafruit library. |
 | [tools/roaster_proxy.py](tools/roaster_proxy.py) | Artisan-facing authentication proxy: answers the device's connect-time HMAC challenge on Artisan's behalf and relays everything else — see [Command authentication](#command-authentication). |
 | [tools/auth_key.py](tools/auth_key.py) | AUTH_KEY management: generate/rotate the shared secret in `secrets.h`, print it for the dashboard, compute challenge responses for manual testing. |
+| [tools/merge_inlet_base.py](tools/merge_inlet_base.py) | Merges the inlet feed-forward base schedule into a recorded background `.alog` as replayable special events, for the cascade's `INLET TRIM` arrangement — see state-plan.md § The base-curve authoring gap. |
 | [artisan/artisan_help_events.md](artisan/artisan_help_events.md) | Reference for Artisan's Event configuration (custom buttons and sliders): fields, label substitutions, and the full command list (from upstream help text). |
 | [state-current.md](state-current.md) | Development state: the active effort, plus a "read this first" framework overview for anyone (human or LLM) picking the project up. |
 | [state-plan.md](state-plan.md) | Planned work, phase specifications, and the remaining on-roaster validation checklist. |

@@ -12,11 +12,19 @@ reproduces the outer loop so tuning can be tested before it is roasted.
 | `margins.py` | frequency-domain phase margin for the same loop |
 | `roast46_refit.py` | driver that reproduces the numbers in state-plan.md § Roast 46 refit |
 | `dip_strategies.py` | charge-state robustness of the dip strategies; state-plan.md § Dip strategies |
+| `plant_roast46.json` | the plant card `tools/merge_inlet_base.py` reads: `a`, `theta` and the loss cubic, with provenance |
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install numpy scipy
 .venv/bin/python tools/analysis/roast46_refit.py
+.venv/bin/python tools/analysis/roast46_refit.py --emit-plant   # refresh plant_roast46.json
 ```
+
+`--emit-plant` is the seam between this directory and the authoring tools: it
+writes the three plant numbers and the loss cubic into `plant_roast46.json`, and
+`tools/merge_inlet_base.py` (stdlib only) reads that to build the step-9
+feed-forward schedule. After the characterisation roasts (runbook steps 3-5),
+re-run `--emit-plant` and re-run the merge; nothing else changes.
 
 Roast logs live outside the repository (`~/Documents/artisan/`, `~/Downloads/`);
 the paths are at the top of `roast46_refit.py`.

@@ -532,15 +532,29 @@ instrumentation and the outer-loop restructuring land in one flash (spec in
 state-plan.md § Firmware now in scope; it is inert until Artisan is
 reconfigured) — and **steps 3-5 first**, because the schedule is exactly `1/a`
 and the loss curve. **The firmware half is written (2026-09-06) and v0.19.0 is
-now complete and unflashed** — see the paragraph below. The Artisan half has a
-gap that was not costed: `artisan/make_inlet_background.py` does **not** emit the
-file step 9 needs — its events mode blanks BT by construction, so the base
-schedule has to be *merged* into profile_003/004 rather than generated, and two
-assumptions about playback were wrong (it keys on the numeric event type, not the
-type name; and events after the background's DROP never replay, which the
-`bg(t+theta)` lead runs into). state-plan.md § Dip strategies § The base-curve
-authoring gap. Not on the critical path — there is no `ff(t)` to author until
-steps 3-5 run. That is new **runbook step 9**, and it is why the characterisation
+now complete and unflashed** — see the paragraph below. The Artisan half had a
+gap that was not costed — `artisan/make_inlet_background.py` does **not** emit the
+file step 9 needs, since its events mode blanks BT by construction — and
+**that gap is now closed (2026-09-06)**: `tools/merge_inlet_base.py` merges the
+base schedule into profile_003/004 rather than generating it, reading the plant
+from `tools/analysis/plant_roast46.json` (written by `roast46_refit.py
+--emit-plant`, so steps 3-5 land as a card refresh and nothing else changes). On
+profile_003 it emits **7 events, base 199 → 256 degC, replay error 0.87 degC**,
+passing BT/`timex`/`timeindex` through untouched. Implementation corrected four
+things in the analysis: the playback name check is not *absent* but *broken*
+(`str(bool)` is always truthy, canvas.py:6530/:6546) and so should not be relied
+on; the `bg(t+theta)` lead reads into a recorded roast's **cooling phase**, not
+merely off the end, so the window closes at DROP and the background is blended
+into its terminal RoR fit; the residual has a ~0.5 degC floor from whole-degree
+event quantisation; and **the default dip rule is not the one § Dip strategies
+simulated** — raw `ff` is -432 degC at CHARGE, the simulation clipped it to the
+120 floor, and the operator's choice is instead to back-extrapolate the ramp to a
+near-flat 199 degC and leave the whole dip to the trim (`--dip follow` reproduces
+the simulated variant). Closing that comparison, and the `.aset` half (trim
+slider, `pidPositiveTarget`, per-event-type playback), are what is left.
+state-plan.md § Dip strategies § The base-curve authoring gap. Still not on the
+critical path — there is no real `ff(t)` to author until steps 3-5 run, so the
+merged background is generated on demand rather than committed. That is new **runbook step 9**, and it is why the characterisation
 runs have recovered their priority. The relative-setpoint variant
 (`INLET = BT + trim`) was tried and is **worse** for a principled reason: it turns
 the plant into an integrator with 13.5 s of delay. Detail, the full table and the

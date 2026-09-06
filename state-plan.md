@@ -3291,13 +3291,87 @@ against `ff` — a free offline check once `ff` exists — not from the default.
 The whole-degree quantisation is not the constraint: 1 degC of base against
 `a = 0.0049` is ~0.005 degC/s of BT rate.
 
-**Do not build this yet, and it is not on the critical path.** There is no
-`ff(t)` to write until steps 3-5 have measured `1/a` and the loss curve, which is
-the same gate § The structural fix already puts on the Artisan side. When it is
-time, it is array surgery on a dict — either a `--merge-into <profile.alog>` mode
-on the script or a small tool beside `tools/gen_pid_alarm_asets.py`; the encoder
-and the event placement already exist. Recorded as a gap now so that step 9 is
-not costed as "run the existing script".
+**~~Do not build this yet~~ — the gap is closed (2026-09-06, operator request).**
+`tools/merge_inlet_base.py` is the merge; `make_inlet_background.py` is untouched,
+as its 2026-09-02 scope boundary requires. It is standard-library only, like the
+other tools in `tools/`, and it reads the plant from a **card** —
+`tools/analysis/plant_roast46.json`, written by
+`tools/analysis/roast46_refit.py --emit-plant`. That is the seam the steps-3-5
+gate needs: when the characterisation runs land, re-run `--emit-plant` and re-run
+the merge, and nothing else in the chain changes.
+
+```bash
+python3 tools/merge_inlet_base.py --into artisan/profile_003.alog --dry-run
+```
+
+On `profile_003` and the roast-46 card (`a` 0.004897, `theta` 13.5 s, loss cubic
+over 45 s..DROP) it emits **7 type-2 events**, base **199 → 256 degC**, max replay
+error **0.87 degC of base = 0.0042 degC/s of BT rate**. The output is the input
+profile plus the four `specialevents*` arrays: BT, `timex`, `timeindex`,
+`extradevices` and everything else pass through byte-identical, and only the
+source roast's identity (`roastUUID`, `plus_*`, `hash`, `signature`, `computed`)
+is blanked so a doctored background cannot be mistaken for, or re-synced as, a
+roast. **The file itself is generated on demand, not committed** — there is no
+`ff(t)` worth roasting until steps 3-5 run, and a stale one on disk is a thing to
+load by accident.
+
+**Five things the implementation found that this section did not have.**
+
+1. **The name check is not absent, it is broken.** The claim above — "no name is
+   compared anywhere in the function" — is wrong as stated. `canvas.py:6530` does
+   compare, as `str(self.etypesf(t) == str(self.Betypesf(t)))`: `str(bool)`, always
+   a non-empty truthy string. The *conclusion* holds for v4.2.0 and the same
+   expression guards the ramp branch at :6546 — but it holds by accident, and an
+   Artisan that fixes the parenthesis would start enforcing it. So the tool aligns
+   `etypes[type]` deliberately rather than relying on the bug.
+2. **The `bg(t+theta)` lead reads into the cooling phase, not just off the end.**
+   `profile_003` happens to end one sample after DROP, which hides this; any
+   ordinary recorded roast continues down through cooling, and inverting that fall
+   rails the base to the floor over *exactly* the last `theta` seconds of the
+   roast. The window therefore ends at `timeindex[6]`, and the background is
+   **blended** into its own terminal RoR fit over `--tail-window` rather than
+   butt-joined to it: `dbg/dt` is divided by `a`, so a 0.005 degC/s kink at the
+   seam is a 1 degC step in the base. Blending took the schedule from 10 events to
+   7 and removed a 1.5 degC bump 14 s before DROP.
+3. **The tolerance has a floor at ~0.5 degC of base and it is quantisation.** The
+   knot chooser measures the residual of the *quantised, index-snapped* polyline,
+   so at a knot the error is the whole-degree rounding. `--tol 0.3` therefore
+   stops early and says so. § above is right that this does not matter
+   (0.5 degC → 0.0024 degC/s of BT rate); what is worth having is that the number
+   the tool reports is a promise about the delivered schedule.
+4. **`--dip` is a real choice and the default is not what was simulated.** Raw
+   `ff` at CHARGE on `profile_003` is **-432 degC** — the background falls at
+   3.5 degC/s through the dip and `/a` multiplies it by 204. `dip_strategies.py`
+   clipped that to `[120, 300]`, so the FF-trim rows in the table above describe a
+   base that **dives to the floor and climbs back out**. The operator's choice
+   (2026-09-06) is instead to back-extrapolate the ramp to CHARGE, which on
+   `profile_003` is a nearly flat **198.7 → 200.9 degC**, leaving the whole dip
+   excursion to the trim. `--dip follow` reproduces the simulated variant. **The
+   two differ by ~80 degC of base over the first 40 s and that difference has not
+   been through the closed loop** — closing it is the first thing to do when step 9
+   comes up the runbook.
+5. **The base peaks at 256 degC, which eats half the positive trim range.** With
+   `INLET_SV_MAX_C = 300` the effective setpoint clamps, so the top of the roast
+   has only +44 of the +80 trim available. Not a problem at roast-46 duty (the trim
+   sits mid-range by construction), but it is the reason the tool reports the base
+   range, and it is a thing to watch if a hotter profile is authored.
+
+The tool also refuses, rather than producing a plausible-looking file: a
+background whose BT is blank between CHARGE and DROP (which is exactly what
+`make_inlet_background.py --events` writes, and what makes it the wrong starting
+point); a profile in Fahrenheit (event values are **not** unit-converted on
+background load, `main.py:14474-14477`); a missing DROP mark (`timeindex[6] == 0`
+disables the replay window entirely); a CHARGE index that is not a sample (such a
+background replays from **START**, driving INLET through the preheat); and
+pre-existing events of the target type without `--replace`. It round-trips the
+`external → internal → external` encoding on the file it just wrote before
+reporting success.
+
+**Still not built, and still gated on steps 3-5**: the `.aset` half — the trim
+slider (`INLET TRIM` on slider 2 with `slideroffsets` -80 over a 0-160 range,
+`pidPositiveTarget = 2`) and `specialeventplayback`/`...ramp` enabled for event
+type 2 alone. And the closed-loop check of the emitted file, which is what would
+settle item 4 above.
 
 #### Ruled out, so they are not proposed again
 
@@ -3487,14 +3561,20 @@ at 0.09 duty/s all roast, `e_ss = (dI/dt)/Ki` exists, `svLookahead` is needed to
 hide it, and the value handed over at 1:30 matters. Give the firmware a base
 inlet schedule (`ff(t) = bg(t+theta) + (dbg/dt - loss)/a`, merged into the
 background as replayable events and replayed through Artisan's per-event-type
-background playback on its own slider — **the authoring step does not exist
-yet**, § The base-curve authoring gap) and make the PID's output a bounded trim
-on it via a new `INLET TRIM <degC>` firmware command. Simulated: `dI/dt` 0.09 ->
+background playback on its own slider — **the authoring step now exists**:
+`tools/merge_inlet_base.py --into artisan/profile_003.alog`, reading
+`tools/analysis/plant_roast46.json`; § The base-curve authoring gap) and make the
+PID's output a bounded trim on it via a new `INLET TRIM <degC>` firmware command. Simulated: `dI/dt` 0.09 ->
 0.01, `I@DROP` 63 -> 50, steady rms **0.11-0.14 degC**, `svLookahead` 0, and with
 the `Ki` gate the handover integrator and `dt150` are **identical at every charge
 state**. Survives +-20% of error in the assumed plant gain. **Run steps 3-5
 first** — the schedule is exactly `1/a` and the loss curve, which is what those
-runs measure. Full design, the source citations for the playback/slider
+runs measure; then `roast46_refit.py --emit-plant` to refresh the plant card and
+re-run the merge. Two things are still open before this is roastable: the `.aset`
+half (the trim slider, `pidPositiveTarget`, per-event-type playback), and the
+`--dip` question — the merge tool's default back-extrapolated base is **not** the
+clipped, dipping base that § Dip strategies simulated (§ The base-curve authoring
+gap, item 4). Full design, the source citations for the playback/slider
 arrangement, and the risks to close are in § Dip strategies.
 
 #### The dump-lever switch
