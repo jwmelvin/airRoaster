@@ -2275,10 +2275,409 @@ involvement — the inlet was back on setpoint before the outer loop's next tick
 mattered. That is the answer to whether the fan schedule needs feedforward help
 at all: at these step sizes, no.
 
+### Roast 46 refit — the plant, a validated simulator, and what to run next (2026-09-05)
+
+Everything below comes from `tools/analysis/` (numpy + scipy; `roast46_refit.py`
+reproduces the headline numbers). Inputs: `airRoaster_46.alog`, the dashboard CSV
+`airRoaster_data_2026-09-05-23-57-34.csv`, background `profile_003.alog`, with
+`airRoaster_4{4,5}.alog` for cross-checks. CSV aligned to the `.alog` by
+cross-correlating BT: **CHARGE = 23:48:07.83Z, residual rms 0.112 degC** (the
+figure in § Roast 46 was 23:48:07.85 / 0.13 on a coarser grid; same answer).
+
+**Sign convention here**: tracking `error = background_BT(t) - BT(t)`, with *no*
+lookahead in it, so **positive means BT is behind the background**. § Roast 46
+quoted the same quantity with the opposite sign (`-1.02, -0.80 degC`).
+
+#### 1. The refit, and why roast 46 could carry it when 44 and 45 could not
+
+Model, as before, with the disturbance restricted to a low-order polynomial in
+`t` and the delay floating:
+
+```
+dBT/dt = a * (Inlet(t - theta) - BT) + slow(t)
+```
+
+Two changes of method. First the estimator is **integral, not differential** --
+integrate the model instead of differentiating BT, so the fit residual is in
+degC of BT (noise 0.071 degC rms) rather than degC/s of a numerical derivative.
+Second the fit window **starts after turning point but keeps the charge
+recovery**, which is where the excitation is.
+
+```
+primary fit, window CHARGE+45 s .. DROP, disturbance order 4:
+
+    a = 0.00490      tau = 204 s      theta = 13.5 s      residual 0.116 degC
+```
+
+**Uncertainty.** Two kinds, and the second dominates.
+
+| | theta | a | tau |
+|---|---|---|---|
+| block bootstrap (60 s blocks, 200 draws, primary window) | 12.0 - 15.0 s | 0.00443 - 0.00540 | 185 - 226 s |
+| across every well-conditioned window x order | **12.8 - 18.2 s** | **0.0034 - 0.0052** | **193 - 291 s** |
+
+"Well-conditioned" means the residual at `theta = 0` is more than 2.5x the
+residual at the minimum -- 11 of the 24 window/order combinations qualify, all of
+them windows starting at or before 60 s. The primary fit's ridge depth is **3.9x**,
+which is the difference from every previous attempt: the theta/tau ridge in
+§ Scheduling moved tau fourfold for a 14% change in residual, this minimum is
+sharp. Quote the plant as **theta 13 (+5, -1) s, tau 205 (+85, -15) s**.
+
+**Roast 46 is the only one of the three that identifies anything**, and the
+reason is the thing that failed check 5. The 400 g batch against a 345 g dip
+drove the commanded SV rail to rail -- Inlet 141 -> 265 -> 140 -> 199 over the
+first two minutes -- which is a large, fast, involuntary doublet. Roasts 44 and
+45 recovered smoothly (Inlet 140 -> 160 -> 183 -> 195) and their fits collapse:
+run through the same code they return `a < 0` at orders 3-5 on the 25 s window,
+or pin theta at a grid edge. **The profile mismatch bought the excitation that
+§ Scheduling proposed Tests A and B to obtain.** The 90 s-onward window of roast
+46 collapses the same way (theta 7-9 s, `a` 0.0057-0.0105, ridge depth 1.1), so
+the identifiability warning in § Scheduling stands for closed-loop body data --
+it is the charge recovery that carries the information, not the roast.
+
+**Against the earlier numbers.** theta 13-18 s brackets the 17 s that roasts 44
+and 45 agreed on, so § Correction's central claim survives. What moves is `a`:
+roast 44's 0.00829 (tau 121 s) and roast 45's 0.00364 (tau 275 s) straddle
+0.00490 (tau 204 s), and the retracted `a = 0.0145 / tau 69 / theta 0` model is
+4x worse on residual than the refit at the same window.
+
+**No fan term is identifiable from roast 46 and none is needed** -- the fan sat
+at 60 for the whole roast bar the operator's 63-64 blip over 0:09-1:26, which is
+inside the charge transient. The ~49% of plant gain per 10 fan units from
+§ Correction is untouched by this work; Test C is still the way to measure it.
+
+#### 2. Artisan's PID, reimplemented and validated
+
+`tools/analysis/artisan_pid.py` ports, function by function against v4.2.0:
+`update` (pid.py:394-492), `_should_integrate` (286-297),
+`_back_calculate_integral` (314-333), `applyIntegralLimits` (359-364),
+`_calculate_derivative` (249-278), `getParameter` (370-387),
+`_calculate_integral_limits` (44-63), `calcSV` (pid_control.py:1658-1717),
+`smooth_sv` (1643-1655), `setEnergy` (1292-1324), the `decay_average` PV
+(canvas.py:4613-4640), the background's own decay smoothing
+(canvas.py:9878 -> `smooth_slice`, `decay_smoothing_p = (not optimalSmoothing)
+or flagon`, so **the background target is itself delayed 0.667 s** at
+`curvefilter = 3`), and the ordering that gives the loop a sample of its own
+(`pid.update()` at canvas.py:5016, `calcSV`/`setSV` at canvas.py:5184). The
+LiveSosFilter is rewritten rather than imported -- Artisan is AGPL and this
+repository is MIT.
+
+Two mechanisms had to be added before the replay would close, and both are new
+to these notes.
+
+**(a) The commanded SV is gated on an integer.** `setEnergy` computes
+`raw_heat` (a float), rounds it, and emits `addRawEventSignal(heat, raw_heat, ...)`.
+In `addEvent_internal` the slider action fires only when that **integer**
+differs from the last one (`force` is `slider_force_move`, true only on PID ON),
+and it is then the **float** that goes down the WebSocket. So the inlet setpoint
+is a 1 degC staircase in *when* it updates, carrying full precision in *what* it
+sends -- which is exactly what the CSV shows (213.50 held for 29 s, then 214.80).
+Combined with `dutySteps = 1` and `force_duty = 3` (pid.py:197), that is the
+whole update cadence.
+
+**(b) autoCHARGE backdates CHARGE by three samples, and the target does not
+move for those three seconds.** `autoCharge=true` in the `.aset`. At
+canvas.py:5121-5126 the detection sets `autoChargeIdx = length_of_qmc_timex - b`
+with `b` from `BTbreak` -- 3 for a tight break, 5 for a loose one (`btbreak_params`,
+canvas.py:558-559). `timeindex[0]` is therefore written *retroactively*, but
+`calcSV`'s pre-CHARGE branch (pid_control.py:1690) was still returning the
+background's CHARGE BT while the detector was making up its mind. Roast 46 shows
+it plainly: backing the required target out of the recorded T_inlet events gives
+**128.3 - 129.1 degC for ticks 0-3** -- flat, and equal to `profile_003`'s CHARGE
+BT of 128.0 -- and only from tick 4 does it follow the background. `b = 3` fits;
+`b = 5` does not.
+
+Without (b) the SV replay carries a **constant +21 degC** error for the entire
+roast, because the three seconds of frozen target let the output clamp at the
+floor, and `_back_calculate_integral` pumps `Iterm` to `Kp*|err|` and it never
+comes back. With it:
+
+```
+measured BT + profile_003 -> commanded SV,  Kp 3.0 / Ki 0.07 / L 3 / Iterm(0) = 8
+
+     0-30 s   mean  +7.19   rms 12.08     (the charge cliff; SV slews 30 degC/s)
+    30-120    mean  -0.34   rms  1.23
+   120-240    mean  -0.05   rms  0.58
+   240-430    mean  +0.07   rms  0.45
+    30-430    mean  -0.06   rms  0.73 degC
+```
+
+0.73 degC of SV is 0.46 duty, and the slider's own 1 degC integer gate is worth
+0.29 rms on its own -- **the replay is at the resolution of the data.** The
+0-30 s window cannot be checked at this level and never will be: one second of
+alignment error there is 30 degC of SV.
+
+The same replay recovers the loop's own arithmetic: `Iterm` climbs at **0.0946
+duty/s** over 3:30-7:00, so `e_ss = (dI/dt)/Ki = 1.35 degC`, against § Roast 46's
+0.095 and 1.36 read off the reconstruction. Nothing there changes.
+
+#### 3. Closed loop: the simulator reproduces roast 46 to 0.16 degC
+
+`sim.py` closes the loop -- background -> PID -> inlet SV -> inner loop -> plant --
+with the inner loop identified from the CSV as **tau 0.76 s, delay 0.25 s**
+(rms 1.19 degC, essentially all ripple rather than lag, which is the fourth
+independent confirmation that the inner loop is not a factor). The disturbance
+comes from `fit_disturbance`, which relaxes `slow(t)` onto a cubic B-spline
+**with `a` and `theta` held at the values fitted above** -- the plant estimate
+stays non-circular, the simulator gets a full-roast disturbance including the
+charge recovery.
+
+```
+closed-loop replay of roast 46 from CHARGE+2 s:
+
+   BT   mean -0.033   rms 0.159   max 0.96 degC        (whole roast)
+          2-30 s  rms 0.33     60-120 s  rms 0.16
+         30-60 s  rms 0.30    120-240 s  rms 0.15    240-430 s  rms 0.07
+   SV   rms 1.00 degC (t >= 30 s);  TP 57.4 vs 57.6;  SV max 262.2 vs 261.2
+```
+
+For comparison the roast-44 simulator managed rms 0.33 degC on the body alone.
+
+**The cross-check that matters: it also produces roast 45's ring.** Take the
+roast-46 plant unchanged, refit only the disturbance to roast 45, run the loop at
+**Ki 0.10** against `profile_002`:
+
+| | 1st extremum | 2nd | 3rd | 4th | period |
+|---|---|---|---|---|---|
+| measured roast 45 | 127 s, +3.70 | 209 s, +0.53 | 303 s, +1.94 | 384 s, +0.03 | 177 s |
+| simulated | 128 s, +3.62 | 210 s, +0.42 | 306 s, +2.05 | 384 s, -0.10 | ~170 s |
+
+Closed-loop BT rms 0.28 degC over roast 45. So **one plant explains both roasts**:
+the ring at Ki 0.10 and its absence at Ki 0.07. The earlier §-Correction plant
+(`a` 0.00364, theta 17) predicted a 230 s period, 30% long; this one is 4% short.
+
+Two consequences for § Correction. Its frequency-domain table is superseded (the
+new margins are in the next section, and they are **more** generous, not less).
+And the `zeta ~ 0.07` read off the log decrement was an underestimate of the
+loop's damping -- the simulator reproduces the same extrema with a plant whose
+linear zeta at Ki 0.10 is 0.27, because most of what decays in that trace is the
+charge transient, not a self-sustained mode.
+
+#### 4. Phase margin against the refitted plant
+
+`L(s) = (Kp + Ki/s) * 1.6 * a/(s+a) * exp(-(theta + 2.67) s)`. The 2.67 s is the
+inner loop (1 s), BT decay smoothing (0.67 s) and the one-sample `update`/`setSV`
+ordering (1 s), all outside the identified `theta`. Actuator gain 1.6 degC of
+inlet per duty unit, confirmed from the `.aset`: `positiveTargetMin/Max` 140/300
+against `slidermin/max` 0/320 for slider 3, so `setEnergy`'s
+`heat_min/heat_max` are 140 and 300.
+
+| `pidKi` | 0.05 | **0.07** | 0.09 | 0.10 | 0.12 | 0.15 |
+|---|---|---|---|---|---|---|
+| PM, primary fit (a .00490, th 13.5) | 43.5 | **33.7** | 25.9 | 22.6 | 16.6 | 9.2 |
+| PM, low-delay edge (a .00589, th 10) | 49.9 | 40.7 | 33.3 | 30.1 | 24.4 | 17.3 |
+| PM, high-delay edge (a .00386, th 18) | 36.5 | 26.1 | 18.0 | 14.6 | 8.5 | 0.9 |
+| crossover period, primary (s) | 231 | 213 | 197 | 190 | 178 | 164 |
+
+**Ki 0.07 buys 26-41 deg depending on where in the envelope the plant sits**,
+against § Correction's 27-30 deg -- the same answer, now with a fit that also
+reproduces the time domain. Ki 0.10 is 15-30 deg, which is where roast 45 rang.
+
+#### 5. Predictions
+
+All from the validated simulator, roast 46 conditions (400 g, fan 60, Kp 3.0,
+Ki 0.07 unless stated), disturbance from roast 46, run from CHARGE+2 s. The
+baseline row is the check: it reproduces roast 46's measured
+`dt150/dt180/dt196.5 = +3.4/+4.9/+4.8 s` and its steady error.
+
+##### (a) svLookahead -- yes, the lag goes to zero, and run the file as generated
+
+Constant lead, and the switching schedules. `dt` is time to that BT minus
+`profile_003`'s own; `ss` is the steady tracking error over 3:00-7:00;
+`Idip` is the peak `Iterm` reached in the charge dip.
+
+| config | dt150 | dt180 | dt196.5 | ss mean/rms | lag | floor | Idip | SV reversal |
+|---|---|---|---|---|---|---|---|---|
+| **roast 46 as run, L=3** | +3.5 | +5.0 | +4.4 | +0.75 / 0.77 | +3.4 s | 4 s | 34.4 | 0.3 |
+| L=4 constant | +2.8 | +4.0 | +3.3 | +0.57 / 0.59 | +2.6 s | 1 s | 35.8 | 0.0 |
+| L=6 constant | +1.5 | +2.2 | +1.0 | +0.22 / 0.28 | +0.9 s | 2 s | 41.1 | 0.0 |
+| L=8 constant | +0.7 | +0.2 | -1.2 | -0.10 / 0.31 | -0.7 s | 2 s | 49.1 | 0.6 |
+| **the step-6 file: 0 @ 1 s, 6 @ 90 s** | -1.9 | +3.2 | +0.9 | **+0.05 / 0.49** | **+0.44 s** | 16 s | 43.3 | 3.2 |
+| 6 @ 90 s only (keep L=3 in the dip) | -1.4 | +3.1 | +1.1 | -0.01 / 0.46 | +0.26 s | 4 s | 34.4 | 3.5 |
+| two-stage 0 @ 1, 3 @ 90, 6 @ 180 | +3.2 | +1.1 | +1.8 | +0.12 / 0.31 | +0.53 s | 16 s | 43.3 | 0.0 |
+
+**The 1.0 degC / 4-5 s steady lag goes to +0.05 degC / 0.44 s.** That is the
+headline and it holds across the whole plant envelope (theta 10 -> 18, `a` +-12%
+move `ss` by less than 0.05 degC, because `e_ss = (dI/dt)/Ki` barely involves the
+plant).
+
+**The transient at 1:30, measured against the un-switched counterfactual:**
+target step **+4.01 degC**, commanded SV **+24.7 degC** above where it would have
+been, peaking at 1:46 and settled by ~1:42-2:00; BT ends up +4.2 degC higher than
+without the switch, by 2:50. § Roast 46 predicted +4.1 degC and ~+20 degC; the
+target step is exact and the SV excursion is a quarter larger. Not a hazard --
+the inner loop swallows a 20 degC step in about 5 s -- but it is a visible kick.
+
+**Is the two-stage alternative meaningfully better? No.** It halves the one-tick
+jump (8.3 vs 14.8 degC) and removes the 3.2 degC SV drawdown, and its steady rms
+is 0.31 against 0.49, but its *mean* steady error is no better and it costs two
+more buttons and one more alarm. Three- and four-stage schedules
+(`0,4@90,7@240`; `0,6@90,9@300`; `0,3@90,6@180,9@300`) were swept and none beats
+the single switch by more than 0.1 degC rms. **Run the file as generated.**
+
+**One thing in the file is pointed the wrong way against `profile_003`.** The
+`pidLookahead(0)` alarm at CHARGE+1 was justified in § Roast 46 by a static
+replay that put the worst dip error at 0:01, on the charge cliff. In closed loop,
+and with autoCHARGE's three-second backdate removing most of that cliff, L=0 is
+the *worse* choice through the dip: the target then lags a background that is
+still falling, so the SV is held low longer -- floor time 16 s against 4 s,
+Idip 43.3 against 34.4, and BT ends up 14.2 degC below the background instead of
+10.5. It costs nothing after 1:30 and it does not change the headline. It is also
+**exactly right once `profile_004` exists** (below), which is why the file should
+be run unchanged rather than edited.
+
+The required lead is not constant, which is why no single number is right:
+`L = e_ss/slope` is 3.9 s at 3:00, 4.9 at 4:00, 6.0 at 5:00, 7.5 at 6:00, 9.2 at
+7:00 (mean 6.3 over 3:00-7:00, reproducing § Roast 46's table). L=6 is exact at
+5:00, short at the end, long at the start.
+
+##### (b) Ki -- 0.07 is both the ceiling and the optimum; there is no room above it
+
+With the lookahead carrying the tracking (L 3 -> 6 @ 90 s):
+
+| `pidKi` | 0.05 | **0.07** | 0.09 | 0.10 | 0.12 | 0.15 |
+|---|---|---|---|---|---|---|
+| ss mean / rms (degC) | +0.75 / 0.80 | **-0.01 / 0.46** | -0.44 / 0.87 | -0.59 / 1.07 | -0.88 / 1.49 | -1.17 / 2.04 |
+| error peak-to-peak | 2.91 | 3.93 | 4.82 | 5.19 | 5.88 | 6.54 |
+| SV reversal (degC) | 1.4 | 3.5 | 7.7 | 12.2 | 19.4 | 32.0 |
+| rms with theta +14 s | 1.36 | **1.14** | 1.87 | 2.72 | 4.50 | 7.59 |
+| rms with gain +50% | 0.84 | **0.23** | 0.63 | 0.87 | 1.37 | 2.26 |
+
+**No.** Once L=6 is doing the feedforward the standing error is already zero at
+Ki 0.07, so more integral gain does not remove a lag -- it *overshoots* (`ss` goes
+negative), and it degrades under every plant perturbation tested. Ki 0.07 is the
+best value in the table on the nominal plant, under +14 s of extra delay and
+under +50% of plant gain. **Treat 0.07 as settled, not as a compromise.**
+
+##### (c) Kp 3.0 stands
+
+| `pidKp` | 1.5 | 2.0 | 2.5 | **3.0** | 4.0 | 5.0 |
+|---|---|---|---|---|---|---|
+| ss rms, nominal | 0.40 | 0.29 | 0.33 | **0.46** | 0.56 | 0.50 |
+| ss rms, theta +14 s | 1.14 | 0.54 | 0.52 | **1.14** | 2.41 | 4.32 |
+| ss rms, gain +50% | 1.69 | 0.85 | 0.38 | **0.23** | 0.19 | 0.39 |
+| ss rms, gain +50% and theta +7 s | 3.15 | 1.67 | **0.52** | 0.56 | 1.44 | 3.32 |
+| dip preload `Idip` | 36.1 | 35.4 | 34.9 | 34.4 | 42.5 | 53.4 |
+| PM at Ki 0.07 (deg) | 16.2 | 23.2 | 29.1 | **33.7** | 39.1 | 39.9 |
+
+**Confirmed, with one refinement.** § Correction's rule -- lowering Kp makes a
+delay-limited loop worse -- holds for Kp <= 2.0, which is worst in the two
+gain-error columns and has the least phase margin. It is *overstated* for 2.5:
+on this plant Kp 2.5 is the single most robust value across the four stress
+cases. The margin between 2.5 and 3.0 (0.52 vs 0.56 rms on the worst case) is
+inside the model error, and 3.0 is roast-validated. **Keep 3.0. Do not lower it
+below 2.5, and do not raise it above 4.**
+
+##### (d) pidKd 40 with DoE -- no, and this settles the disagreement
+
+`pidKd` swept with `pidDsetpointWeight = 1` (DoE) and `derivative_filter = 1`:
+
+| `pidKd` / gamma / filter | ss mean/rms | p2p | `Idip` | floor | rms, theta +14 | SV ripple at 0.35 degC BT noise |
+|---|---|---|---|---|---|---|
+| **0 / 0 / 0 (as run)** | -0.01 / 0.46 | 3.93 | 34.4 | 4 s | 1.14 | **1.93 degC** |
+| 20 / 1 / 1 | +0.09 / **0.20** | **1.69** | 33.1 | 1 s | 1.36 | 2.4 |
+| **40 / 1 / 1** | +0.37 / 0.61 | 4.58 | **51.8** | 11 s | **2.56** | **10.25 degC** |
+| 60 / 1 / 1 | +0.78 / 1.41 | 11.23 | 80.2 | 13 s | 3.15 | 26 |
+| 40 / 1 / 0 | +0.28 / 0.46 | 2.94 | 98.6 | 11 s | 2.45 | 26.41 |
+
+**`pidKd = 40` is not worth a roast, and the frequency-domain prediction that it
+buys margin (29-46 deg in § Correction, 48 deg here) is an artefact.** In the
+time domain it makes tracking worse, deepens the dip preload by half, puts 11 s
+back on the floor, is the worst row but one under extra delay, and multiplies SV
+ripple fivefold. § Correction already recorded that the two analyses disagreed
+and refused to take it on that basis; the disagreement is now resolved against
+`Kd = 40`, on a simulator that reproduces two roasts.
+
+**`pidKd = 20` under DoE with the filter is the interesting row** -- best steady
+rms in the whole study (0.20), least ringing (1.69), lower dip preload, and only
+a quarter more SV ripple. It is still slightly worse than `Kd = 0` under extra
+delay. Park it: it is a candidate for a later single-variable roast, well behind
+the lookahead and `profile_004`, and it must not be combined with either.
+
+##### (e) profile_004 -- it and the `pidLookahead(0)` leg belong together
+
+`profile_004` simulated as specified in runbook step 1b: roast 46's own measured
+BT for 0:00-1:30, blended into `profile_003`'s unchanged ramp over the following
+20 s. TP becomes **57.6 degC at 0:22** instead of 67.4 at 0:37.
+
+| background / lookahead | dip PID error | SV min | floor | `Idip` | `Iterm` at 1:30 | 1:30-3:00 error | ss mean/rms |
+|---|---|---|---|---|---|---|---|
+| profile_003, L=3 *(roast 46)* | -8.8 | 140.0 | 4 s | 34.4 | 15.8 | +4.09 / -1.68 | +0.75 / 0.77 |
+| profile_003, file (0 @ 1, 6 @ 90) | -14.7 | 140.0 | 16 s | 43.3 | 23.4 | +1.47 / -4.01 | +0.05 / 0.49 |
+| profile_004, L=3 | -11.9 | 140.0 | 3 s | 45.2 | **41.0** | +2.06 / **-9.13** | +1.21 / 1.47 |
+| **profile_004, file (0 @ 1, 6 @ 90)** | **-2.6** | **143.9** | **0 s** | **30.4** | 29.7 | -0.64 / -3.61 | **+0.18 / 0.39** |
+
+Read the last two rows together: **`profile_004` on its own, at the present
+`svLookahead = 3`, makes the roast worse** -- its dip is steeper and 15 s earlier,
+so three seconds of lead against a fast-falling curve manufactures a bigger
+negative error, hands over `Iterm = 41` instead of 16, and puts a 9.1 degC
+undershoot into 1:30-3:00. With `L = 0` through the dip, which is what the step-6
+file already does, the same background is the best configuration in this whole
+study: **the output never reaches the floor at all**, the worst dip error falls
+from -8.8 to -2.6 degC, the preload falls to 30, and the steady error is
++0.18 degC / 0.39 rms with no SV reversal anywhere.
+
+So the two changes are not independent and the order matters:
+
+- **`profile_004` must not be run at a constant `svLookahead = 3`.** Run it only
+  with the lookahead-switching config.
+- Equally, the `pidLookahead(0)` leg of that config is mildly counterproductive
+  against `profile_003` (16 s on the floor instead of 4) and clearly right
+  against `profile_004`. Leaving it in place is what lets step 6 and step 1b
+  compose.
+
+#### 6. Ranked recommendation
+
+1. **Run step 6 exactly as the runbook has it** -- `airRoaster_cascadePID_lookahead.aset`
+   unmodified, background `profile_003`, everything else at roast 46's settings.
+   Predicted: `dt150/dt180/dt196.5 = -1.9 / +3.2 / +0.9 s`, steady error
+   **+0.05 degC (0.44 s)** against roast 46's +0.75 degC (3.4 s), a +4.0 degC
+   target step and ~+25 degC of SV at 1:30 settling within ~15 s, 16 s at the
+   140 floor in the charge dip (roast 46 had 11 s), SV max ~296, no reversal
+   over 3.3 degC after 1:00. One variable, and it is the one with the largest
+   predicted improvement.
+2. **Then `profile_004`, with the same lookahead config.** Predicted: floor time
+   **0 s**, dip error -2.6 degC, handover `Iterm` 30, steady error +0.18 degC /
+   0.39 rms, `dt150/dt180/dt196.5 = -0.3 / +2.7 / +0.7 s`. This is the best
+   configuration found. Do not run it at `svLookahead = 3`.
+3. **Leave `pidKi` at 0.07 and `pidKp` at 3.0.** Both are now optimal rather than
+   compromises, on the nominal plant and under every perturbation tested. The
+   open question in § Roast 46 -- whether there is room above 0.07 once the
+   lookahead carries the tracking -- is answered: no, and no need.
+4. **Drop `pidKd = 40` from the plan.** Keep `pidKd = 20` under DoE with
+   `derivative_filter = 1` on the list as a low-priority single-variable
+   experiment, after 1 and 2.
+5. **Tests A/B/C keep their value, for a reason that has changed.** They are no
+   longer needed to *find* theta -- roast 46 pins it to 13 (+5, -1) s with a
+   sharp minimum. They are needed for the fan (Test C is still the only way to
+   turn ~49% of plant gain per 10 fan units into a measurement) and to check that
+   the plant identified from one involuntary doublet holds under a deliberate
+   one. Their priority drops below steps 6 and 1b.
+
+#### 7. Caveats
+
+- The charge dip is the weak part of the simulation. The 0-30 s SV replay is out
+  by up to 33 degC (one second of alignment error is 30 degC there), floor times
+  are good to about +-10 s (the sim gives 4 s where roast 46 measured 11), and the
+  disturbance through the recovery is a spline fitted to roast 46 rather than
+  anything physical. Dip *rankings* in the tables above are trustworthy; dip
+  absolute numbers are not.
+- Everything is fitted to a single 400 g batch of one coffee at fan 60. The
+  plant envelope tested (theta 10-18 s, `a` +-12%, plus the +50%-gain and
+  +14 s-delay stress cases) is wider than the fit uncertainty, and the ranking of
+  the options does not change inside it -- but a much smaller charge is outside
+  it, as § Roast 46 already found the hard way.
+- `slow(t)` absorbs drying, exotherm and probe/bed equilibration together. It is
+  exogenous to the controller, so using it in a closed-loop what-if is sound, but
+  it is roast-46's disturbance, not a general one.
+
 ### Runbook — the agreed order of work (2026-09-02, re-pointed 2026-09-05)
 
-One variable per roast. Steps 1-4 are the critical path; 5-7 are independent and
-can slot in anywhere after step 1.
+One variable per roast. Order after roast 46 and the refit (§ Roast 46 refit):
+**step 6, then step 1b** — those two are the whole of the remaining tuning work
+and they compose. Steps 2-5 and 7-8 are independent; the characterisation runs
+(3-5) drop in priority now that the plant is identified, but Test C keeps its
+value because the fan is still one weakly-identified coefficient.
 
 **~~Step 1 — validate `pidKi` 0.07 + profile_003.~~ DONE — roast 46, 2026-09-05.**
 Five of the six checks pass, item 5 (floor time) fails on batch size rather than
@@ -2292,11 +2691,16 @@ things came out of it that set the order below:
   which cost 30 degC of manufactured error, a rail-to-rail SV excursion and 11 s
   on the floor in the first minute. That is **new step 1b, profile_004**.
 
-**Step 1b — profile_004, a 400 g dip.** Take 0:00-1:30 from roast 46's own
-measured BT, keep profile_003's ramp and finish unchanged (the same operation
-that produced profile_003 from profile_002 — § profile_003, § Roast 46). Not
-urgent to run *before* step 6: at `L=0` the switching config already handles the
-dip better than roast 46's `L=3` did.
+**Step 1b — profile_004, a 400 g dip. Run it *after* step 6, and only with the
+lookahead-switching config.** Take 0:00-1:30 from roast 46's own measured BT,
+keep profile_003's ramp and finish unchanged (the same operation that produced
+profile_003 from profile_002 — § profile_003, § Roast 46). Simulated in
+§ Roast 46 refit: paired with the step-6 file it is the best configuration found
+— **0 s at the floor**, dip error -2.6 degC against -8.8, handover `Iterm` 30,
+steady error +0.18 degC — but at the present constant `svLookahead = 3` the same
+background is *worse* than profile_003 (`Iterm` 41 at 1:30, a 9.1 degC undershoot
+over 1:30-3:00), because three seconds of lead against a steeper, earlier dip
+manufactures a bigger negative error. The two changes are not independent.
 
 **Step 2 — flash v0.19.0 and wire up the new channels.** After step 1, so that
 roast stays clean. `./verify.sh upload`, then in Artisan **Config > Device >
@@ -2323,21 +2727,35 @@ the batch lands near a normal roast. Save.
 Two batches. This is what turns the fan sensitivity from one weakly-identified
 coefficient into a measurement.
 
-After 3-5 the theta/tau ridge (§ Scheduling) collapses to real numbers, and only
-then are these worth deciding: a Ki retune against true margin, and whether the
-**predicted-BT channel** (§ Firmware now in scope) is worth building.
+~~After 3-5 the theta/tau ridge (§ Scheduling) collapses to real numbers~~ —
+**superseded**: roast 46's involuntary rail-to-rail SV excursion in the charge
+recovery did that job already (theta 13 +5/-1 s, tau 205 s, § Roast 46 refit), and
+the Ki retune it was to enable has been done — 0.07 is optimal, not a compromise.
+What 3-5 are still for is the **fan** (Test C) and an independent check of the
+plant under a deliberate rather than an accidental doublet. The
+**predicted-BT channel** (§ Firmware now in scope) is a separate decision.
 
-**Step 6 — the lookahead switch. Promoted: this is the next roast (2026-09-05).**
-Load `artisan/airRoaster_cascadePID_lookahead.aset` with background profile_003
-and roast normally. Roast 46 is the clean baseline it needed, and it independently
-measures the required lead at **6.3 s** against the file's 6 (§ Roast 46), so this
-is now a confirmation rather than an experiment. Expect at 1:30, when the switch
-fires, a **+4.1 degC target step -> ~+20 degC jump in commanded SV** in one tick;
-the inner loop settles it in ~5 s. What to read afterwards: the same six checks,
-plus whether the 1.0 degC / 4-5 s steady lag has gone to ~0, and whether the dip
-is better at `L=0` than roast 46's `L=3` (predicted worst error -9.9 vs -13.9
-degC, preload 30 vs 42, § Roast 46). If the 1:30 kick reads badly, the gentler
-regenerate is **0 -> 3 at 1:30, 3 -> 6 at 3:00** (+9.8 and +4.9 degC of SV).
+**Step 6 — the lookahead switch. This is the next roast (2026-09-05).**
+Load `artisan/airRoaster_cascadePID_lookahead.aset` **unmodified** with background
+profile_003 and roast normally. Roast 46 is the clean baseline it needed and
+measures the required lead at 6.3 s against the file's 6; the validated simulator
+in § Roast 46 refit then predicts, against roast 46's own numbers in brackets:
+
+| | predicted | roast 46 as run |
+|---|---|---|
+| steady tracking error, 3:00-7:00 | **+0.05 degC / 0.44 s** | +0.75 degC / 3.4 s |
+| time to BT 150 / 180 / 196.5 vs profile | -1.9 / +3.2 / +0.9 s | +3.5 / +5.0 / +4.4 |
+| at 1:30: target step -> commanded SV | +4.0 degC -> **+24.7 degC**, settled in ~15 s | — |
+| floor time in the charge dip | 16 s | 4 s simulated, 11 s measured |
+| SV max / worst reversal after 1:00 | 296 / 3.2 degC | 289 / 0.3 |
+
+So the answer to *"does the 1.0 degC / 4-5 s lag go to ~0?"* is yes, by
+construction of the feedforward. Two expectations to correct: the SV kick at
+1:30 is a quarter larger than § Roast 46 estimated, and the `pidLookahead(0)`
+leg makes the dip **worse** against profile_003 (16 s on the floor, not better
+than L=3's 4) — leave it in anyway, because it is what makes step 1b work.
+**Do not take the two-stage alternative**: swept against three- and four-stage
+schedules it gains under 0.1 degC of rms and costs two buttons and an alarm.
 
 **Step 7 — a fixed fan, independent.** § Fan vs batch size says the level does
 not depend on charge mass and the loop barely notices the level, only the step.
