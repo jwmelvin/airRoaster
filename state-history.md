@@ -4352,3 +4352,73 @@ keeps pushing where the real one backed off. The validated claim was always abou
 the **PID port** (`replay_pid`) over **120-240 s**, which is a different thing.
 **Do not use `simulate` to design a background**; the open-loop comparison above
 needs no simulator and is what the decision rests on.
+
+### The SV floor, and why it should have come down four roasts ago (2026-09-07)
+
+Operator, on being handed a fifth plan that left it alone: *"why not lower the
+floor? You've resisted that so many times I really don't understand... it's
+really irritating to see the control hit its floor and build up error because it
+keeps the bean temp above the background."*
+
+The objection is correct and the deferrals were not justified. The measurement
+that settles it, from roast 54's own log while `SV` sat pinned at 140:
+
+| t (s) | 45 | 50 | 55 | 60 | 65 | 70 | 75 | 80 |
+|---|---|---|---|---|---|---|---|---|
+| `SV` | 143 | 140 | 140 | 140 | 140 | 140 | 140 | 141 |
+| `HT` % | 44.3 | 46.0 | 44.9 | 46.8 | 46.0 | 45.2 | 45.1 | 49.8 |
+| BT | 69.9 | 73.8 | 77.2 | 80.7 | 83.7 | 87.0 | 89.6 | 92.4 |
+
+**The heater was at 46% for the whole 36 s the loop spent "out of authority".**
+It was not out of authority; it was forbidden from using roughly half the
+machine's range. The bed stayed above the background and the error persisted
+because the controller could not act, which is exactly what the operator has been
+watching happen for four roasts.
+
+**The floor has no roast-phase justification.** It is a *preheat* number —
+holding BT 130 at fan 60 needs inlet 140.4 and 140 was set just under it. The
+firmware clamps `INLET` at `INLET_SV_MIN_C = 0.0` (airRoaster.ino:191), so
+nothing downstream needs it. It is harmful in the preheat too: § The preheat runs
+at fan 60 records the inlet pinning to the floor and BT stalling at **137** at
+fan 64, which is this clamp.
+
+**Why it is not a one-line change, and what actually made it look forbidding.**
+Artisan maps the PID's 0-100% output onto `[positiveTargetMin, positiveTargetMax]`
+(pid_control.py:1302-1304), so `dSV/derror = Kp*(max-min)/100`. Two consequences
+that have to be handled together, and neither was worked out before:
+
+1. **Widening the span raises the gain.** 140→100 takes the span 160→200, a 25%
+   gain increase, unless `Kp` and `Ki` are scaled by 0.8. At `Kp` 2.4 / `Ki`
+   0.056 the physical gain is *identical* — 4.80 degC of SV per degC of BT error
+   and 0.1120 degC/s per degC-second — so the loop behaves the same everywhere it
+   was already working and differs only where it was clamped.
+2. **The integrator carries the whole operating point.** At zero error the loop
+   commands `SV = min`, so holding the preheat's 140.4 needs `Iterm = 20.2` where
+   it needed 0.3. The preheat builds this under the PID, and `update()` freezes
+   it through the charge gate (it forces `target = i` while inactive,
+   pid.py:406-408, so `err = 0` and the integral holds). **The new failure mode
+   is a short or late preheat**, which now starts the roast with the integrator
+   low and the bed cold. The check is the one the protocol already has: PID on,
+   BT flat at 130, inlet settled at ~140.4, `Temp_Drive` 10-12.
+
+The authority bought, from `ff_roast47` at fan 64 — extrapolated below its `sv`
+box of [145, 185], but it predicted roast 54's floor heat to 0.3 points:
+
+| `SV` | 140 | 120 | 100 | 80 |
+|---|---|---|---|---|
+| heat % | 46.0 | 41.5 | **37.1** | 32.7 |
+
+**Shipped as `artisan/airRoaster_cascadePID_floor100.aset`**: roast 54's
+`_chargetemp` set with `positiveTargetMin` 140→100, `pidKp` 3.0→2.4, `pidKi`
+0.07→0.056, and nothing else touched (diff is those three lines).
+
+**On changing it in the same roast as the background.** The two act in disjoint
+regions — the background changes the target over 0-50 s, the floor changes only
+what happens when the loop wants `SV < 140`, which on roast 54 was 45-90 s — and
+the log separates them: the dip fix is read at 0-30 s and in the peak SV, the
+floor in whether `SV` ever goes below 140 and in the 45-90 s error. The
+one-variable rule is a means to attribution, not an end, and here attribution
+survives both changes. Note also state-plan.md § What was ruled out, whose
+"pure reparameterisation" row was being read as a standing objection to this; it
+answers a different question (can the range be used to shrink the integrator's
+swing?) and says nothing about saturation. Corrected there.

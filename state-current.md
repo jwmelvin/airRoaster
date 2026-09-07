@@ -63,12 +63,16 @@ error over 0-30 s falls from **22.6 degC to 2.6**.
 minimum is flat. **Do not fit it away**, and do not read `phi` as physics — it is
 depth per degC on the operator's scale (`charge_dip.py --scale`).
 
-### The job: roast 55 — one variable, and it is the dip alone
+### The job: roast 55 — the dip, and the floor that has cost four roasts
 
 **Background: `artisan/profile_400g_m12C_v2.alog` (generated, ready to load).**
-**Alarm set: `artisan/airRoaster_cascadePID_chargetemp.aset` — UNCHANGED.**
-Load the background by hand (the `.aset` carries no `backgroundpath`), confirm
-`pidOnCHARGE=false` and `svLookahead=0`, and change nothing else.
+**Alarm set: `artisan/airRoaster_cascadePID_floor100.aset`** — roast 54's
+`_chargetemp` set with the SV floor lowered and the gains rescaled to match (see
+below). Load the background by hand (the `.aset` carries no `backgroundpath`) and
+confirm `pidOnCHARGE=false`, `svLookahead=0`.
+
+**Two changes, and they act in disjoint regions**: the background fixes the dip
+(0-50 s), the floor fixes the saturation (45-90 s). The log tells them apart.
 
 It was regenerated **from roast 54's own background**, not from `profile_003`:
 
@@ -88,7 +92,7 @@ therefore attributable to the dip and to nothing else.
 |---|---|---|
 | worst \|bkg − BT\| over roast 54's 30 s free window | 8.6 degC | **2.5** |
 | error handed to the PID at the CHARGE+15 s alarm | +8.0 | **+2.1** |
-| P-term at switch-on (`Kp` 3.0) | +24 degC of SV | **+6** |
+| P-term at switch-on | +38 degC of SV | **+10** |
 | peak RoR asked | 43 | 56 degC/min (machine delivers 72) |
 | curve past 60 s | — | **identical** |
 
@@ -108,8 +112,71 @@ the loop a lower one would have made the single failing check worse. The dip
 model is credible to ~40 s (97.5% of the mixing is delivered by then) and not
 past it, so the blend now ends at 50 s.
 
-**Do not retune anything.** `pidKp` 3.0, `pidKi` 0.07, `svLookahead` 0 -> 6 at
-90 s, the fan step at 120 s, the SV clamp 140/300 — all unchanged.
+### The second change: the SV floor comes down to 100
+
+**Use `artisan/airRoaster_cascadePID_floor100.aset`, not the `_chargetemp` one.**
+It differs from roast 54's config in exactly three keys.
+
+| | roast 54 | **roast 55** |
+|---|---|---|
+| `positiveTargetMin` | 140 | **100** |
+| `pidKp` | 3.0 | **2.4** |
+| `pidKi` | 0.07 | **0.056** |
+
+**This was deferred four roasts too long.** The floor is not the loop running out
+of authority — it is the loop being forbidden from using authority it has. While
+roast 54 sat 36 s pinned at `SV = 140`, asking for the least heat it was allowed
+to ask for, the **heater was running at 44.9-49.8%, mean 46.3%**. Roughly half
+the machine's output was below the clamp and unreachable. The bed stayed above
+the background and the error simply persisted, because the controller could not
+act on it.
+
+**The floor has no roast-phase justification at all.** It is a *preheat* number:
+holding BT 130 at fan 60 needs inlet 140.4, and 140 was set just under it. The
+firmware clamps `INLET` at `INLET_SV_MIN_C = 0.0` (airRoaster.ino:191), so
+nothing downstream requires 140. It is actively harmful in the preheat too —
+state-plan.md § The preheat runs at fan 60 records the inlet pinning to the floor
+and **BT stalling at 137** at fan 64, which is this clamp and nothing else.
+
+**Why the gains move with it, and why that is not a retune.** Artisan maps the
+PID's 0-100% output onto `[positiveTargetMin, positiveTargetMax]`
+(pid_control.py:1302-1304), so `dSV/derror = Kp * (max - min)/100`. Widening the
+span from 160 to 200 would make the loop **25% more aggressive** if the gains
+stood still. Scaling `Kp` and `Ki` by 160/200 = 0.8 holds the physical gain
+exactly:
+
+| | roast 54 | roast 55 |
+|---|---|---|
+| SV per output % | 1.60 | 2.00 |
+| **`dSV/derror`** | **4.80** | **4.80** degC SV per degC BT |
+| **`d(dSV/dt)/derror`** | **0.1120** | **0.1120** |
+| heat % at the floor (fan 64, `ff_roast47`) | 46.0 | **37.1** |
+
+So the loop behaves identically everywhere it was already working, and differs
+**only** where the old one was saturated. That is why this does not confound the
+background change: the two act in disjoint regions, and the log separates them —
+the dip fix is read at 0-30 s and in the peak SV, the floor at 45-90 s and in
+whether `SV` ever goes below 140.
+
+**The one new failure mode, and the check for it.** The integrator carries the
+whole operating point: at zero error the loop commands `SV = min`, so holding the
+preheat's 140.4 now needs `Iterm = 20.2` where it needed 0.3. The preheat builds
+that naturally, because the PID is holding BT 130 under the same mapping, and
+`update()` freezes `Iterm` through the gate (it forces `target = i` while
+inactive, pid.py:406-408, so `err = 0` and the integral holds). **But a short or
+late preheat would start the roast with the integrator low and the bed cold.**
+
+> **Before CHARGE: the PID must be ON, BT flat at 130, and the inlet settled at
+> ~140.4 with `Temp_Drive` 10-12.** If the inlet is sitting there under the loop,
+> `Iterm` is correct by definition. The old runbook criterion "inlet off the 140
+> floor" no longer means anything — use the settled inlet and `Temp_Drive`.
+
+If 100 proves not to be enough, 80 is available on the same arithmetic
+(`Kp` 2.18, `Ki` 0.0509); the ff map is extrapolated below its `sv` box of
+[145, 185] either way, though it predicted roast 54's floor heat to 0.3 points.
+
+**Everything else is unchanged.** `svLookahead` 0 -> 6 at 90 s, the fan step at
+120 s, the 300 ceiling, `pidKd` 0, all seven alarms, `pidOnCHARGE=false`.
 
 ### What to expect, and what would falsify it
 
@@ -117,14 +184,19 @@ The switch-on error is ~4x smaller, and every downstream number scales with it:
 
 - **peak SV** should land near **150-165**, against roast 54's 193.
 - **seconds of heat at 100%** should be **0**, against 3.0.
-- **seconds on the 140 floor** should fall well below 36 — this is the check
-  that has failed four roasts running and the one to watch.
+- **seconds saturated at the floor** should fall to near zero — this is the
+  check that has failed four roasts running. Note the floor is now **100**, so
+  score `SV <= 101.5`; also report the old `SV <= 141.5` count so the series
+  stays comparable, but that number no longer means saturation.
+- **`SV` should be seen below 140.** If it never goes there, the loop never
+  wanted the authority and the floor was not the constraint after all.
 - **worst BT error 30-90 s** should stay single-digit; roast 54 was +5.5.
 - time-to-BT 150/180/196.5 should not move from −1.5 / +0.2 / −2.5 s, because
   the background past 60 s is identical.
 
-**If peak SV drops but the floor seconds do not**, that is clean evidence the
-floor is caused by the *recovery target* rather than the dip — the background
+**If `SV` runs below 140 for a long stretch and BT is still above the
+background**, the floor was not the binding constraint and the *recovery target*
+is — the background
 asking the bed to come back more slowly than it does at minimum heat. The next
 experiment is then the recovery target, not the dip: rebuild with
 `--source artisan/profile_003.alog --t1 30 --t2 60`, which tracks roast 54's
