@@ -1409,6 +1409,10 @@ duration gives the same end, by construction.
 | elevated | `INLET 200`, fan 64, **PID off** | 10 min |
 | settle | cascade on, BT 130 | 10 min from BT first within 1 degC |
 
+**Superseded on the bench, 2026-09-07 -- see the next section.** The elevated
+phase is dropped and the preheat runs at **fan 60** with a Temp_Drive criterion
+instead of a stopwatch: at fan 64 the settle cannot reach BT 130 at all.
+
 Sizing: the chamber mass that takes part in the charge mix is `C ~ 353 J/K`
 against `UA >= 3.3 W/K` (the plant's own `a` on a 680 J/K bed), so **tau <= ~2
 min** for that one; the deeper reservoir is roast 50's 510-557 s *no-flow* decay
@@ -1430,6 +1434,51 @@ bean-independent readout of stored heat**. Record through the cooldown on both
 runs and overlay the two curves: if they sit on top of each other the protocol
 worked, and if they are offset the difference is correctable — and it yields the
 driven time constant.
+
+#### The preheat runs at fan 60, because BT 130 is unreachable at 64
+
+**Found on the bench, 2026-09-07, and it corrects two things in these notes.**
+The first attempt at the protocol above ran the elevated phase at `INLET 200`
+with fan 64 and then could not settle: with the PID clamped at
+`positiveTargetMin = 140` the inlet pinned to its floor and **BT stalled at
+137**, Temp_Drive (`Inlet - BT`, the `Y3-Y2` virtual channel) reading ~3.
+
+**It is the fan, not the walls.** Roast 47's empty-chamber grid at a constant
+SV 185 gives Temp_Drive **25.4 / 15.4 / 14.5 / 13.3** at fan **58 / 64 / 72 /
+80** -- steep through 58-64 at about **-1.7 degC per fan unit**, then flat.
+(Those windows are ~25 s against a ~45 s empty-chamber time constant, so the
+trend is the result and the absolute values are not.) That matches the two
+settled points on record: roast 50 at fan 60 sat at Temp_Drive **10.6**, the
+bench at fan 64 at **~3** -- -1.9 per unit over the same span.
+
+So at fan 64 holding BT 130 needs **inlet ~133**, below the 140 floor. It is an
+equilibrium, not a transient, and no amount of waiting reaches it.
+
+**This explains roast 49's preheat, which § Roast 49 records as an oddity.** It
+was not impatience: roast 49 held fan 64 throughout, so there *was* no settled
+BT 130 to charge from, and it was charged mid-ramp because that is the only way
+to cross 130 at that fan. Every roast that settled -- 43, 44, 45, 46 and both
+roast 50 cycles -- preheated at **fan 60**, where the required inlet is
+140.4-140.8, just above the floor.
+
+**And it corrects the paragraph above**: the machine state *is* observable, but
+Temp_Drive reads it only at a **fixed fan**. The 23.2 / 17.2 / 15.0 / 11.4 spread
+across roasts 43/44/45/46 is settling state at a common fan 60; the bench's 0.9
+was an over-charged wall on top of a fan-64 offset, and the persistent part was
+the fan.
+
+**The protocol is therefore:** preheat at **fan 60** under the PID; hold until
+**Temp_Drive settles into 10-12** with BT flat at 130 and the inlet **off** the
+140 floor; press fan **64** immediately before tipping and leave it there. That
+is roasts 43-46's own schedule, so the pair lands on the historical state rather
+than only on each other, and a 400 g charge needs ~64 to loft in any case. **The
+elevated pre-preheat is dropped** -- the settling criterion handles machine
+history from either side without it.
+
+**None of this reaches the measurement.** The proxy is read over `0..theta` and
+nothing the heater does arrives before ~13.5 s, so the floor, the lookahead
+switch and the fan step at CHARGE are all control, not signal, as long as both
+runs are identical.
 
 #### autoCHARGE must be disarmed through the settle
 
