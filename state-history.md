@@ -4269,3 +4269,86 @@ is the one defect the model still has; it is not licence to fit the turning poin
 - `--no-write` added. `--check` generates the background and *then* reports on
   it, so running it after a roast destroys the profile that roast was scored
   against. `--no-write` scores without touching the disk.
+
+### Designing roast 55 (2026-09-07) — the TP trigger, and the blend that had to shorten
+
+Three findings, two of which changed the plan.
+
+#### Artisan *can* key the loop off the measured dip; it is not worth doing
+
+The roast-54 record assumed this was impossible. It is not. Artisan alarms carry
+a **TP** time base — `alarmtime == 8`, the combo-box entry sitting between CHARGE
+and DRY END (alarms.py:847-854) — and `alarm_time` is measured from
+`sample_timex[self.TPalarmtimeindex]` (canvas.py:5278-5279). `TPalarmtimeindex`
+is set **live** by `sample()`: `checkTPalarmtime()` (canvas.py:4642-4650) waits
+for >20 s since CHARGE and four rising samples, then `findTP()`
+(util.py:927-954) returns the index of the *true* BT minimum, retrospectively.
+There is a 2-minute backstop that forces the index if no TP is found
+(canvas.py:5129-5133). So "N seconds after the measured turning point" is a
+first-class trigger, available today with no firmware change.
+
+**It buys nothing, because the turning-point time barely depends on the charge.**
+The refitted model, inlet held at the preheat:
+
+| `T_bean` | −6 | −12 | −18 | −24 |
+|---|---|---|---|---|
+| TP | 58.6 at 28.5 s | 55.1 at 29.0 s | 51.5 at 29.0 s | 47.9 at 29.0 s |
+
+18 degC of charge moves the depth by 10.7 degC and the *timing* by 0.5 s. The
+roasts say the same: 37 degC of measured charge difference moved the measured TP
+by about a second (roast 50 at 22 s, roast 51 at 21 s, roast 54 at 23 s). The
+charge state lives in the dip's **depth**, and depth is exactly the quantity that
+cannot be separated from `phi`. A TP-keyed trigger adapts to a variable that does
+not vary. Recorded here so it is not re-proposed.
+
+#### Switching on later is strictly worse
+
+Worst error handed to the PID at switch-on, over a ±6 degC charge range:
+
+| trigger | CHARGE+15.5 s | +20 s | +25 s | +30 s | TP+3 s | TP+5 s | TP+12 s | BT≥65 | BT≥75 |
+|---|---|---|---|---|---|---|---|---|---|
+| worst | **6.0** | 6.6 | 7.0 | 7.2 | 7.2 | 7.3 | 7.4 | 8.8 | 12.3 |
+
+At 15.5 s only about two-thirds of the mixing deficit has been drawn, so an early
+switch-on catches the charge-state error before it has finished developing; every
+later rule waits for the full deficit. The BT-threshold rules are worst of all
+because they conflate depth with time. **The existing CHARGE+15 s alarm is
+already the best of the rules tested**, and the answer to charge-temperature
+uncertainty is not a cleverer trigger: ±6 degC of charge costs ±3 degC at
+switch-on, which `Kp` 3.0 turns into ±9 degC of SV.
+
+#### The blend window had to shorten, and this nearly shipped a regression
+
+Regenerating roast 55's background from `profile_003` at the stock
+`--t1 30 --t2 150` fixed the dip and **broke the recovery**. The blend is only
+16% source at 60 s, so 84% of the curve there is the dip model — which means
+"the inlet stayed at the preheat and no heat was added". The refitted dip is
+deeper and later, so the whole recovery dropped with it:
+
+| background, BT at | 40 s | 60 s | 75 s | 90 s |
+|---|---|---|---|---|
+| roast 54 measured | 65.7 | 80.7 | 89.6 | 97.3 |
+| roast 54's background | −1.1 | −5.3 | −4.3 | −1.3 |
+| refit, `t2 = 150` | **−7.4** | **−9.9** | **−7.6** | −3.6 |
+| refit onto roast 54's bkg, `t2 = 50` | −4.3 | −5.3 | −4.3 | −1.3 |
+
+Roast 54 already spent **36 s saturated on the 140 floor** unable to hold the bed
+*down* to a target 5 degC below it. A target 10 degC below would have made the
+one failing check worse while the headline number improved — a regression hiding
+behind a better dip. The dip model is credible to ~40 s (97.5% of the mixing is
+delivered by then) and says nothing useful past it, so the blend now ends at
+50 s and the source is **roast 54's own background** rather than `profile_003`.
+Past 60 s the file is byte-identical (max diff 0.000 degC), which makes roast 55
+a genuine one-variable experiment. All the candidates reach BT 150 at the same
+193 s, so the blend choice does not touch the roast's schedule.
+
+#### The closed-loop simulator is not validated through the dip
+
+`sim.simulate` was used to try to settle the above and **could not**: against
+roast 54, same background and same config, it runs rms 4.9 degC over 16-60 s and
+4.7 over 60-120 s, and it never puts SV on the floor at all where the real roast
+sat at 140 for 45 s. Its bed runs 5-6 degC cold through the recovery, so its loop
+keeps pushing where the real one backed off. The validated claim was always about
+the **PID port** (`replay_pid`) over **120-240 s**, which is a different thing.
+**Do not use `simulate` to design a background**; the open-loop comparison above
+needs no simulator and is what the decision rests on.

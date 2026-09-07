@@ -63,32 +63,103 @@ error over 0-30 s falls from **22.6 degC to 2.6**.
 minimum is flat. **Do not fit it away**, and do not read `phi` as physics — it is
 depth per degC on the operator's scale (`charge_dip.py --scale`).
 
-### The job: roast 55
+### The job: roast 55 — one variable, and it is the dip alone
 
-400 g of the same lot, same config, **new background from the refitted model**:
+**Background: `artisan/profile_400g_m12C_v2.alog` (generated, ready to load).**
+**Alarm set: `artisan/airRoaster_cascadePID_chargetemp.aset` — UNCHANGED.**
+Load the background by hand (the `.aset` carries no `backgroundpath`), confirm
+`pidOnCHARGE=false` and `svLookahead=0`, and change nothing else.
+
+It was regenerated **from roast 54's own background**, not from `profile_003`:
 
 ```
 .venv/bin/python tools/make_charge_background.py \
-    --mass 400 --greens-temp <measured> --charge-bt 130.2 --check
+    --mass 400 --greens-temp -12 --charge-bt 130.2 \
+    --source artisan/profile_400g_m12C.alog --t1 30 --t2 50 \
+    --out artisan/profile_400g_m12C_v2.alog --check
 ```
 
-- **`--greens-temp` must be read the way roasts 50/51/53/54's were** — the same
-  thermometer, the same spot on the bag. The model is calibrated on that scale
-  and a systematic offset of `d` degC moves the dip by `0.71*d`.
-- **`--check` writes the background file.** Run it before the roast, not after,
-  or pass `--no-write` to score without touching the disk.
-- Record `greens_temp` **and `moisture_greens`**; `moisture_greens` is `0.0` for
-  the second roast running.
-- Do not retune `pidKp` 3.0 / `pidKi` 0.07 / `svLookahead` 0 -> 6 at 90 s, and do
-  not touch the fan step. Nothing in the loop changed.
+so **past 60 s it is byte-identical to what roast 54 ran** (verified, max diff
+0.000 degC; `timeindex` unchanged, so DRY END / FCs / DROP are the same marks).
+The only thing that differs is BT over 0-50 s. Any change in the roast is
+therefore attributable to the dip and to nothing else.
 
-**What to expect, and it is a prediction the roast can falsify.** The residual is
-a phase signature: the background runs ~2 degC *above* the bed through the descent
-and ~2.5 degC *below* it by 30 s. So at the `PID ON` alarm the loop should see
-about **2 degC** of error where roast 54 handed it 8.5, and by ~24 s the sign
-should flip to the direction that makes the loop back off rather than kick. The
-floor seconds and the 30-90 s error are the same event and should both collapse
-— not to zero, because ~2.5 degC of phase error remains.
+| | roast 54's bkg | **v2** |
+|---|---|---|
+| worst \|bkg − BT\| over roast 54's 30 s free window | 8.6 degC | **2.5** |
+| error handed to the PID at the CHARGE+15 s alarm | +8.0 | **+2.1** |
+| P-term at switch-on (`Kp` 3.0) | +24 degC of SV | **+6** |
+| peak RoR asked | 43 | 56 degC/min (machine delivers 72) |
+| curve past 60 s | — | **identical** |
+
+**Enter `greens_temp = -12.0` even though the beans are almost certainly colder
+than that.** It is the number roasts 51/53/54 carry and the number `phi` is
+fitted against, so the operator's offset cancels; accuracy is irrelevant and
+*consistency is everything*. Record `moisture_greens` too — `0.0` for the second
+roast running.
+
+**Why the blend window moved from 30-150 s to 30-50 s.** The refitted dip is
+deeper and later, and at `t2 = 150` the blend is still 84% model at 60 s — where
+the model means "the inlet stayed at the preheat and no heat was added". That
+dragged the whole 40-90 s target **7-10 degC below where roast 54's bed actually
+went**, against 1-5 degC for the old background. Roast 54 already spent 36 s
+saturated on the 140 floor unable to hold the bed *down* to that target; handing
+the loop a lower one would have made the single failing check worse. The dip
+model is credible to ~40 s (97.5% of the mixing is delivered by then) and not
+past it, so the blend now ends at 50 s.
+
+**Do not retune anything.** `pidKp` 3.0, `pidKi` 0.07, `svLookahead` 0 -> 6 at
+90 s, the fan step at 120 s, the SV clamp 140/300 — all unchanged.
+
+### What to expect, and what would falsify it
+
+The switch-on error is ~4x smaller, and every downstream number scales with it:
+
+- **peak SV** should land near **150-165**, against roast 54's 193.
+- **seconds of heat at 100%** should be **0**, against 3.0.
+- **seconds on the 140 floor** should fall well below 36 — this is the check
+  that has failed four roasts running and the one to watch.
+- **worst BT error 30-90 s** should stay single-digit; roast 54 was +5.5.
+- time-to-BT 150/180/196.5 should not move from −1.5 / +0.2 / −2.5 s, because
+  the background past 60 s is identical.
+
+**If peak SV drops but the floor seconds do not**, that is clean evidence the
+floor is caused by the *recovery target* rather than the dip — the background
+asking the bed to come back more slowly than it does at minimum heat. The next
+experiment is then the recovery target, not the dip: rebuild with
+`--source artisan/profile_003.alog --t1 30 --t2 60`, which tracks roast 54's
+measured bed to −5.1 / −1.4 / +1.9 / +5.1 degC at 40/60/75/90 s and reaches
+BT 150 at the same 193 s. **Do not do both in one roast.**
+
+### Two things this session settled that change the strategy
+
+**Keying the loop off the measured dip is possible in Artisan, and it is not
+worth doing.** Alarms carry a **TP** time base (`alarmtime == 8`, the combo box
+entry between CHARGE and DRY END, alarms.py:850), `TPalarmtimeindex` is set live
+by `sample()` (canvas.py:5138-5144, 5370-5371), and `findTPint` (util.py:927-954)
+returns the *true* BT minimum, so "N seconds after the measured turning point"
+is a first-class trigger. It buys nothing: **the turning-point time is nearly
+charge-independent.** The model puts it at 28.5-29.0 s across a charge range of
+−6 to −24 degC, and the roasts agree — 37 degC of measured charge difference
+moved the measured TP by ~1 s (roast 50 at 22 s, roast 51 at 21 s, roast 54 at
+23 s). The charge state lives in the dip's **depth**, and depth is exactly what
+cannot be separated from `phi`. A TP-keyed trigger adapts to a variable that
+does not vary.
+
+**Switching on later is strictly worse, so the CHARGE+15 s gate is already
+right.** Worst switch-on error over a ±6 degC charge range, from the refitted
+model with the inlet held:
+
+| trigger | CHARGE+15.5 s | +25 s | +30 s | TP+5 s | BT≥65 rising | BT≥75 rising |
+|---|---|---|---|---|---|---|
+| worst error | **6.0** | 7.0 | 7.2 | 7.3 | 8.8 | 12.3 degC |
+
+The mixing deficit is only ~2/3 delivered at 15.5 s, so switching on early
+catches the charge-state error before it has fully developed. Every later rule
+waits for it to finish. This is why the answer to charge-temperature uncertainty
+is *not* a cleverer trigger: **±6 degC of charge error costs ±3 degC of tracking
+error at switch-on**, which `Kp` 3.0 turns into ±9 degC of SV — well inside the
+loop's comfortable range, and a quarter of what roast 54 was handed.
 
 ### Checking the gate in the log
 
