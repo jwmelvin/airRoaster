@@ -91,21 +91,50 @@ is upstream of the config — check that Artisan actually reloaded the `.aset`.
 now put time-to-BT inside ±3.2 s and every problem found since roast 46 has been
 the target or an Artisan mechanism, never the gains.
 
-### The two defects left in the dip model
+### Do not fix the dip model before roast 54 — run it on the background unchanged
 
-**The turning point is 9 s late, and it is now the larger of the two.** Roast 53
-measured **62.4 degC at 20 s** against the background's **62.06 at 29 s** — the
-depth is right to 0.35 degC, the phase is not. `make_charge_background.py --check`
-has been reporting it all along (roast 50: 22 s vs 27 s; roast 51: 21 s vs 29 s).
-That late turning point is what generates the standing +4.8 degC error over
-10-16 s, and it is what the fixed loop's 174-179 will be answering. **A correct
-gate does not fix it** — it only stops the loop compounding it.
+The two known defects both stand, and **neither should be touched first.** Roast
+54 is the run that measures what to fix them to.
 
-**The pour ramp.** `charge_dip.dip()` starts its mixing exponential at `t = 0`
-with no pour ramp, so the generated curve falls too fast early: roast 53 measured
-117.2 at 3 s against a background 110.7, roast 52 was ~10 degC out at 4 s. It
-closes by 10 s. `charge_thermal.py` already has the ramp (`w_c`) and
-`charge_dip.py` does not; **~2 s of pour ramp is the fix.**
+**The turning point looks 9 s late, and about half of that is the loop.** Roast 53
+measured **62.4 degC at 20 s** against the background's **62.06 at 29 s**.
+But `charge_dip.py` builds the dip with the **inlet held at its pre-charge
+value**, and no roast in the series has satisfied that — the loop railed
+`T_inlet` to 240-300 through every dip. `tools/analysis/dekick_tp.py` backs that
+excess out with the plant card:
+
+| roast | peak inlet 0-40 s | measured TP | de-kicked TP |
+|---|---|---|---|
+| 50 (warm) | 221 | 80.2 degC at 21.8 s | 77.5 at **32.0 s** |
+| 51 | 252 | 63.8 degC at 21.0 s | 62.5 at **24.0 s** |
+| 53 | 240 | 62.4 degC at 20.0 s | 61.1 at **23.5 s** |
+| the model | — | — | 62.1 at **29.0 s** |
+
+So the residual is **~5 s, not 9**, and the depth is right to ~1 degC. That is a
+first-order estimate on a `theta` band of 13 +5/−1 s, not a measurement — but it
+is enough to say that refitting now would fit the model to the overshoot the loop
+itself caused, which is the circularity `make_charge_background.py --check`
+already guards against by scoring only 0-18 s. **Roast 54 with a working gate is
+the first roast where the inlet is actually held near 140 through the dip, which
+is the assumption the model is built on.**
+
+**The pour ramp is entirely inside the gate.** `charge_dip.dip()` starts its
+mixing exponential at `t = 0` with no pour ramp, so the generated curve falls too
+fast early — roast 53 measured 117.2 at 3 s against a background 110.7, roast 52
+was ~10 degC out at 4 s — and it closes by 10 s. With the gate armed the loop
+takes no action over 0-15 s, so that stretch is a *scoring reference* and not a
+setpoint: fixing it changes nothing the machine does. `charge_thermal.py` already
+has the ramp (`w_c`) and `charge_dip.py` does not; **~2 s of pour ramp is the
+fix**, and it can wait.
+
+**And the two push opposite ways.** Delaying the mixing exponential's start moves
+the turning point ~1 s *later*, widening the phase gap rather than closing it. So
+fix them together, against roast 54's dip, rather than one at a time now.
+
+Running roast 54 on the background unchanged also makes it a clean A/B against
+roast 53 — same lot, same mass, same background, one variable moved. Even on the
+current background the replay puts the gated loop's peak at **174**, inside the
+145-181 the port calls correct.
 
 ### Where the strategy stands
 
@@ -135,8 +164,9 @@ so consistent with roast 51. **Treat any background generated away
 from 400 g as unvalidated** and generate at the mass actually being roasted rather
 than scaling. Resolving it needs a deliberate mass pair at one charge temperature.
 
-Open, in order: (1) roast 54's four checks; (2) the dip model's 9 s late turning
-point; (2b) the pour ramp; (2c) the mass term; (3) whether charge state reaches
+Open, in order: (1) roast 54's four checks; (2) then, and only then, the dip
+model's turning-point phase and the pour ramp **together**; (2b) the mass term;
+(3) whether charge state reaches
 the cup, which needs a *warm* charge on the same configuration dropped at the same
 BT to the tenth (roasts 50/51 differed 54.5 s vs 45.0 s above BT 196.5 but also
 dropped 1.1 degC apart, which spoiled it); (4) **step 9, `INLET TRIM`** —

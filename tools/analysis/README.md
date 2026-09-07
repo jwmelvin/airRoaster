@@ -19,6 +19,7 @@ reproduces the outer loop so tuning can be tested before it is roasted.
 | `deadtime_vs_lag.py` | is `Inlet -> BT` a deadtime or a lag?  Excitation screen, the `(theta, tau2)` identifiability surface, the two-lag bootstrap, the margin arithmetic under both structures, and what it does to the step-9 lead |
 | `charge_state.py` | how cold the beans were: the control-independent mixing proxy, air-corrected; **stdlib only** |
 | `charge_thermal.py` | the charge-thermal test's two no-flow charge decays. Primarily an **identifiability report**: what the still-air decay measures (the probe's weighting onto the chamber, the fan-burst bias) and what it cannot (the chamber capacity, the charge temperature). ~14 min |
+| `dekick_tp.py` | how much of a measured turning point is the loop's own kick: backs the inlet excess out of the dip with the plant card, so the dip model is not refitted against the overshoot it caused |
 | `charge_dip.py` | the charge dip from `(mass, greens temp)`: a mixing term in front of the plant card, calibrated against the roasts rather than against the charge-thermal test |
 | `../make_charge_background.py` | merges that dip into a background's first two minutes, leaving the ramp and every mark untouched |
 | `plant_roast46.json` | the plant card `tools/merge_inlet_base.py` reads: `a`, `theta` and the loss cubic, with provenance |

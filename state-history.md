@@ -3944,8 +3944,36 @@ The dip model is untouched by any of this and its two known errors both stand.
 The pour ramp: the generated curve is still ~6 degC too cold over 1-4 s (BT 117.2
 against a background 110.7 at 3 s), the same defect roast 52 showed at ~10 degC.
 And the turning point: measured **62.4 degC at 20 s** against the background's
-**62.06 at 29 s** — the depth is right to 0.35 degC and the *phase is 9 s late*,
-which `make_charge_background.py --check` has been reporting all along (roast 50
-22 s vs 27 s, roast 51 21 s vs 29 s). That late turning point is what generates
-the standing +4.8 degC error over 10-16 s, and it is what the 174-179 of the
-fixed loop is answering. It is now the largest remaining term in the dip.
+**62.06 at 29 s** — the depth is right to 0.35 degC and the phase is not, which
+`make_charge_background.py --check` has been reporting all along (roast 50 22 s
+vs 27 s, roast 51 21 s vs 29 s). That late turning point is what generates the
+standing +4.8 degC error over 10-16 s, and it is what the 174-179 of the fixed
+loop is answering.
+
+**But about half of that 9 s is the loop, not the model, and none of the series
+has ever measured the free dip.** `charge_dip.py` builds the dip with the inlet
+**held at its pre-charge value**, and every roast so far railed `T_inlet` to
+240-300 through it. `tools/analysis/dekick_tp.py` backs the excess out to first
+order with the roast-46 plant card — `BT_excess(t) = a * int(inlet(s-theta) -
+140.4) ds`:
+
+| roast | peak inlet 0-40 s | measured TP | de-kicked TP |
+|---|---|---|---|
+| 50 (warm) | 221 | 80.2 degC at 21.8 s | 77.5 at **32.0 s** |
+| 51 | 252 | 63.8 degC at 21.0 s | 62.5 at **24.0 s** |
+| 53 | 240 | 62.4 degC at 20.0 s | 61.1 at **23.5 s** |
+| the model | — | — | 62.1 at **29.0 s** |
+
+The residual is **~5 s, not 9**, and the depth is right to ~1 degC. It is an
+estimate and not a measurement — `theta` carries a band of 13 +5/−1 s and the
+neglected feedback term is second-order — but it is enough to settle what to do:
+**refitting the dip model now would fit it to the overshoot the loop itself
+caused.** That is precisely the circularity `--check` guards against by scoring
+only 0-18 s. Roast 54 with a working gate is the first roast that will hold the
+inlet near 140 through the dip, i.e. the first that satisfies the model's own
+assumption, and it is the measurement.
+
+The two defects also push opposite ways: ~2 s of pour ramp delays the mixing
+exponential's start and moves the turning point ~1 s *later*, widening the phase
+gap. Fix them together, after roast 54, and run roast 54 on the background
+unchanged — which also makes it a clean A/B against roast 53.
