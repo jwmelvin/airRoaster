@@ -86,7 +86,29 @@ Settled and not worth re-opening: `k = 0.1056` measured from roasts 50/51 across
 13.5 s is total apparent lag rather than transport; the preheat equilibrium is
 fan 58 / BT 130.2 / Temp_Drive 10.25.
 
-Open, in order: (1) roast 53's four checks; (2) the pour ramp above; (3) whether
+### And a second defect the pair plus roast 52 has just exposed: the mass term
+
+Roasts 51 and 52 are the same lot at the same measured −12.0 degC, differing only
+in mass, and they disagree with `phi(mass)`:
+
+| roast | mass | `k` |
+|---|---|---|
+| 51 | 400 g | 0.10483 |
+| 52 | 380 g | **0.10253** |
+
+`phi = mc/(C_chamber + mc)` saturates, so `phi/m` is **larger** at 380 g — the
+model predicts roast 52 should read **+3.4%**, i.e. `k = 0.1084`. It reads
+**−2.2%**, so the model is **5.4% out** over a 5% change in mass, and in the
+**wrong direction**. Two caveats before anyone acts on it: `n = 1`, and both
+roasts carry `greens_temp = −12.0` exactly, which may be one measurement entered
+twice rather than two. But `make_charge_background.py` uses `phi(mass)` for every
+mass but 400 g, so **treat any background generated away from 400 g as
+unvalidated**, and generate at the mass actually being roasted rather than
+scaling. Resolving it needs a deliberate mass pair at one charge temperature —
+worth queueing behind the cup question, not ahead of it.
+
+Open, in order: (1) roast 53's four checks; (2) the pour ramp above; (2b) the
+mass term above; (3) whether
 charge state reaches the cup, which needs the warm-arm pair; (4) **step 9,
 `INLET TRIM`** — deliberately deferred, not dropped. Its tracking case is now
 marginal (three roasts inside ±2.2 s) and what survives is robustness: it stops
