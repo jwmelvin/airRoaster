@@ -18,13 +18,13 @@ reproduces the outer loop so tuning can be tested before it is roasted.
 | `roast49_step6.py` | roast 49 against state-plan.md § Step 6's predictions, and the PID replay at 0.5 s sampling |
 | `deadtime_vs_lag.py` | is `Inlet -> BT` a deadtime or a lag?  Excitation screen, the `(theta, tau2)` identifiability surface, the two-lag bootstrap, the margin arithmetic under both structures, and what it does to the step-9 lead |
 | `charge_state.py` | how cold the beans were: the control-independent mixing proxy, air-corrected; **stdlib only** |
-| `charge_thermal.py` | roast 50's two no-flow charge decays. Primarily an **identifiability report**: what the still-air decay measures (the probe's weighting onto the chamber, the fan-burst bias) and what it cannot (the chamber capacity, the charge temperature). ~14 min |
-| `charge_dip.py` | the charge dip from `(mass, greens temp)`: a mixing term in front of the plant card, calibrated against the roasts rather than against roast 50 |
+| `charge_thermal.py` | the charge-thermal test's two no-flow charge decays. Primarily an **identifiability report**: what the still-air decay measures (the probe's weighting onto the chamber, the fan-burst bias) and what it cannot (the chamber capacity, the charge temperature). ~14 min |
+| `charge_dip.py` | the charge dip from `(mass, greens temp)`: a mixing term in front of the plant card, calibrated against the roasts rather than against the charge-thermal test |
 | `plant_roast46.json` | the plant card `tools/merge_inlet_base.py` reads: `a`, `theta` and the loss cubic, with provenance |
 | `plant_roast48.json` | roast 48's plant, **not** an authoring source (`supersedes_plant_roast46: false`); its settled content is `kf` |
 | `ff_roast47.json` | the `feedforward()` card: the product-form coefficients, the affine fallback and the fitted box |
 | `ff_roast48_loaded.json` | the loaded check: transfer error against the flashed map, per-setpoint fan slopes, and the pooled 47+48 refit |
-| `charge_thermal.json` | roast 50's card, and it is mostly a list of what is *not* pinned down. Read `not_identified` before using any number in it |
+| `charge_thermal.json` | the charge-thermal test's card, and it is mostly a list of what is *not* pinned down. Read `not_identified` before using any number in it |
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install numpy scipy   # .venv/ is gitignored
@@ -59,7 +59,7 @@ Ten traps the code encodes so they cannot be repeated:
 
 - **`timeindex[0] == -1` means CHARGE is unset, and `-1` is a legal Python
   index.** `timex[-1]` is the *last* sample, so a recording with no CHARGE mark
-  (roast 50) silently re-bases onto a negative clock and every window lands
+  (the charge-thermal test) silently re-bases onto a negative clock and every window lands
   somewhere else. `load_profile` tests `>= 0` and sets `has_charge`.
 - **A proxy constant is not a physical fraction.** `charge_state.py`'s
   `4k = 0.409` is the drop measured at `+theta`; the *asymptotic* mixing

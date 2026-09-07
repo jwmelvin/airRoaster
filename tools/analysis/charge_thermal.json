@@ -1,5 +1,5 @@
 {
-  "source": "airRoaster_50.alog (2026-09-06), two no-flow charge decays",
+  "source": "airRoaster_50.alog (2026-09-06), two no-flow charge decays -- RAW LOG OVERWRITTEN 2026-09-07, no backup; this card is the only surviving record",
   "model": "3-node lumped + measured reservoir: dTb = k_bw(Tw-Tb)/(1+r_fus*phi); dTw = -f*k_bw/rho*(Tw-Tb) + k_ws*(Ts(t)-Tw); tau_p dTp = (1-beta)Tb + beta Tw - Tp; Ts = T_amb + A exp(-t/tau)",
   "mass_g": 400.0,
   "T_amb": 29.0,

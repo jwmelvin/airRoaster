@@ -1356,8 +1356,8 @@ operator proposed independently.
 
 #### The charge-temperature experiment
 
-**Roast 50 (2026-09-06) took a run at this from a different direction and it
-changes the design rather than closing it** — state-history.md § Roast 50. It
+**The charge-thermal test (2026-09-06) took a run at this from a different direction and it
+changes the design rather than closing it** — state-history.md § The charge-thermal test. It
 measured the charge decay with **no flow**, and the result is that a still-air BT
 decay **cannot** read bean temperature: the probe's expansion zone is narrow and
 the preheated chamber holds a lot of heat, so BT weights 0.34 onto the walls with
@@ -1373,8 +1373,8 @@ It did **not** deliver the `C_chamber` calibration it was run for.
   charge-temperature instrument this project has that works.
 - **The still-air arms are not interchangeable with a roast.** Under flow the
   mixing fraction is fitted from the roasts themselves
-  (`tools/analysis/charge_dip.py`, `phi` 0.658 at 400 g), not from roast 50.
-- **The cheapest outstanding measurement is a repeat of roast 50's *warm* arm
+  (`tools/analysis/charge_dip.py`, `phi` 0.658 at 400 g), not from the charge-thermal test.
+- **The cheapest outstanding measurement is a repeat of the charge-thermal test's *warm* arm
   with a burst.** Only the frozen arm got one, so there is one bed reading and
   not two, which is most of why its joint fit is under-determined. One preheat,
   no beans consumed, no roast.
@@ -1387,7 +1387,7 @@ defined, so "run a batch first" leaves the machine in a state of unknown
 magnitude. A **defined temperature held for a defined time** is an actual
 boundary condition; that is what the runs use.
 
-**And the state cannot be detected, only imposed.** Roast 50's two preheats
+**And the state cannot be detected, only imposed.** The charge-thermal test's two preheats
 converged to the *same* shallow state from opposite histories — cold-start
 5.6 min ended at inlet 140.43 / heat 44.66%, warm-start 2.5 min at inlet
 141.20 / 44.57% — and yet their plenums differed by **4.5 degC** through the
@@ -1415,7 +1415,7 @@ instead of a stopwatch: at fan 64 the settle cannot reach BT 130 at all.
 
 Sizing: the chamber mass that takes part in the charge mix is `C ~ 353 J/K`
 against `UA >= 3.3 W/K` (the plant's own `a` on a 680 J/K bed), so **tau <= ~2
-min** for that one; the deeper reservoir is roast 50's 510-557 s *no-flow* decay
+min** for that one; the deeper reservoir is the charge-thermal test's 510-557 s *no-flow* decay
 and its driven constant is unmeasured. Ten and ten is ~5 constants of the fast
 one and ~2 of the pessimistic one, and identical on both runs. **Lengthen the
 elevated phase rather than the settle** if hedging — that is the one where extra
@@ -1429,7 +1429,7 @@ group's 140-152 — an unsettled machine, not a hotter one). Let the pair define
 its own baseline and adopt the protocol going forward.
 
 **A free retrospective check exists.** With no flow the plenum never sees the bed
-(state-history.md § Roast 50), so the **post-DROP inlet decay is a
+(state-history.md § The charge-thermal test), so the **post-DROP inlet decay is a
 bean-independent readout of stored heat**. Record through the cooldown on both
 runs and overlay the two curves: if they sit on top of each other the protocol
 worked, and if they are offset the difference is correctable — and it yields the
@@ -1448,7 +1448,7 @@ SV 185 gives Temp_Drive **25.4 / 15.4 / 14.5 / 13.3** at fan **58 / 64 / 72 /
 80** -- steep through 58-64 at about **-1.7 degC per fan unit**, then flat.
 (Those windows are ~25 s against a ~45 s empty-chamber time constant, so the
 trend is the result and the absolute values are not.) That matches the two
-settled points on record: roast 50 at fan 60 sat at Temp_Drive **10.6**, the
+settled points on record: the charge-thermal test at fan 60 sat at Temp_Drive **10.6**, the
 bench at fan 64 at **~3** -- -1.9 per unit over the same span.
 
 So at fan 64 holding BT 130 needs **inlet ~133**, below the 140 floor. It is an
@@ -1458,7 +1458,7 @@ equilibrium, not a transient, and no amount of waiting reaches it.
 was not impatience: roast 49 held fan 64 throughout, so there *was* no settled
 BT 130 to charge from, and it was charged mid-ramp because that is the only way
 to cross 130 at that fan. Every roast that settled -- 43, 44, 45, 46 and both
-roast 50 cycles -- preheated at **fan 60**, where the required inlet is
+the charge-thermal test cycles -- preheated at **fan 60**, where the required inlet is
 140.4-140.8, just above the floor.
 
 **And it corrects the paragraph above**: the machine state *is* observable, but
@@ -1486,7 +1486,7 @@ The settle descends BT from ~185 degC (empty chamber at `INLET 200` sits ~10 deg
 under the inlet) to 130. Artisan's autoCHARGE fires on a BT break of `d = -0.34`
 degC per sample over two consecutive legs at `Delay=500` — **0.68 degC/s**, above
 77 degC (canvas.py:5121, main.py:24306, params canvas.py:548). The empty-chamber
-time constant is **40-50 s** (roast 50's reheat: BT 57 -> 129 at inlet ~235 gives
+time constant is **40-50 s** (the charge-thermal test's reheat: BT 57 -> 129 at inlet ~235 gives
 `a ~ 0.02 /s`), so a 55 degC descent runs at **1.1-1.3 degC/s** and trips it
 within seconds. A gentler overshoot does not help: 30 degC gives 0.67 degC/s,
 exactly on the boundary. **Disarm it; do not try to stay under the threshold.**
@@ -1517,7 +1517,7 @@ hotter than the group's and that had to be corrected for rather than avoided.
 What has to be held fixed, and why each one:
 
 - **`greens_temp` recorded on both.** Probe the bean mass, not the air, and enter
-  it in Roast Properties. It is `0.0` on all of roasts 43-50, which is the only
+  it in Roast Properties. It is `0.0` on all of roasts 43-49, which is the only
   reason any of this is inference. This is the whole point of the run, and it is
   now the *only* thing standing between this project and a measured charge
   temperature under flow: `charge_state.py`'s `k`, roast 48's +12.8, roast 49's
@@ -1540,7 +1540,7 @@ recovery slope out of it) is a function of the same variable, or whether bean
 temperature moves more than one thing. `tools/analysis/charge_state.py` runs the
 proxy and prints the band; `tools/analysis/charge_dip.py` now predicts the whole
 0-90 s arc from `(mass, greens temp)` and is what this run would confirm or
-break. It also carries the one open disagreement: roast 50's still-air fit wants
+break. It also carries the one open disagreement: the charge-thermal test's still-air fit wants
 a fusion enthalpy and the roasts want none, and a pair with `greens_temp`
 actually recorded is what separates `phi` from `h_fus`.
 

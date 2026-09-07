@@ -946,7 +946,7 @@ measures, so it is common-mode. Detail, tables and the excitation that would
 settle what is left (it is `a`, not the delay) in state-history.md § Deadtime
 versus lag.
 
-**Roast 50 (2026-09-06, 20:27) is not a roast, and its headline is a negative
+**The charge-thermal test (2026-09-06, 20:27) is not a roast, and its headline is a negative
 result.** Two cycles of *preheat the empty chamber to BT 130, cut heat and fan
 together with the cooldown guard disabled, tip 400 g in, wait 150 s* — one arm at
 room temperature, one from the freezer. The operator supplied what the log does
@@ -995,14 +995,14 @@ Written as a relaxation toward `BT_mix` the charge becomes a permanent attractor
 that fights the heater all roast and the model flatlines near 62 degC; as a rate
 it integrates to the right total and stops, and the turning point lands at
 **23-25 s against a measured 22-23.5** with the dip depth within ~1.5 degC.
-`phi` is fitted **to the roasts, not to roast 50** — 0-40 s of BT on roasts
+`phi` is fitted **to the roasts, not to the charge-thermal test** — 0-40 s of BT on roasts
 43/44/46 gives `phi`(400 g) **0.658**, `tau_mix` **12.2 s**, rms **3.08 degC**,
 hence `C_chamber` 353 J/K. **`charge_state.py`'s `k` is not `phi`**: `4k = 0.409`
 is the drop at `+theta` and already folds in the incomplete mix and the heat the
 plant put back, so reading it as the asymptotic fraction under-predicts every
 charge drop by 7-10 degC. That is a reading error, not a bug in that tool.
 
-**One disagreement is left open and neither dataset can close it.** Roast 50 says
+**One disagreement is left open and neither dataset can close it.** The charge-thermal test says
 the frozen arm needs extra cold-side thermal mass (`r_fus = 0` costs 20% of
 residual) and cannot say how much (5-25 degC-equivalent all within 3%; the point
 estimate exceeds the 35 J/g such a charge physically has). The roasts say none:
@@ -1014,8 +1014,63 @@ follows the roasts; `--fusion` prints the table.
 **And the standing exposure is unchanged: nothing has yet measured a charge
 temperature under flow.** `charge_state.py`'s `k`, roast 48's +12.8, roast 49's
 +15.5 and now `charge_dip.py`'s `phi` all rest on roasts 43/44/46 having been at
-−18 degC. Roast 50 could have broken that dependency and does not, because it has
-no flow. Detail in state-history.md § Roast 50.
+−18 degC. The charge-thermal test could have broken that dependency and does not, because it has
+no flow. Detail in state-history.md § The charge-thermal test.
+
+**Roasts 50 and 51 (2026-09-07) are the charge-temperature pair, and
+`greens_temp` is finally a measurement: +25.0 and −12.0 degC**, 400 g in / 349 and
+351 g out, moisture 10.9%, same lot and session,
+`airRoaster_cascadePID_chargetemp.aset` + `profile_003`, no intervention. **Batch
+numbers collided**: `airRoaster_50.alog` is now the warm arm, and the 2026-09-06
+bench run that held that name (§ The charge-thermal test) was **overwritten with
+no backup** — `charge_thermal.json` is the only surviving record and
+`charge_thermal.py` now refuses to run rather than analyse the wrong file.
+
+**The preheat protocol works, and the level is fan 58.** At a constant inlet
+140.4 in an empty chamber *at equilibrium* the dashboard log gives BT
+136.9 / 133.4 / **130.2** at fan 64 / 60 / **58** — Temp_Drive 3.50 / 7.02 /
+**10.25**, i.e. −0.88 degC per fan unit over 60-64 steepening to −1.62 over
+58-60. So **fan 58 puts the equilibrium exactly on the background's CHARGE_BT**,
+and its Temp_Drive matches the 10.5-11.4 roasts 46 and the charge-thermal test
+read — *those were transients at fan 60*, and fan 58 reaches the same state as a
+fixed point. Pre-charge Temp_Drive came out 9.85 and 9.02.
+
+**`k` is now measured, and the proxy's linear form survives a 37 degC span to
+0.34%**: `k = proxy_corr/(BT_charge − T_bean)` reads **0.10578** (warm) and
+**0.10542** (frozen), against `charge_state.py`'s assumed-frozen **0.10217** —
+**3.4% low**. The historical set re-reads warmer: roasts 43/44/46 at
+**−15.6 / −9.7 / −14.5** rather than −18, roast 48 **+15.2**, roast 49 **+19.3**.
+The "frozen" group was never at freezer temperature; a charge arrives at about
+−10 to −16, which is where roast 51's measured −12.0 sits.
+
+**The fusion enthalpy is closed, against the charge-thermal test.** Any real
+`h_fus` inflates the *frozen* roast's apparent `k` — by 2.2 / 4.3 / 8.6 / 15.1%
+at 5 / 10 / 20 / 35 J/g. Measured, it reads **0.34% low**, so `h_fus` is under
+~1 J/g. The still-air fit wanted 7-35 and could not size it; `charge_dip.py`'s
+default of zero was right.
+
+**The early stage overacts, and it is the background, not the tuning.** Roast 51
+railed SV to its **300 ceiling for 9 s** with heat at **100% for 24.5 s**; both
+roasts then sat on the **140 floor** (36.5 s and 22.5 s) while BT ran **+17 degC
+above the background**. Authority is not the problem — the loop hits both rails.
+**The overshoot is charge-state-independent**: from 50 s on the two roasts are
+within **1.5 degC of each other** despite 37 degC of charge difference. The cause
+is `profile_003`'s dip timing — its TP is **67.4 degC at 37 s** against a real
+turning point at **21-22 s** — so the loop spends the first 20 s chasing a target
+still falling while the bed has already turned, and with nothing the heater does
+reaching BT before ~13.5 s its correction lands at 18-28 s, too late to help and
+early enough to overshoot. **`charge_dip.py` predicts the turning point to 0-3 s**
+(84.0 at 22.0 s vs 80.2 at 22.0; 64.9 at 24.0 vs 63.8 at 21.0; rms 4.2-4.5 degC
+over 0-60 s). The model is right and the background is 15-16 s wrong.
+
+**And the tuning after the dip is the best on record.** Time-to-BT 150/180/196.5
+lands at **−0.4 / +1.7 / −2.0 s** and **−0.4 / +2.2 / −2.0 s** against
+`profile_003`, the two roasts agreeing **with each other to 0.5 s at every
+level**, error +1.4 degC at 120-180 s falling to +0.4 by 180. A 37 degC charge
+difference leaves no trace after DRY END. `pidKp` 3.0, `pidKi` 0.07 and the
+lookahead switch all stand. **The next thing to do is generate the background's
+first 90 s from `charge_dip.py`** — state-plan.md § What it unlocks item 2, now
+unblocked and validated. Detail in state-history.md § Roasts 50 and 51.
 
 **Canonical config is `artisan/airRoaster_cascadePID.aset`** (one file; the
 brief `_edit` variant used while adding the alarms was folded back in and

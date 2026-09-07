@@ -31,7 +31,7 @@ what mixing does, and the plant takes the roast back.
 
 **Where the numbers come from, and this is the part that matters.**
 
-* ``phi`` and ``tau_mix`` are **fitted to the roasts**, not to roast 50, over
+* ``phi`` and ``tau_mix`` are **fitted to the roasts**, not to the charge-thermal test, over
   ``0..40 s`` of measured BT on roasts 43/44/46 at an assumed -18 degC.  They
   are *not* read off ``charge_state.py``'s ``k``: that constant is the drop
   measured at ``+theta``, which already folds in how far the mix has got by
@@ -39,18 +39,18 @@ what mixing does, and the plant takes the roast back.
   ``phi = 4k`` under-predicts the asymptote and the drops come out 7-10 degC
   short.  ``k`` is a proxy; ``phi`` is a parameter, and they are not the same
   number.  The fit is under **forced convection at the charge fan**, which is
-  the condition a roast is in and roast 50 is not.
-* ``c_b`` and the **fusion enthalpy bound** come from roast 50
+  the condition a roast is in and the charge-thermal test is not.
+* ``c_b`` and the **fusion enthalpy bound** come from the charge-thermal test
   (``charge_thermal.py``).  Fusion matters here: it is the difference between a
   frozen charge costing ``m*c_b*dT`` and costing ``m*(c_b*dT + h_fus)``.
 * ``a``, ``theta`` and ``loss`` come from ``plant_roast46.json``, untouched.
 
-**What roast 50 does *not* supply, and why.**  It was run to calibrate
+**What the charge-thermal test does *not* supply, and why.**  It was run to calibrate
 ``C_chamber`` directly, and it cannot: with no fan the BT probe sits in a narrow
 expansion zone reading the chamber walls rather than the bed, and the charge
 temperature trades against that so completely that the best-fitting solution
 puts a room-temperature charge at -2 degC (``charge_thermal.py``).  So
-``C_chamber`` here is **derived from ``phi``**, not from roast 50, and roast 50
+``C_chamber`` here is **derived from ``phi``**, not from the charge-thermal test, and the charge-thermal test
 is used for the two things it does pin down.
 
     .venv/bin/python tools/analysis/charge_dip.py
@@ -79,7 +79,7 @@ THERMAL = os.path.join(REPO, "tools/analysis/charge_thermal.json")
 K_PROXY, K_SD = 0.10217, 0.00227
 MASS_REF = 400.0
 
-# The assumed charge temperatures behind that calibration, and the two roast 50
+# The assumed charge temperatures behind that calibration, and the two the charge-thermal test
 # measured them against.  43/44/46 are the frozen group charge_state.py
 # calibrates on; 48 and 49 are what it then reads off.
 T_BEAN_ASSUMED = {"43": -18.0, "44": -18.0, "46": -18.0, "48": 12.8, "49": 15.5}
@@ -251,20 +251,20 @@ def main():
     ap.add_argument("--fusion", action="store_true",
                     help="what the roasts say about the fusion enthalpy")
     ap.add_argument("--h-fus", type=float, default=None,
-                    help="J/g; default is roast 50's fitted value if carded")
+                    help="J/g; default is the charge-thermal test's fitted value if carded")
     args = ap.parse_args()
 
     plant = load_plant()
     th = load_thermal()
-    # c_b is at a bound in roast 50's fit and is not identified there either;
+    # c_b is at a bound in the charge-thermal test's fit and is not identified there either;
     # 1.7 J/g/K is green coffee at 10-12% moisture from the literature, and it
     # only ever appears here multiplied into C_chamber, which IS fitted.
     c_b = 1.7
-    # The card's point estimate is not usable: roast 50 cannot resolve the
+    # The card's point estimate is not usable: the charge-thermal test cannot resolve the
     # magnitude, and the fitted value comes out above 35 J/g -- more fusion
     # enthalpy than a 10.5% moisture charge physically contains.  Take the
     # middle of the carded band and sweep it with --h-fus.
-    # Default 0, against roast 50's own preference, and the --fusion table says
+    # Default 0, against the charge-thermal test's own preference, and the --fusion table says
     # why: the frozen calibration group absorbs any value of h_fus exactly into
     # phi (rms 3.08 at every one of 0-35 J/g), so it carries no information, and
     # the only roasts that do carry some -- the warm held-out pair -- get
@@ -281,7 +281,7 @@ def main():
           "and the plant is already pushing back.")
     print(f"   c_b = {c_b:.3f} J/g/K, h_fus = {h_fus:.1f} J/g "
           f"(band {th['h_fus_band_J_per_g'] if th else 'n/a'})   "
-          "(charge_thermal.py, roast 50)")
+          "(charge_thermal.py, the charge-thermal test)")
     print(f"   -> C_bed(400 g) = {MASS_REF * c_b:.0f} J/K, "
           f"C_chamber = {C_ch:.0f} J/K, ratio {C_ch / (MASS_REF * c_b):.2f}")
     print(f"   a = {plant['a']:.5f} /s, theta = {plant['theta']:.1f} s "
@@ -306,7 +306,7 @@ def main():
     print("   but their charge temperatures came from the same proxy and the same")
     print("   -18 degC assumption, so they test the shape and not the physics.")
     print("   Nothing in this project has yet measured a charge temperature")
-    print("   under flow -- see charge_thermal.py for why roast 50 does not.")
+    print("   under flow -- see charge_thermal.py for why the charge-thermal test does not.")
 
     if args.fusion:
         print("\n== the fusion enthalpy, and the one disagreement in the set ==")
@@ -321,7 +321,7 @@ def main():
         print("   The calibration rms does not move at all: on a frozen-only")
         print("   group, phi and h_fus are the same parameter and phi absorbs it.")
         print("   The held-out warm roasts are the only lever, and they want")
-        print("   h_fus = 0 -- which is the opposite of what roast 50's still-air")
+        print("   h_fus = 0 -- which is the opposite of what the charge-thermal test's still-air")
         print("   fit wants (zero costs it 20% of residual). The disagreement is")
         print("   real and unresolved; the default here follows the roasts.")
 

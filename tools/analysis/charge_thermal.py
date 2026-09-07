@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""The charge thermal model, identified from roast 50's two no-flow decays.
+"""The charge thermal model, identified from the charge-thermal test's two no-flow decays.
 
-Roast 50 (2026-09-06) is not a roast.  It is two cycles of *preheat the empty
+The charge-thermal test (2026-09-06) is not a roast.  It is two cycles of *preheat the empty
 chamber to BT 130, cut the heat and the fan together, tip 400 g in, and watch
 BT for 150 s* -- one arm at room temperature, one straight out of the freezer.
 With the fan off the heater is out of the loop entirely (the interlock holds
@@ -15,9 +15,9 @@ mixing are simultaneous and the plant delay is the only thing separating them.
 
 and says outright that ``C_chamber`` is uncalibrated -- which is why the proxy
 is not linear in mass and why roast 45 at 345 g reads 7% low against the 400 g
-runs.  Roast 50 calibrates it.  It also returns ``T_b0`` per arm, which is the
+runs.  The charge-thermal test calibrates it.  It also returns ``T_b0`` per arm, which is the
 number ``greens_temp`` should have carried and does not (it is ``0.0`` on every
-roast on record, roast 50 included).
+roast on record, the charge-thermal test included).
 
 **The model.**  Three nodes, the probe massless, plus a *measured* reservoir:
 
@@ -93,7 +93,12 @@ from roastdata import load_profile
 
 HOME = os.path.expanduser("~")
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-ALOG50 = os.path.join(HOME, "Documents/artisan/airRoaster_50.alog")
+# The raw log was OVERWRITTEN on 2026-09-07: Artisan reused the batch number and
+# `airRoaster_50.alog` is now the warm arm of the charge-temperature pair.  There
+# is no backup.  This path deliberately names a file that does not exist rather
+# than silently analysing a different roast -- restore the 2026-09-06 recording
+# here if a copy ever turns up.  `charge_thermal.json` is the surviving record.
+ALOG50 = os.path.join(HOME, "Documents/artisan/airRoaster_50_chargethermal.alog")
 CARD = os.path.join(REPO, "tools/analysis/charge_thermal.json")
 
 # The operator's own numbers (2026-09-06), and the only external truth here:
@@ -304,8 +309,15 @@ def fit_reservoir(ti, inlet, t_lo=25.0, t_hi=None):
 
 def load_arms():
     """The two decay windows, re-based on their own cut instants."""
+    if not os.path.exists(ALOG50):
+        raise SystemExit(
+            f"{ALOG50} is missing.\n"
+            "The 2026-09-06 charge-thermal recording was overwritten on 2026-09-07 "
+            "when Artisan reused batch number 50, and there is no backup.\n"
+            "tools/analysis/charge_thermal.json holds the results; this tool cannot "
+            "be re-run until the raw log is restored.")
     prof = load_profile(ALOG50)
-    assert not prof.has_charge, "roast 50 has no CHARGE mark; the loader must say so"
+    assert not prof.has_charge, "the charge-thermal test has no CHARGE mark; the loader must say so"
     ti, inlet = prof.extras["Inlet"]
     arms = {}
     for name, spec in ARMS.items():
@@ -518,7 +530,7 @@ def main():
 
     prof, arms = load_arms()
 
-    print("== roast 50: what the recording says ==")
+    print("== the charge-thermal test: what the recording says ==")
     print(f"   {os.path.basename(ALOG50)}  {len(prof.t)} samples @ "
           f"{prof.raw['samplinginterval']} s, no CHARGE mark, "
           f"weight {prof.raw['weight'][0]:.0f} g, greens_temp "
@@ -612,7 +624,7 @@ def main():
     print(f"   NOT identified: rho, and so C_chamber.  It runs to whatever bound")
     print(f"   it is given -- {sh['rho']:.1f} here against a bound of "
           f"{BOUNDS['rho'][1]:.0f} -- even with the charge temperatures held at")
-    print("   their measured values, and c_b goes to a bound with it.  So roast 50")
+    print("   their measured values, and c_b goes to a bound with it.  So the charge-thermal test")
     print("   does NOT calibrate the C_chamber in charge_state.py's mixing model.")
     print("   charge_dip.py fits that from the roasts themselves instead, where")
     print("   the fan is running and the probe is in the flow.")

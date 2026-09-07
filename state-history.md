@@ -3505,7 +3505,7 @@ they were taken. That is a characterisation-run design change, not a new run to
 schedule now: `kf = 0` closed the standing reason for those runs and this does
 not reopen it.
 
-### Roast 50 (2026-09-06, 20:27) — the charge-thermal test, and what a still-air probe cannot see
+### The charge-thermal test (2026-09-06, 20:27) — the charge-thermal test, and what a still-air probe cannot see
 
 Not a roast. Two cycles of *preheat the empty chamber to BT 130, cut the heat and
 the fan together with the cooldown guard disabled, tip 400 g in, and watch BT for
@@ -3553,7 +3553,7 @@ stable across every configuration tried.
 **`C_chamber` is not identified either**, which is what the run was designed to
 calibrate. `rho = C_w/C_bed` walks to whatever bound it is given — 29.7 against a
 bound of 30 — *even with the charge temperatures held at their measured values*,
-and `c_b` goes to a bound with it. So roast 50 does **not** supply the
+and `c_b` goes to a bound with it. So the charge-thermal test does **not** supply the
 `C_chamber` in `charge_state.py`'s mixing model, and nothing downstream should
 pretend it does.
 
@@ -3636,7 +3636,7 @@ integrates to exactly `dT_mix` and then stops, and the plant takes the roast
 back — turning point **23-25 s** against a measured 22-23.5, dip depth within
 about 1.5 degC.
 
-**`phi` is fitted to the roasts, not to roast 50**: 0-40 s of measured BT on
+**`phi` is fitted to the roasts, not to the charge-thermal test**: 0-40 s of measured BT on
 roasts 43/44/46 at the assumed −18 degC gives **`phi`(400 g) = 0.658,
 `tau_mix` = 12.2 s, rms 3.08 degC**, hence `C_chamber` 353 J/K and a capacity
 ratio of 0.52. Held out, roast 48 reads rms 6.19 and roast 49 rms 3.11 — but
@@ -3657,7 +3657,7 @@ enthalpy on top of about 26 kJ of sensible heat, and how much of that water is
 freezable at all is a real question — bound water in a cellular matrix does not
 all freeze.
 
-- **Roast 50 says some is needed and cannot say how much.** `r_fus = 0` costs
+- **The charge-thermal test says some is needed and cannot say how much.** `r_fus = 0` costs
   **20%** of residual, so the frozen arm does want extra cold-side thermal mass;
   but 5 to 25 degC-equivalent all cost **under 3%**, and the point estimate comes
   out **above 35 J/g**, which is *all* the fusion enthalpy such a charge has.
@@ -3676,6 +3676,118 @@ either dataset in hand.
 **Nothing in this project has yet measured a charge temperature under flow.** The
 whole chain — `charge_state.py`'s `k`, roast 48's +12.8, roast 49's +15.5, and
 now `charge_dip.py`'s `phi` — rests on roasts 43/44/46 having been at −18 degC.
-Roast 50 could have broken that dependency and does not, because it has no flow.
+The charge-thermal test could have broken that dependency and does not, because it has no flow.
 The fix has been in the runbook since 2026-09-05 and costs nothing: **record
 `greens_temp`.**
+
+### Roasts 50 and 51 (2026-09-07) — the charge-temperature pair, with `greens_temp` measured
+
+**The first two roasts in this project whose charge temperature is a measurement
+rather than an inference.** `greens_temp` **+25.0** (roast 50) and **−12.0** degC
+(roast 51), 400 g in / 349 and 351 g out, moisture 10.9%, same lot, same session,
+`airRoaster_cascadePID_chargetemp.aset` + `profile_003`, no intervention.
+
+**Note the batch-number collision**: `airRoaster_50.alog` is now roast 50, the
+*warm* arm. The 2026-09-06 no-flow bench run that used to hold that name is
+§ The charge-thermal test, and its raw log was **overwritten with no backup** —
+`tools/analysis/charge_thermal.json` is the only surviving record and
+`charge_thermal.py` now refuses to run rather than analyse the wrong file.
+
+#### The preheat protocol works, and fan 58 is the right level
+
+Pre-charge Temp_Drive **9.85** and **9.02**, BT 129.7 and 131.0 — settled, off the
+floor, and matching the historical state. The dashboard log measures why, at a
+constant inlet 140.4 in an empty chamber **at equilibrium**:
+
+| fan | BT | Temp_Drive | heat |
+|---|---|---|---|
+| 64 | 136.9 | 3.50 | 49.4% |
+| 60 | 133.4 | 7.02 | 45.3% |
+| 58 | **130.2** | **10.25** | 42.6% |
+
+−0.88 degC of Temp_Drive per fan unit over 60-64, steepening to **−1.62** over
+58-60. So **fan 58 puts the equilibrium exactly on the background's CHARGE_BT**,
+and its Temp_Drive of 10.25 is the same 10.5-11.4 roasts 46 and the charge-thermal
+test read — *those were transients at fan 60 caught on the way down*, and fan 58
+reaches the same state as a fixed point. That is what makes it repeatable.
+
+#### `k` is measured, and the proxy's linear form survives a 37 degC span
+
+    k = proxy_corr / (BT_charge - T_bean)      degC per 100 g per degC
+
+| roast | T_bean | BT@0 | BT@+13.5 s | drop | proxy/100 g | k |
+|---|---|---|---|---|---|---|
+| 50 | +25.0 | 129.7 | 85.4 | 44.30 | 11.08 | **0.10578** |
+| 51 | −12.0 | 131.0 | 70.7 | 60.30 | 15.07 | **0.10542** |
+
+**0.34% apart across a 37 degC span.** That is the strongest validation the
+charge proxy has had, and it was previously calibrated on an *assumption*.
+The measured `k` is **3.4% above** `charge_state.py`'s 0.10217, so the whole
+historical set re-reads warmer:
+
+| roast | T_bean (old, assumed −18) | T_bean (measured k) |
+|---|---|---|
+| 43 | −20.4 | **−15.6** |
+| 44 | −14.3 | **−9.7** |
+| 46 | −19.3 | **−14.5** |
+| 48 | +12.9 | **+15.2** |
+| 49 | +15.5 | **+19.3** |
+
+So the "frozen" group was never at −18: it arrives at about **−10 to −16**, which
+is exactly where roast 51's measured −12.0 sits. Beans warm on the way from the
+freezer to the chamber, and the freezer temperature was never the charge
+temperature.
+
+#### The fusion enthalpy question is closed, against the charge-thermal test
+
+A frozen charge crosses the melt band and a warm one does not, so any real fusion
+enthalpy inflates the frozen roast's apparent `k`. At `h_fus` of 5 / 10 / 20 /
+35 J/g it would read **2.2 / 4.3 / 8.6 / 15.1%** high. **Measured, it reads 0.34%
+*low*.** So `h_fus` is under ~1 J/g. The charge-thermal test's still-air fit
+wanted 7-35 J/g and could not size it; the roasts settle it, and
+`charge_dip.py`'s default of zero was right.
+
+#### The early stage: the loop has authority to spare and spends it on the wrong target
+
+The operator's reading — *"plenty of control effort in the early stage, it just
+overacts"* — is correct, and the traces say why.
+
+| t | bg | r50 BT / err / SV / HT | r51 BT / err / SV / HT |
+|---|---|---|---|
+| 5 | 110.7 | 108.7 / −2.0 / 194 / 100 | 104.9 / −5.8 / 245 / 100 |
+| 10 | 96.8 | 91.9 / −4.9 / 214 / 86 | 80.3 / −16.5 / **300** / 100 |
+| 20 | 77.9 | 80.6 / +2.7 / 181 / 52 | 63.9 / −14.0 / 292 / 100 |
+| 40 | 67.7 | 84.9 / **+17.2** / **140** / 47 | 79.3 / +11.6 / 166 / 43 |
+| 50 | 71.9 | 89.4 / **+17.5** / **140** / 47 | 88.1 / **+16.2** / **140** / 44 |
+| 90 | 102.4 | 106.3 / +3.9 / 158 / 54 | 107.0 / +4.6 / 154 / 48 |
+| 180 | 145.5 | 145.9 / +0.4 / 192 / 60 | 145.9 / +0.4 / 193 / 62 |
+
+Roast 51 railed SV to its **300 ceiling for 9 s** with heat at **100% for
+24.5 s**; roast 50 reached SV 214 and 100% for 5 s. Then both sat on the **140
+floor** — 36.5 s and 22.5 s — while BT ran **+17 degC above the background**.
+There is no shortage of authority in either direction; the loop hits both rails.
+
+**The overshoot is charge-state-independent**, which is the diagnostic. From 50 s
+on the two roasts are within 1.5 degC of *each other* despite a 37 degC
+difference in the beans (+17.5/+16.2 at 50 s, +14.6/+15.0 at 60, +3.9/+4.6 at 90,
++2.0/+2.1 at 120). So the hump is not the charge. It is **the background's dip
+timing**: `profile_003` puts TP at **67.4 degC at 37 s**, and the real turning
+point is at **21-22 s** in both roasts. The loop spends 0-20 s fighting a target
+that is still falling while the bed has already turned, and — with nothing the
+heater does reaching BT before ~13.5 s — its correction lands at 18-28 s, exactly
+when it is no longer wanted. By 25 s it is on its floor and can do nothing but
+watch.
+
+**`charge_dip.py` predicts the turning point to 0-3 s**: TP 84.0 at 22.0 s
+against a measured 80.2 at 22.0 (roast 50), and 64.9 at 24.0 against 63.8 at 21.0
+(roast 51), rms 4.2-4.5 degC over 0-60 s. The model is right and the background is
+15-16 s wrong. Nothing about the tuning needs to change to fix this.
+
+#### And the tuning after the dip is the best on record
+
+Time-to-BT against `profile_003`: **−0.4 / +1.7 / −2.0 s** (roast 50) and
+**−0.4 / +2.2 / −2.0 s** (roast 51) at BT 150 / 180 / 196.5, against roast 49's
+−0.9 / +2.2 / +2.0. The two roasts agree with **each other to 0.5 s at every
+level**, and the error is +1.4 degC at 120-180 s falling to +0.4 by 180 s. A
+37 degC difference in charge temperature leaves no trace after DRY END.
+`pidKp` 3.0 / `pidKi` 0.07 / the lookahead switch all stand.
