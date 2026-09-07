@@ -10,6 +10,90 @@
 > when a plan section turns into a record of what happened rather than a
 > statement of what to do, move it to *history*.
 
+## HANDOFF — roast 53: process it, then judge the strategy (2026-09-07)
+
+**If you are a fresh context, this section is the whole job.** Everything below it
+is background; read § Active effort only for what this section points at.
+
+### The run that is queued
+
+400 g of **−12 degC** greens (new lot, so moisture may have moved — check
+`greens_temp` and `moisture_greens` in the file), config
+**`artisan/airRoaster_cascadePID_chargetemp.aset`**, background
+**`artisan/profile_400g_m12C.alog`** (regenerate with
+`tools/make_charge_background.py --mass 400 --greens-temp <measured> --charge-bt 130.2`
+if the measured charge temperature differs). Preheat fan **58** to equilibrium,
+fan **64** at CHARGE, **60** at 2:00 by alarm. The outer PID is **gated off from
+CHARGE to +15 s**. It will land as `~/Documents/artisan/airRoaster_53.alog`.
+
+### Run these, in this order
+
+```bash
+python3 tools/analysis/charge_state.py 43 44 45 46 48 49 50 51 52 53
+.venv/bin/python tools/analysis/charge_dip.py --fusion
+.venv/bin/python tools/make_charge_background.py --mass 400 --greens-temp -12 --charge-bt 130.2 --check
+```
+
+Then the four numbers that decide everything, all against
+`profile_400g_m12C.alog` (`SV` and `HT` are extra channels in the log; `roastdata.load_profile`
+returns them in `.extras`):
+
+| check | roast 52 | pass |
+|---|---|---|
+| peak SV in the first minute | **275** | **under ~200** (the PID port says a correctly-targeted loop wants 145-181) |
+| seconds of heat at 100% | **22.5** | **0** |
+| seconds on the 140 floor | **37.5** | **under ~10** |
+| worst BT error vs background, 30-90 s | **+20.1 at 58 s** | **single digits** |
+
+Time-to-BT 150/180/196.5 against the background should stay inside roughly
+±3 s (roasts 50/51 managed −0.4/+2.2/−2.0), and the fan step at 2:00 should cost
+a transient of 1.5-2.5 degC and nothing more.
+
+### How to read the result
+
+- **All four pass** — the strategy is validated end to end and the next question
+  is whether it reaches the cup. That needs a *warm* charge on the same
+  configuration, dropped at the same BT to the tenth, so development time is
+  comparable (roasts 50/51 differed 54.5 s vs 45.0 s above BT 196.5 but also
+  dropped 1.1 degC apart, which spoiled it).
+- **SV still rails in the first 30 s** — the gate did not take. Check the
+  `T_inlet` special events around +3 s: if they still step 140 -> 200+, the
+  `CHARGE` button (Multiple Event → Fan FULL + PID OFF) was pressed after tipping
+  rather than before, or not at all. This is procedural before it is technical.
+- **SV is well behaved but BT still overshoots 30-90 s** — then the dip model is
+  wrong rather than the loop, and the first suspect is the known one below.
+- **The dip is right but tracking after DRY END degrades** — that would be the
+  fan step at 2:00 doing more than expected; `kf = 0` says it should not, so
+  re-check `roast48_plant.py`'s fan term before touching gains.
+
+**Do not retune `pidKp` 3.0 / `pidKi` 0.07 / the lookahead switch.** Three roasts
+now put time-to-BT inside ±2.2 s and every problem found since roast 46 has been
+the target or an Artisan mechanism, never the gains.
+
+### The one known defect in the dip model
+
+`charge_dip.dip()` starts its mixing exponential at `t = 0` with **no pour ramp**,
+so the generated curve falls ~10 degC too fast over 2-6 s (roast 52: background
+105.8 at 4 s against a measured 116.0), closing by 10 s. `charge_thermal.py`
+already has the ramp (`w_c`) and `charge_dip.py` does not. **~2 s of pour ramp is
+the fix**; it is the only outstanding defect in the dip model and it is worth
+doing before generating another background.
+
+### Where the strategy stands
+
+Settled and not worth re-opening: `k = 0.1056` measured from roasts 50/51 across a
+37 degC span to 0.34%; `h_fus` under ~1 J/g; the plant has no fan term; the
+13.5 s is total apparent lag rather than transport; the preheat equilibrium is
+fan 58 / BT 130.2 / Temp_Drive 10.25.
+
+Open, in order: (1) roast 53's four checks; (2) the pour ramp above; (3) whether
+charge state reaches the cup, which needs the warm-arm pair; (4) **step 9,
+`INLET TRIM`** — deliberately deferred, not dropped. Its tracking case is now
+marginal (three roasts inside ±2.2 s) and what survives is robustness: it stops
+the outer integrator being a ramp-follower and decouples the loop from the
+profile's shape. **Re-decide it honestly after roast 53** rather than on the
+strength of the original estimate.
+
 ## Development framework (read this first if you are new here)
 
 **What this is.** ESP32-S3 firmware (`airRoaster.ino`, single sketch file) for a

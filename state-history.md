@@ -3791,3 +3791,57 @@ Time-to-BT against `profile_003`: **−0.4 / +1.7 / −2.0 s** (roast 50) and
 level**, and the error is +1.4 degC at 120-180 s falling to +0.4 by 180 s. A
 37 degC difference in charge temperature leaves no trace after DRY END.
 `pidKp` 3.0 / `pidKi` 0.07 / the lookahead switch all stand.
+
+### Roast 52 (2026-09-07, 12:40) — the first generated background, and the pre-CHARGE frozen target
+
+380 g in / 334.7 out, `greens_temp` **−12.0**, moisture 10.9%, background
+**`profile_380g_m12C.alog`** — the first background whose dip was computed rather
+than authored. Preheat fan 58 (Temp_Drive 11.9 at −10 s, BT 130.1, inlet 142.1),
+fan 64 at CHARGE, 60 at 3:20 (hand-pressed and late — the operator's own note,
+and the reason the step is now an alarm). DRYe 186, FCs 409, DROP 434.
+
+#### The generated dip worked
+
+| | worst error over 0-18 s |
+|---|---|
+| roast 51 on `profile_003` | **18.2** |
+| roast 52 on the generated background | **10.2** at 4 s, and −1.3 .. +2.1 over 10-25 s |
+
+TP **65.6 degC at 22 s** against the background's 63.4 at 29 s. So the dip model
+is doing its job and the remaining error in that window is a **model detail, not
+a strategy failure**: the generated curve falls ~10 degC too fast over 2-6 s
+(background 105.8 at 4 s against a measured 116.0) and has closed by 10 s.
+`charge_dip.dip()` starts its mixing exponential at `t = 0` with no pour ramp —
+`charge_thermal.py` has one (`w_c`) and `charge_dip.py` does not. **Two seconds
+of pour ramp is the fix**, and it is the only outstanding defect in the dip model.
+
+#### And the loop still overacted, for a reason that is in Artisan's source
+
+The operator's question — *why does the control effort skyrocket while BT is
+tracking at or above the background?* — has a definite answer, and it is not
+tuning. Detail and the fix are in state-plan.md § The charge gate; the roast's own
+numbers:
+
+```
++3.0s  T_inlet 140      +3.5s  T_inlet 224      +16.5s  T_inlet 275
+```
+
+SV max **275**, heat **100% for 22.5 s**, then **37.5 s on the 140 floor**, and BT
+peaked at **+20.1 degC at 58 s**. `pid_control.py:1687` returns the background's
+*CHARGE temperature* — one constant — until `timeindex[0]` is set, and autoCHARGE
+needs ~5 samples of BT-break evidence, so for ~3.5 s the target was pinned at
+130.2 while BT was already through 116. That **inverts the sign of the error**:
+live tracking wanted `105.8 − 116.0 = −10.2` and would have cut the heat.
+
+**The PID port settles that it is the target and not the loop.** Driven by roast
+52's measured BT and its background it reproduces the commanded SV to **rms 1.84
+over 120-240 s**, and over 0-30 s it says SV should have been **145-181, never
+above 181**. The entire discrepancy lives in the unmarked-CHARGE window.
+
+#### What that leaves
+
+Everything after the first minute was unremarkable: error +4.0 at 120 s, +1.7 at
+180 s, SV 188-194, heat 58-60%. The roast is a **clean separation of concerns** —
+the background fixed the target, and what remained was one identifiable Artisan
+mechanism rather than a tuning question. Both are now closed in the config;
+roast 53 is the test.
