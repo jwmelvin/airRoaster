@@ -1554,8 +1554,23 @@ argument for doing anything about the dip at all.
 
 1. **The charge-temperature pair** (above). Cheap, no firmware, no Artisan
    reconfiguration, no new failure mode, and useful under every path below.
-2. **Backgrounds generated from (mass, greens temp)** — step 1b generalised from
-   one authored `profile_004` to a computed dip. This is what removes the
+2. ~~**Backgrounds generated from (mass, greens temp)**~~ **— tool written
+   2026-09-07, `tools/make_charge_background.py`, awaiting its first roast.**
+   It *merges* rather than generates: the dip is physics and is computed, the ramp
+   is the roast design and stays the operator's, and only `temp2` from CHARGE to
+   the join is rewritten so `timeindex`, DRY END, FCs and DROP survive exactly.
+   The inlet is **held at its pre-charge value** through the dip rather than taken
+   from a measured roast — that trace is the loop reacting to the very background
+   being replaced, so using it would bake the overshoot in. Acceptance is scored on
+   `0..18 s` alone, the window in which nothing the heater does has arrived yet:
+   worst error against roast 50 goes 4.9 -> 4.3 degC and against roast 51
+   **18.2 -> 6.7**, the turning point moves from `profile_003`'s 37 s to 27-29 s,
+   and the curve asks for 32-43 degC/min where the machine delivered 60-120.
+   **The turning point lands 5-8 s later than roasts 50 and 51 measured, and that
+   is correct**: those turned early *because* the loop kicked, and a background the
+   loop does not fight leaves the inlet where the preheat put it. Generated on
+   demand and not committed, like the merged inlet backgrounds. Step 1b generalised
+   from one authored `profile_004` to a computed dip. This is what removes the
    -16/+9 degC first-90 s error at its root, for every charge state, rather than
    for the one that was authored. It needs (1) and nothing else.
 3. **Step 9, after (1) and (2), and reframed.** Its headline claim — steady rms

@@ -20,6 +20,7 @@ reproduces the outer loop so tuning can be tested before it is roasted.
 | `charge_state.py` | how cold the beans were: the control-independent mixing proxy, air-corrected; **stdlib only** |
 | `charge_thermal.py` | the charge-thermal test's two no-flow charge decays. Primarily an **identifiability report**: what the still-air decay measures (the probe's weighting onto the chamber, the fan-burst bias) and what it cannot (the chamber capacity, the charge temperature). ~14 min |
 | `charge_dip.py` | the charge dip from `(mass, greens temp)`: a mixing term in front of the plant card, calibrated against the roasts rather than against the charge-thermal test |
+| `../make_charge_background.py` | merges that dip into a background's first two minutes, leaving the ramp and every mark untouched |
 | `plant_roast46.json` | the plant card `tools/merge_inlet_base.py` reads: `a`, `theta` and the loss cubic, with provenance |
 | `plant_roast48.json` | roast 48's plant, **not** an authoring source (`supersedes_plant_roast46: false`); its settled content is `kf` |
 | `ff_roast47.json` | the `feedforward()` card: the product-form coefficients, the affine fallback and the fitted box |
