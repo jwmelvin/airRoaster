@@ -190,6 +190,28 @@ VARIANTS = {
 OVERRIDES = {
     'chargetemp': {
         'autoCharge': 'false',   # re-armed by the ARM CHG button, or the backstop
+        # Roast 53: `markCharge` calls `pidOn()` whenever `pidOnCHARGE` is set and
+        # the PID is not already active (canvas.py:14656).  So the CHARGE button's
+        # `PID OFF` was undone by the CHARGE mark itself -- the gate held from the
+        # press to the mark and not one sample longer, which is *before* the beans
+        # reach the sensor and therefore worth nothing.  The gate only exists if
+        # this is off; the CHARGE+15 s alarm is then the one thing that turns the
+        # loop back on.  Harmless for the preheat, which runs with the PID already
+        # active, so `pidOnCHARGE` had never fired before the gate was added.
+        'pidOnCHARGE': 'false',
+        # And the kick itself, which the PID port pins on the *lookahead*, not on
+        # the frozen target.  `calcSV` ignores `svLookahead` before CHARGE
+        # (pid_control.py:1690 returns the background's CHARGE BT), so the file's
+        # `svLookahead = 3` first takes effect on the sample CHARGE is marked --
+        # aiming 3 s ahead of a bed falling 6 degC/s, i.e. 15-20 degC below it.
+        # The output floors, and `_back_calculate_integral` (pid.py:314-333) turns
+        # the clamped excess into stored integral: two samples take `Iterm` from
+        # 1.2 to 38.  `Ki = 0.07` cannot unwind that, so it is the *integral* and
+        # not the P term that holds T_inlet at 200-238 for the next 30 s.  The
+        # `LA 0` alarm closes the window ~2.5 s late, which is 2.5 s too late.
+        # Zero by default removes the window instead of racing it, and costs
+        # nothing: the alarm sets the same 0 at CHARGE+1 s either way.
+        'svLookahead': '0',
     },
     'char': {
         'pidOnCHARGE': 'false',                            # PID must never arm

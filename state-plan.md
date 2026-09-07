@@ -1499,11 +1499,25 @@ so the loop's hardest push lands exactly when the bed is already recovering. BT
 then overshot to **+20.1 degC at 58 s** and the loop sat **37.5 s on the 140
 floor** undoing it.
 
-**Replaying Artisan's own PID proves it is not normal loop behaviour.** Driven by
-roast 52's measured BT and its background, the port reproduces the commanded SV
-to **rms 1.84 from 120 s on** — so the model is right — and over 0-30 s it says
-SV should have been **145-181, never above 181**, against the measured 224-275.
-The entire discrepancy is that one window.
+**Roast 53 corrected this: the frozen target is real but it is not the dominant
+term.** Its own frozen window was ~1 s and it still commanded SV 238. Replaying
+the port against roast 53 — `rms 2.1 degC over 0-30 s`, peak 238 against a
+measured 238 — puts the kick on the **lookahead** instead:
+
+1. `calcSV` **ignores `svLookahead` before CHARGE** (pid_control.py:1690 returns
+   the background's CHARGE BT, one constant), so `svLookahead = 3` first takes
+   effect *on the sample CHARGE is marked*.
+2. The bed is falling ~6 degC/s there, so a target 3 s ahead sits **15-20 degC
+   below** BT. The output floors.
+3. `_back_calculate_integral` (pid.py:314-333) turns the clamped excess into
+   stored integral — **`Iterm` 1.2 → 37.8 in two samples** — and `Ki = 0.07`
+   cannot unwind it. It is the *integral*, not the P term, that holds `T_inlet`
+   at 200-238 for the next 30 s.
+4. The `LA 0` alarm closes the window ~2.5 s after CHARGE, about 2.5 s too late.
+
+Both readings point at the same window and the same fix, and the port says the
+correctly-targeted loop wants **174-181** there. Detail in
+state-history.md § Roast 53.
 
 **The fix costs nothing, because the loop has no authority there.** Nothing the
 heater does reaches BT before ~13.5 s, so the outer loop cannot affect `0..theta`
@@ -1513,10 +1527,26 @@ now carries:
 - a visible **`CHARGE`** button, Multiple Event → **Fan FULL (64) + PID OFF**, so
   the gate cannot be forgotten or mistimed;
 - an alarm at **CHARGE+15 s → PID ON** (its first correction then lands ~28.5 s,
-  just past the turning point).
+  just past the turning point);
+- **`pidOnCHARGE = false`**;
+- **`svLookahead = 0`** as the file default.
 
 `PID OFF` *cannot* be an alarm: alarms fire from CHARGE, which is the mark that
 arrives too late. It has to be the same press that tips the beans.
+
+**The last two are what roast 53 cost, and neither is optional.**
+
+`pidOnCHARGE = true` makes the gate a no-op: `markCharge` calls `pidOn()` whenever
+it is set and the PID is not already active (**canvas.py:14656**), so the button's
+`PID OFF` is undone by the CHARGE mark, ~1 s later and still before the beans
+reach the sensor. It had never mattered before because the preheat runs with the
+PID already active; adding a deliberate `PID OFF` is what exposed it.
+
+`svLookahead = 0` removes the window at (2) above rather than racing it, and costs
+nothing — the `LA 0` alarm sets the same 0 at CHARGE+1 s either way, and the value
+is unused before CHARGE. It is also what makes the gate **robust to the operator**:
+if the `CHARGE` button is missed, the lookahead window no longer bites. On the
+replay, either fix alone drops the peak from 238 to 174-179.
 
 **And it makes both halves agree.** `make_charge_background.py` builds the dip
 with the inlet **held at its pre-charge value**; the gate is what makes the plant

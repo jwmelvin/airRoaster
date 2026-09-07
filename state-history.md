@@ -3845,3 +3845,107 @@ Everything after the first minute was unremarkable: error +4.0 at 120 s, +1.7 at
 the background fixed the target, and what remained was one identifiable Artisan
 mechanism rather than a tuning question. Both are now closed in the config;
 roast 53 is the test.
+
+### Roast 53 (2026-09-07, 13:15) — the gate never existed, and the kick is the lookahead
+
+400 g of the −12.0 degC lot on `airRoaster_cascadePID_chargetemp.aset` against
+`profile_400g_m12C.alog`, the first run of the charge gate and the first with the
+fan step on an alarm. **Three of the four checks still fail**, all four improved,
+and the reason is two separate defects in the config — neither of them the
+tuning, and neither of them the operator.
+
+| check | roast 51 | roast 52 | **roast 53** | pass |
+|---|---|---|---|---|
+| peak SV, first minute | 300 | 275 | **238** | under ~200 |
+| seconds of heat at 100% | 25.4 | 23.4 | **13.9** | 0 |
+| seconds on the 140 floor | 26.4 | 38.6 | **46.9** | under ~10 |
+| worst BT error vs background, 30-90 s | +19.2 at 56 s | +21.3 at 58 s | **+14.1 at 56 s** | single digits |
+
+(Recomputed here on one 0.5 s grid for all three, so the 52 column differs from
+the figures carried in the handoff by up to 1.5 s.)
+
+Time-to-BT was the best of the three — **150/180/196.5 at +0.4 / +3.2 / −2.0 s**
+against the background — and everything from 90 s on was excellent: |error| ≤ 0.3
+degC from 140 s to DRY END, DRYe −1.0 s, FCs −1.5 s. **The alarm-fired fan step
+landed at exactly 120.0 s and cost nothing measurable**: the error runs
+monotonically +1.8 → 0.0 straight through it. That half of the previous commit
+worked as specified.
+
+#### The gate was cancelled by Artisan, one second after CHARGE
+
+`markCharge` calls `pidcontrol.pidOn()` whenever `pidOnCHARGE` is set and the PID
+is not already active (**canvas.py:14656**). `pidOnCHARGE=true` was in the file.
+So the `CHARGE` button's `PID OFF` was undone *by the CHARGE mark itself*: the
+gate held from the press at −6.5 s to the mark at +1.0 s, which is entirely
+before the beans reach the sensor, and was worth nothing. The `CHARGE+15 s → PID
+ON` alarm then fired into an already-running loop.
+
+`pidOnCHARGE` had never mattered before, because the preheat runs with the PID
+already active — the guard `not pidActive` had always been false. Adding a
+deliberate `PID OFF` is what exposed it.
+
+**The log proves the button was pressed**, so this is not procedural. `pidOn()`
+sets `slider_force_move`, and `addEvent_internal` records the event when `force`
+is set *even if the value has not changed* (main.py:17976-17984). Roast 53 carries
+a `T_inlet -> 142` event at +1.0 s repeating the 142 that had stood since −26.5 s.
+That duplicate is `pidOn()`'s signature, and it can only fire if the PID was off.
+
+#### And the kick itself is the *lookahead*, not the frozen target
+
+Roast 52's reading — the pre-CHARGE frozen target — is **not the dominant term**,
+and roast 53 is the run that separates them, because its frozen window was only
+~1 s. Replaying the PID port against roast 53's measured BT and its background:
+
+```
+charge_detect_delay 1 s, LA 3 -> 0 at ~2.5 s
+   rms(replay - measured SV)   0-30 s  2.1     0-60 s  1.6     120-240 s  0.57 degC
+   peak SV  replay 238   measured 238
+```
+
+That is the whole first minute reproduced to the resolution of the data, and the
+mechanism it contains is this:
+
+1. `calcSV` **ignores `svLookahead` before CHARGE** — pid_control.py:1690 returns
+   the background's CHARGE BT, one constant. So the file's `svLookahead = 3`
+   first takes effect *on the sample CHARGE is marked*.
+2. At that sample the bed is falling ~6 degC/s, so a target 3 s ahead sits
+   **15-20 degC below** BT. Error goes hard negative, output floors.
+3. `_back_calculate_integral` (pid.py:314-333) converts the clamped excess into
+   stored integral: **`Iterm` goes 1.2 → 25.3 → 37.8 in two samples.**
+4. `Ki = 0.07` cannot unwind that. It is the **integral**, not the P term, that
+   then holds `T_inlet` at 200-238 for the next 30 s. The replay's `Iterm` sits
+   at 38-44 across the whole window while `Pterm` swings −7 .. +20.
+5. The `LA 0` alarm closes the window at ~2.5 s, which is about 2.5 s too late.
+
+Counterfactuals on the same replay:
+
+| | peak SV, 0-60 s | max `Iterm` through the dip |
+|---|---|---|
+| as it happened | **238** | 44.1 |
+| PID genuinely gated off 0-15 s | **174** | 1.2 |
+| no gate, `svLookahead = 0` by default | **179** | 1.4 |
+| both | **174** | 1.2 |
+
+So **either** fix alone removes it, and both are now in the file. 174-179 is the
+correctly-targeted loop answering the dip model's own error, and it lands 13.5 s
+later — past the turning point, where it belongs. It is also the band the roast-52
+replay predicted (145-181); that replay was right about the answer and wrong
+about the reason, because it put the lookahead switch at CHARGE+1 s and so never
+opened the window.
+
+Roast 52 replayed with the corrected timing gives the right *shape* — a broad
+230-236 plateau over 6-18 s, `Iterm` pumped to 53 — against a measured 275, so
+rms 33 over 0-60 s. The mechanism is there; the magnitude is not fully recovered,
+and roast 53 is the run that carries the evidence.
+
+#### What is left
+
+The dip model is untouched by any of this and its two known errors both stand.
+The pour ramp: the generated curve is still ~6 degC too cold over 1-4 s (BT 117.2
+against a background 110.7 at 3 s), the same defect roast 52 showed at ~10 degC.
+And the turning point: measured **62.4 degC at 20 s** against the background's
+**62.06 at 29 s** — the depth is right to 0.35 degC and the *phase is 9 s late*,
+which `make_charge_background.py --check` has been reporting all along (roast 50
+22 s vs 27 s, roast 51 21 s vs 29 s). That late turning point is what generates
+the standing +4.8 degC error over 10-16 s, and it is what the 174-179 of the
+fixed loop is answering. It is now the largest remaining term in the dip.

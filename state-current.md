@@ -10,74 +10,102 @@
 > when a plan section turns into a record of what happened rather than a
 > statement of what to do, move it to *history*.
 
-## HANDOFF — roast 53: process it, then judge the strategy (2026-09-07)
+## HANDOFF — roast 54: the same run again, with the gate actually armed (2026-09-07)
 
 **If you are a fresh context, this section is the whole job.** Everything below it
-is background; read § Active effort only for what this section points at.
+is background.
 
-### The run that is queued
+### What roast 53 settled, and why it failed anyway
 
-400 g of **−12 degC** greens (new lot, so moisture may have moved — check
-`greens_temp` and `moisture_greens` in the file), config
-**`artisan/airRoaster_cascadePID_chargetemp.aset`**, background
-**`artisan/profile_400g_m12C.alog`** (regenerate with
+Roast 53 ran the charge gate for the first time. **Three of the four checks still
+failed, and none of it was the tuning or the operator.** Two config defects, both
+now fixed in `artisan/airRoaster_cascadePID_chargetemp.aset`; full record in
+state-history.md § Roast 53.
+
+1. **`pidOnCHARGE=true` cancelled the gate.** `markCharge` calls `pidOn()` when
+   that flag is set and the PID is not already active (canvas.py:14656), so the
+   `CHARGE` button's `PID OFF` was undone by the CHARGE mark itself. The gate held
+   from −6.5 s to +1.0 s — entirely before the beans reach the sensor. The
+   `CHARGE+15 s → PID ON` alarm fired into an already-running loop. **The button
+   was pressed correctly**: `pidOn()` sets `slider_force_move` and the log carries
+   its signature, a `T_inlet -> 142` event at +1.0 s repeating a value that had
+   stood since −26.5 s.
+2. **The kick is the lookahead, not the pre-CHARGE frozen target.**
+   `svLookahead = 3` is ignored before CHARGE and takes effect on the sample
+   CHARGE is marked, aiming 3 s ahead of a bed falling 6 degC/s. The output
+   floors, `_back_calculate_integral` converts the clamped excess into stored
+   integral (`Iterm` 1.2 → 37.8 in two samples), and `Ki = 0.07` cannot unwind it.
+   The port reproduces roast 53's SV to **rms 2.1 degC over 0-30 s, peak 238
+   against a measured 238**. Now `svLookahead = 0` by default, which removes the
+   window instead of racing the `LA 0` alarm — and makes the gate robust to a
+   missed `CHARGE` press.
+
+On the replay, either fix alone drops the peak SV from 238 to **174-179**.
+
+**The fan step worked exactly as specified** — alarm-fired at 120.0 s, error runs
+monotonically +1.8 → 0.0 straight through it — and tracking from 90 s on was the
+best yet: |error| ≤ 0.3 degC from 140 s to DRY END, time-to-BT 150/180/196.5 at
+**+0.4 / +3.2 / −2.0 s**. Do not touch either.
+
+### The run to queue
+
+**Reload the `.aset` in Artisan before the roast** — the fixes are file settings,
+not commands, so a running Artisan still holds the old ones.
+
+400 g of the same −12 degC lot, config
+`artisan/airRoaster_cascadePID_chargetemp.aset`, background
+`artisan/profile_400g_m12C.alog` (regenerate with
 `tools/make_charge_background.py --mass 400 --greens-temp <measured> --charge-bt 130.2`
-if the measured charge temperature differs). Preheat fan **58** to equilibrium,
-fan **64** at CHARGE, **60** at 2:00 by alarm. The outer PID is **gated off from
-CHARGE to +15 s**. It will land as `~/Documents/artisan/airRoaster_53.alog`.
+if the measured charge temperature differs). Preheat fan 58 to equilibrium, press
+the **`CHARGE`** button as you tip, and let the alarms do the rest. Record
+`greens_temp` **and `moisture_greens`** in Roast Properties — roast 53 has
+`moisture_greens = 0.0`, i.e. not entered.
 
 ### Run these, in this order
 
 ```bash
-python3 tools/analysis/charge_state.py 43 44 45 46 48 49 50 51 52 53
+python3 tools/analysis/charge_state.py 43 44 45 46 48 49 50 51 52 53 54
 .venv/bin/python tools/analysis/charge_dip.py --fusion
 .venv/bin/python tools/make_charge_background.py --mass 400 --greens-temp -12 --charge-bt 130.2 --check
 ```
 
-Then the four numbers that decide everything, all against
-`profile_400g_m12C.alog` (`SV` and `HT` are extra channels in the log; `roastdata.load_profile`
-returns them in `.extras`):
+Then the four numbers, all against `profile_400g_m12C.alog` (`SV` and `HT` are
+extra channels; `roastdata.load_profile` returns them in `.extras`):
 
-| check | roast 52 | pass |
-|---|---|---|
-| peak SV in the first minute | **275** | **under ~200** (the PID port says a correctly-targeted loop wants 145-181) |
-| seconds of heat at 100% | **22.5** | **0** |
-| seconds on the 140 floor | **37.5** | **under ~10** |
-| worst BT error vs background, 30-90 s | **+20.1 at 58 s** | **single digits** |
+| check | roast 52 | roast 53 | pass |
+|---|---|---|---|
+| peak SV in the first minute | 275 | **238** | **under ~200** (the port says 174-181) |
+| seconds of heat at 100% | 23.4 | **13.9** | **0** |
+| seconds on the 140 floor | 38.6 | **46.9** | **under ~10** |
+| worst BT error vs background, 30-90 s | +21.3 at 58 s | **+14.1 at 56 s** | **single digits** |
 
-Time-to-BT 150/180/196.5 against the background should stay inside roughly
-±3 s (roasts 50/51 managed −0.4/+2.2/−2.0), and the fan step at 2:00 should cost
-a transient of 1.5-2.5 degC and nothing more.
+(All three roasts recomputed on one 0.5 s grid, so these differ from the figures
+in the roast-53 handoff by up to 1.5 s.) Time-to-BT 150/180/196.5 should stay
+inside roughly ±3 s, and the fan step at 2:00 should still cost nothing.
 
-### How to read the result
+**First thing to check in the log**: the `T_inlet` special events over 0-15 s
+should now be *empty*. If any appear, the gate is still not arming and the cause
+is upstream of the config — check that Artisan actually reloaded the `.aset`.
 
-- **All four pass** — the strategy is validated end to end and the next question
-  is whether it reaches the cup. That needs a *warm* charge on the same
-  configuration, dropped at the same BT to the tenth, so development time is
-  comparable (roasts 50/51 differed 54.5 s vs 45.0 s above BT 196.5 but also
-  dropped 1.1 degC apart, which spoiled it).
-- **SV still rails in the first 30 s** — the gate did not take. Check the
-  `T_inlet` special events around +3 s: if they still step 140 -> 200+, the
-  `CHARGE` button (Multiple Event → Fan FULL + PID OFF) was pressed after tipping
-  rather than before, or not at all. This is procedural before it is technical.
-- **SV is well behaved but BT still overshoots 30-90 s** — then the dip model is
-  wrong rather than the loop, and the first suspect is the known one below.
-- **The dip is right but tracking after DRY END degrades** — that would be the
-  fan step at 2:00 doing more than expected; `kf = 0` says it should not, so
-  re-check `roast48_plant.py`'s fan term before touching gains.
-
-**Do not retune `pidKp` 3.0 / `pidKi` 0.07 / the lookahead switch.** Three roasts
-now put time-to-BT inside ±2.2 s and every problem found since roast 46 has been
+**Do not retune `pidKp` 3.0 / `pidKi` 0.07 / the lookahead switch.** Four roasts
+now put time-to-BT inside ±3.2 s and every problem found since roast 46 has been
 the target or an Artisan mechanism, never the gains.
 
-### The one known defect in the dip model
+### The two defects left in the dip model
 
-`charge_dip.dip()` starts its mixing exponential at `t = 0` with **no pour ramp**,
-so the generated curve falls ~10 degC too fast over 2-6 s (roast 52: background
-105.8 at 4 s against a measured 116.0), closing by 10 s. `charge_thermal.py`
-already has the ramp (`w_c`) and `charge_dip.py` does not. **~2 s of pour ramp is
-the fix**; it is the only outstanding defect in the dip model and it is worth
-doing before generating another background.
+**The turning point is 9 s late, and it is now the larger of the two.** Roast 53
+measured **62.4 degC at 20 s** against the background's **62.06 at 29 s** — the
+depth is right to 0.35 degC, the phase is not. `make_charge_background.py --check`
+has been reporting it all along (roast 50: 22 s vs 27 s; roast 51: 21 s vs 29 s).
+That late turning point is what generates the standing +4.8 degC error over
+10-16 s, and it is what the fixed loop's 174-179 will be answering. **A correct
+gate does not fix it** — it only stops the loop compounding it.
+
+**The pour ramp.** `charge_dip.dip()` starts its mixing exponential at `t = 0`
+with no pour ramp, so the generated curve falls too fast early: roast 53 measured
+117.2 at 3 s against a background 110.7, roast 52 was ~10 degC out at 4 s. It
+closes by 10 s. `charge_thermal.py` already has the ramp (`w_c`) and
+`charge_dip.py` does not; **~2 s of pour ramp is the fix.**
 
 ### Where the strategy stands
 
@@ -86,10 +114,10 @@ Settled and not worth re-opening: `k = 0.1056` measured from roasts 50/51 across
 13.5 s is total apparent lag rather than transport; the preheat equilibrium is
 fan 58 / BT 130.2 / Temp_Drive 10.25.
 
-### And a second defect the pair plus roast 52 has just exposed: the mass term
+### The mass term still disagrees with `phi(mass)`
 
 Roasts 51 and 52 are the same lot at the same measured −12.0 degC, differing only
-in mass, and they disagree with `phi(mass)`:
+in mass, and they disagree with the model:
 
 | roast | mass | `k` |
 |---|---|---|
@@ -99,22 +127,23 @@ in mass, and they disagree with `phi(mass)`:
 `phi = mc/(C_chamber + mc)` saturates, so `phi/m` is **larger** at 380 g — the
 model predicts roast 52 should read **+3.4%**, i.e. `k = 0.1084`. It reads
 **−2.2%**, so the model is **5.4% out** over a 5% change in mass, and in the
-**wrong direction**. Two caveats before anyone acts on it: `n = 1`, and both
-roasts carry `greens_temp = −12.0` exactly, which may be one measurement entered
-twice rather than two. But `make_charge_background.py` uses `phi(mass)` for every
-mass but 400 g, so **treat any background generated away from 400 g as
-unvalidated**, and generate at the mass actually being roasted rather than
-scaling. Resolving it needs a deliberate mass pair at one charge temperature —
-worth queueing behind the cup question, not ahead of it.
+**wrong direction**. Two caveats: `n = 1`, and both roasts carry
+`greens_temp = −12.0` exactly, which may be one measurement entered twice. Roast
+53 does not settle it: at 400 g it adds no mass leverage, and `charge_state.py`
+puts its inferred `T_bean` at −19.3 degC, inside the 400 g calibration band and
+so consistent with roast 51. **Treat any background generated away
+from 400 g as unvalidated** and generate at the mass actually being roasted rather
+than scaling. Resolving it needs a deliberate mass pair at one charge temperature.
 
-Open, in order: (1) roast 53's four checks; (2) the pour ramp above; (2b) the
-mass term above; (3) whether
-charge state reaches the cup, which needs the warm-arm pair; (4) **step 9,
-`INLET TRIM`** — deliberately deferred, not dropped. Its tracking case is now
-marginal (three roasts inside ±2.2 s) and what survives is robustness: it stops
-the outer integrator being a ramp-follower and decouples the loop from the
-profile's shape. **Re-decide it honestly after roast 53** rather than on the
-strength of the original estimate.
+Open, in order: (1) roast 54's four checks; (2) the dip model's 9 s late turning
+point; (2b) the pour ramp; (2c) the mass term; (3) whether charge state reaches
+the cup, which needs a *warm* charge on the same configuration dropped at the same
+BT to the tenth (roasts 50/51 differed 54.5 s vs 45.0 s above BT 196.5 but also
+dropped 1.1 degC apart, which spoiled it); (4) **step 9, `INLET TRIM`** —
+deliberately deferred, not dropped. Its tracking case is now marginal (four roasts
+inside ±3.2 s) and what survives is robustness: it stops the outer integrator
+being a ramp-follower and decouples the loop from the profile's shape.
+**Re-decide it honestly after roast 54.**
 
 ## Development framework (read this first if you are new here)
 
