@@ -1480,6 +1480,59 @@ nothing the heater does arrives before ~13.5 s, so the floor, the lookahead
 switch and the fan step at CHARGE are all control, not signal, as long as both
 runs are identical.
 
+#### The charge gate — the outer loop must not act through the dip
+
+**Roast 52 found the mechanism, and it is in Artisan's source, not in the
+tuning.** `pid_control.py:1687`: *before CHARGE, the CHARGE temp of the
+background profile is returned* — until `timeindex[0]` is set, Follow Background
+targets **one constant**, the background's BT at its own CHARGE, and not the
+curve. autoCHARGE needs about five samples of BT-break evidence, so for **~3.5 s
+after the beans go in** the target is pinned at 130.2 while BT is already through
+116.
+
+That **inverts the sign of the error**: live tracking wants `bg - BT =
+105.8 - 116.0 = -10.2` and would cut the heat, while the frozen target says
+`130.2 - 116.0 = +14.2`. Roast 52 answered it by stepping `T_inlet` **140 -> 224
+in a single 0.5 s sample** at +3.5 s, then on to 275, with heat at **100% for
+22.5 s**. The energy arrives 13.5 s later — at 17-30 s, **the turning point** —
+so the loop's hardest push lands exactly when the bed is already recovering. BT
+then overshot to **+20.1 degC at 58 s** and the loop sat **37.5 s on the 140
+floor** undoing it.
+
+**Replaying Artisan's own PID proves it is not normal loop behaviour.** Driven by
+roast 52's measured BT and its background, the port reproduces the commanded SV
+to **rms 1.84 from 120 s on** — so the model is right — and over 0-30 s it says
+SV should have been **145-181, never above 181**, against the measured 224-275.
+The entire discrepancy is that one window.
+
+**The fix costs nothing, because the loop has no authority there.** Nothing the
+heater does reaches BT before ~13.5 s, so the outer loop cannot affect `0..theta`
+at all and its actions there land where they do harm. `airRoaster_cascadePID_chargetemp.aset`
+now carries:
+
+- a visible **`CHARGE`** button, Multiple Event → **Fan FULL (64) + PID OFF**, so
+  the gate cannot be forgotten or mistimed;
+- an alarm at **CHARGE+15 s → PID ON** (its first correction then lands ~28.5 s,
+  just past the turning point).
+
+`PID OFF` *cannot* be an alarm: alarms fire from CHARGE, which is the mark that
+arrives too late. It has to be the same press that tips the beans.
+
+**And it makes both halves agree.** `make_charge_background.py` builds the dip
+with the inlet **held at its pre-charge value**; the gate is what makes the plant
+actually do that. The same assumption on both sides, which is why this should
+close rather than trade one error for another.
+
+#### The fan step is timed, not hand-pressed
+
+Also in the file: an alarm at **CHARGE+120 s** firing a hidden `Fan 60` button
+(event type 0, value 7.0, the same `OT2` send the hand buttons use, so a replayed
+step is indistinguishable from a pressed one). 2:00 is the quietest window in the
+roast — the dip is long over, the 1:30 lookahead switch has settled (95% in 12 s
+on roast 49) and DRY END is still ~60 s away. The plant has **no fan term**
+(`kf = 0`, roast 48), so this moves the operating point and not the dynamics:
+holding BT needs about **3.5 degC more inlet** at fan 60 than at 64.
+
 #### autoCHARGE must be disarmed through the settle
 
 The settle descends BT from ~185 degC (empty chamber at `INLET 200` sits ~10 degC

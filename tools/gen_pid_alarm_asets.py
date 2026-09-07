@@ -107,10 +107,19 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent.parent / 'artisan'
 SRC = HERE / 'airRoaster_cascadePID.aset'
 
-Btn = collections.namedtuple('Btn', 'label cmd offset time source cond temp visible')
+Btn = collections.namedtuple(
+    'Btn', 'label cmd offset time source cond temp visible action etype evalue')
+
+# Verbatim from the canonical file's own fan buttons: action 22 with this send
+# string plus event type 0 is what makes a button both move the fan and record
+# the event, so a replayed fan change looks identical to a hand-pressed one.
+FAN_SEND = r'"send({{\"command\":\"OT2\",\"value\":{}}})\n"'
+ACT_COMMAND, ACT_MULTIPLE, ACT_SEND = 20, 3, 22
+ETYPE_AIR, ETYPE_NONE = 0, 4
 
 
-def btn(label, cmd, offset=None, time=0, source=-3, cond=1, temp=0, visible=False):
+def btn(label, cmd, offset=None, time=0, source=-3, cond=1, temp=0, visible=False,
+        action=ACT_COMMAND, etype=ETYPE_NONE, evalue=0):
     """One Artisan-Command button, and optionally the alarm that presses it.
 
     ``offset=None`` makes it a button with **no alarm** -- an operator control.
@@ -118,7 +127,8 @@ def btn(label, cmd, offset=None, time=0, source=-3, cond=1, temp=0, visible=Fals
     1 = DRY END.  ``source`` is its index minus 3 (alarms.py:804): -3 = time
     only, -1 = DeltaBT, 1 = BT.  ``cond`` is 0 = ``<``, 1 = ``>``.
     """
-    return Btn(label, cmd, offset, time, source, cond, temp, visible)
+    return Btn(label, cmd, offset, time, source, cond, temp, visible,
+               action, etype, evalue)
 
 
 LOOKAHEAD = [btn('LA 0', 'pidLookahead(0)', 1),
@@ -138,11 +148,41 @@ CHARGE_ARM = [btn('ARM CHG', 'autoCHARGE(1)', visible=True),
               btn('ARM bak', 'autoCHARGE(1)', offset=960, time=9,
                   source=1, cond=0, temp=131)]
 
+# The charge gate.  `pid_control.py:1687`: until `timeindex[0]` is set, Follow
+# Background returns *the background's CHARGE temperature* -- one constant -- not
+# the curve.  autoCHARGE needs ~5 samples of BT-break evidence, so for ~3.5 s
+# after the beans go in the target is pinned at 130 while BT is already through
+# 116.  That inverts the error's sign (live tracking wants -10, the frozen target
+# says +14) and roast 52 answered it by stepping T_inlet 140 -> 224 in a single
+# 0.5 s sample with heat at 100%.  The energy lands 13.5 s later, on the turning
+# point, and the loop then spent 37.5 s on the floor undoing it.
+#
+# The loop has *no authority* over 0..theta -- nothing the heater does reaches BT
+# before ~13.5 s -- so gating it off there costs nothing and removes the kick.
+# It also makes the plant satisfy the assumption `make_charge_background.py`
+# builds the dip on: the inlet held at its pre-charge value.  Same assumption on
+# both sides, which is why this closes rather than trading one error for another.
+#
+# `PID OFF` cannot be an alarm: alarms fire *from CHARGE*, which is the mark that
+# arrives too late.  It is pressed by hand, folded into one CHARGE button with
+# the fan step so it cannot be forgotten or mistimed.
+CHARGE_GATE = [
+    btn('CHARGE', '"4,19"', visible=True, action=ACT_MULTIPLE),   # Fan FULL + PID OFF
+    btn('PID on', 'PIDon', offset=15),                            # first action lands ~28 s
+]
+# The fan step, timed rather than hand-pressed.  At 2:00 the dip is long over, the
+# 1:30 lookahead switch has settled (95% in 12 s on roast 49) and DRY END is still
+# ~60 s away, so it lands in the quietest window in the roast.  The plant has no
+# fan term (`kf = 0`, roast 48), so this moves the operating point and not the
+# dynamics: holding BT needs ~3.5 degC more inlet at fan 60 than at 64.
+FAN_CUT = [btn('Fan 60', FAN_SEND, offset=120, action=ACT_SEND,
+               etype=ETYPE_AIR, evalue=7.0)]
+
 VARIANTS = {
     'lookahead': LOOKAHEAD,
     'kigate': KIGATE,
     'lookahead_kigate': LOOKAHEAD + KIGATE,
-    'chargetemp': LOOKAHEAD + CHARGE_ARM,
+    'chargetemp': LOOKAHEAD + CHARGE_ARM + CHARGE_GATE + FAN_CUT,
     'char': [],
 }
 
@@ -165,12 +205,12 @@ OVERRIDES = {
 BUTTON_FIELDS = {
     'extraeventbuttoncolor': lambda b, n: '#808080',
     'extraeventbuttontextcolor': lambda b, n: 'white',
-    'extraeventsactions': lambda b, n: '20',        # 20 = Artisan Command
+    'extraeventsactions': lambda b, n: str(b.action),
     'extraeventsactionstrings': lambda b, n: b.cmd,
     'extraeventsdescriptions': lambda b, n: '',
     'extraeventslabels': lambda b, n: b.label,
-    'extraeventstypes': lambda b, n: '4',           # 4 = no event recorded
-    'extraeventsvalues': lambda b, n: '0',
+    'extraeventstypes': lambda b, n: str(b.etype),
+    'extraeventsvalues': lambda b, n: str(b.evalue),
     'extraeventsvisibility': lambda b, n: '1' if b.visible else '0',
 }
 ALARM_FIELDS = {
