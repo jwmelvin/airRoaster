@@ -1379,6 +1379,85 @@ It did **not** deliver the `C_chamber` calibration it was run for.
   not two, which is most of why its joint fit is under-determined. One preheat,
   no beans consumed, no roast.
 
+#### The preheat protocol, and why a throwaway roast is not one
+
+**A roast is not a reset** (operator, 2026-09-07). The between-batch protocol —
+cooldown duration, fan level, how long before the next preheat starts — is not
+defined, so "run a batch first" leaves the machine in a state of unknown
+magnitude. A **defined temperature held for a defined time** is an actual
+boundary condition; that is what the runs use.
+
+**And the state cannot be detected, only imposed.** Roast 50's two preheats
+converged to the *same* shallow state from opposite histories — cold-start
+5.6 min ended at inlet 140.43 / heat 44.66%, warm-start 2.5 min at inlet
+141.20 / 44.57% — and yet their plenums differed by **4.5 degC** through the
+whole soak afterwards. The loop holds BT, so it absorbs the deep-mass difference
+into a heat demand no operator can read. Fitting cycle 1's inlet approach gives a
+**shallow time constant of ~46 s**, converged in ~4 minutes and informative about
+nothing that matters. Worth roughly **2-4 degC of apparent bean temperature**
+(`d(T_bean)/d(drop) = -1/4k = -2.45`), or 5-10% of the ~47 degC the pair creates.
+
+**The protocol is therefore an elevated pre-preheat, then a fixed settle.**
+Saturation at the elevated drive is a *fixed point* — once there, more time
+changes nothing — so it erases whether the machine started cold or off a previous
+batch, and it stops the result depending on how accurately the phase is timed.
+The settle is then a fixed decay from a fixed start: same start plus same
+duration gives the same end, by construction.
+
+| phase | what | duration |
+|---|---|---|
+| elevated | `INLET 200`, fan 64, **PID off** | 10 min |
+| settle | cascade on, BT 130 | 10 min from BT first within 1 degC |
+
+Sizing: the chamber mass that takes part in the charge mix is `C ~ 353 J/K`
+against `UA >= 3.3 W/K` (the plant's own `a` on a 680 J/K bed), so **tau <= ~2
+min** for that one; the deeper reservoir is roast 50's 510-557 s *no-flow* decay
+and its driven constant is unmeasured. Ten and ten is ~5 constants of the fast
+one and ~2 of the pessimistic one, and identical on both runs. **Lengthen the
+elevated phase rather than the settle** if hedging — that is the one where extra
+time is free.
+
+**Accept that repeatable is not the same as comparable to roasts 43-49.** Those
+were charged from uncontrolled machine states; roast 49 was not even settled (its
+recording starts 71 s before CHARGE with BT still climbing 115.8 -> 128.1 and the
+inlet falling 225.7 -> 175.8, which is why its `inlet_pre` reads 168.6 against the
+group's 140-152 — an unsettled machine, not a hotter one). Let the pair define
+its own baseline and adopt the protocol going forward.
+
+**A free retrospective check exists.** With no flow the plenum never sees the bed
+(state-history.md § Roast 50), so the **post-DROP inlet decay is a
+bean-independent readout of stored heat**. Record through the cooldown on both
+runs and overlay the two curves: if they sit on top of each other the protocol
+worked, and if they are offset the difference is correctable — and it yields the
+driven time constant.
+
+#### autoCHARGE must be disarmed through the settle
+
+The settle descends BT from ~185 degC (empty chamber at `INLET 200` sits ~10 degC
+under the inlet) to 130. Artisan's autoCHARGE fires on a BT break of `d = -0.34`
+degC per sample over two consecutive legs at `Delay=500` — **0.68 degC/s**, above
+77 degC (canvas.py:5121, main.py:24306, params canvas.py:548). The empty-chamber
+time constant is **40-50 s** (roast 50's reheat: BT 57 -> 129 at inlet ~235 gives
+`a ~ 0.02 /s`), so a 55 degC descent runs at **1.1-1.3 degC/s** and trips it
+within seconds. A gentler overshoot does not help: 30 degC gives 0.67 degC/s,
+exactly on the boundary. **Disarm it; do not try to stay under the threshold.**
+
+`autoCHARGE(<bool>)` is an **Artisan Command** (action 20, main.py:10286) and
+sets `qmc.autoChargeFlag`; `autoDROP(<bool>)` is its sibling at :10298. **Alarms
+cannot issue one** — their action list is 26 fixed entries and "Artisan Command"
+is not among them (alarms.py:898) — so the route is alarm -> **Event Button** ->
+command, the pattern `gen_pid_alarm_asets.py` already uses for the timed levers.
+**`artisan/airRoaster_cascadePID_chargetemp.aset`** is that file: `lookahead`
+unchanged, plus `autoCharge=false`, a visible `ARM CHG` button carrying
+`autoCHARGE(1)`, and a backstop alarm (ON+960 s **and** BT < 131) pressing a
+hidden twin. The temperature gate is what makes the backstop safe — BT crosses
+131 about three time constants into the settle, drifting at ~0.02 degC/s.
+
+**Trap:** `autoChargeFlag` is persisted as `autoCharge=` in the `.aset`, so a
+*Save Settings while disarmed* bakes `autoCharge=false` into the file and the
+next roast silently never marks CHARGE. Same sticky-config class as `p-i-d()`.
+Re-load the file rather than saving over it.
+
 **Then run the pair.** Two 400 g batches of the same lot, everything else held
 identical, one straight from the freezer and one equilibrated at room
 temperature for >= 12 h. Roast 49 is already a usable warm arm, so if only one

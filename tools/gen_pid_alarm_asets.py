@@ -13,6 +13,14 @@ Variants
 ``kigate``              `pidKi` 0.07 -> 0 at CHARGE+1 s -> 0.07 at CHARGE+90 s
                         (state-plan.md § The dip is a different control problem)
 ``lookahead_kigate``    both
+``chargetemp``          `lookahead` **plus** a disarmed autoCHARGE: `autoCharge`
+                        starts `false`, a *visible* `ARM CHG` button turns it on
+                        with `autoCHARGE(1)`, and a backstop alarm presses a
+                        hidden twin if the operator forgets.  For the
+                        charge-temperature pair, whose preheat protocol settles
+                        BT down to 130 degC from an elevated pre-preheat -- a
+                        descent Artisan would otherwise mark as CHARGE.
+                        (state-plan.md § The charge-temperature experiment)
 ``char``                no buttons, no alarms: **key overrides only**.  The
                         open-loop characterisation config for runbook steps 3-5
                         -- PID never arms at CHARGE, both alarms disabled, and
@@ -21,6 +29,22 @@ Variants
                         test's inlet *and* fan schedules replay by themselves
                         instead of being hand-driven.
                         (state-plan.md § Files for the characterisation runs)
+
+Why ``chargetemp`` exists
+-------------------------
+The pre-preheat settles BT from ~185 degC (empty chamber at `INLET 200`) down to
+the 130 degC preheat.  Artisan's autoCHARGE fires on a BT break of `d = -0.34`
+degC per sample over two consecutive legs at `Delay=500` (canvas.py:5121,
+main.py:24306, params canvas.py:548) -- **0.68 degC/s**, above 77 degC.  The
+empty-chamber time constant is 40-50 s (roast 50's reheat), so a 55 degC descent
+runs at **1.1-1.3 degC/s** and trips it within seconds.  A gentler overshoot does
+not help: 30 degC gives 0.67 degC/s, exactly on the boundary.  So it is disarmed
+by config and re-armed deliberately.
+
+`autoCHARGE(<bool>)` is an **Artisan Command** (action 20, main.py:10286), and
+alarms cannot issue one -- their action list is 26 fixed entries and "Artisan
+Command" is not among them (alarms.py:898).  The route is alarm -> **Event
+Button** -> command, the same pattern the timed levers above already use.
 
 Why the two alarms per lever, and why 90 s
 ------------------------------------------
@@ -66,8 +90,16 @@ Traps
 * Button numbers in `alarmstrings` are **1-based positions in
   `extraeventslabels`**, so they must be re-derived from the canonical file every
   time.  Never hand-edit them.
+* **`autoChargeFlag` is persisted** as `autoCharge=` in the `.aset`.  A *Save
+  Settings while disarmed* writes `autoCharge=false` into the file and the next
+  roast then silently never marks CHARGE -- the same sticky-config class as
+  `p-i-d()` above.  Re-load the file rather than saving over it.
+* A **missed** arm is worse than a spurious CHARGE: a spurious one can be undone,
+  a missing one costs the backdated 3-sample accuracy `charge_state.py` reads the
+  charge state from.  Hence the backstop alarm as well as the button.
 """
 
+import collections
 import pathlib
 import re
 import sys
@@ -75,21 +107,50 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent.parent / 'artisan'
 SRC = HERE / 'airRoaster_cascadePID.aset'
 
-# label, Artisan Command, seconds after CHARGE
-LOOKAHEAD = [('LA 0', 'pidLookahead(0)', 1),
-             ('LA 6', 'pidLookahead(6)', 90)]
-KIGATE = [('Ki 0', 'p-i-d(3,0,0)', 1),
-          ('Ki on', 'p-i-d(3,0.07,0)', 90)]
+Btn = collections.namedtuple('Btn', 'label cmd offset time source cond temp visible')
+
+
+def btn(label, cmd, offset=None, time=0, source=-3, cond=1, temp=0, visible=False):
+    """One Artisan-Command button, and optionally the alarm that presses it.
+
+    ``offset=None`` makes it a button with **no alarm** -- an operator control.
+    ``time`` is Artisan's alarm reference (alarms.py:847): 9 = ON, 0 = CHARGE,
+    1 = DRY END.  ``source`` is its index minus 3 (alarms.py:804): -3 = time
+    only, -1 = DeltaBT, 1 = BT.  ``cond`` is 0 = ``<``, 1 = ``>``.
+    """
+    return Btn(label, cmd, offset, time, source, cond, temp, visible)
+
+
+LOOKAHEAD = [btn('LA 0', 'pidLookahead(0)', 1),
+             btn('LA 6', 'pidLookahead(6)', 90)]
+KIGATE = [btn('Ki 0', 'p-i-d(3,0,0)', 1),
+          btn('Ki on', 'p-i-d(3,0.07,0)', 90)]
+# The operator's arm button, and a backstop that presses a hidden twin if it is
+# forgotten.  The backstop is BOTH time- and temperature-gated, and the
+# temperature gate is the one doing the work: BT crosses 131 about 3 time
+# constants into the settle (tau ~45 s empty), by which point it is drifting at
+# ~0.02 degC/s against autoCHARGE's 0.68 degC/s threshold, so arming there
+# cannot trip it.  The 16:00 from ON only guards against the elevated phase
+# being skipped altogether, and is early enough to cover a protocol that runs
+# short.  A backstop that fires after CHARGE is harmless: `autoChargeIdx` and
+# `timeindex[0]` both block re-detection (canvas.py:5121).
+CHARGE_ARM = [btn('ARM CHG', 'autoCHARGE(1)', visible=True),
+              btn('ARM bak', 'autoCHARGE(1)', offset=960, time=9,
+                  source=1, cond=0, temp=131)]
 
 VARIANTS = {
     'lookahead': LOOKAHEAD,
     'kigate': KIGATE,
     'lookahead_kigate': LOOKAHEAD + KIGATE,
+    'chargetemp': LOOKAHEAD + CHARGE_ARM,
     'char': [],
 }
 
 # whole-line key replacements applied after the buttons/alarms are appended
 OVERRIDES = {
+    'chargetemp': {
+        'autoCharge': 'false',   # re-armed by the ARM CHG button, or the backstop
+    },
     'char': {
         'pidOnCHARGE': 'false',                            # PID must never arm
         'backgroundPlaybackEvents': 'true',                # master playback switch
@@ -105,25 +166,25 @@ BUTTON_FIELDS = {
     'extraeventbuttoncolor': lambda b, n: '#808080',
     'extraeventbuttontextcolor': lambda b, n: 'white',
     'extraeventsactions': lambda b, n: '20',        # 20 = Artisan Command
-    'extraeventsactionstrings': lambda b, n: b[1],
+    'extraeventsactionstrings': lambda b, n: b.cmd,
     'extraeventsdescriptions': lambda b, n: '',
-    'extraeventslabels': lambda b, n: b[0],
+    'extraeventslabels': lambda b, n: b.label,
     'extraeventstypes': lambda b, n: '4',           # 4 = no event recorded
     'extraeventsvalues': lambda b, n: '0',
-    'extraeventsvisibility': lambda b, n: '0',      # hidden
+    'extraeventsvisibility': lambda b, n: '1' if b.visible else '0',
 }
 ALARM_FIELDS = {
     'alarmaction': lambda b, n: '2',                # 2 = Event Button
     'alarmbeep': lambda b, n: '0',
-    'alarmcond': lambda b, n: '1',
+    'alarmcond': lambda b, n: str(b.cond),
     'alarmflag': lambda b, n: '1',                  # enabled
     'alarmguard': lambda b, n: '-1',
     'alarmnegguard': lambda b, n: '-1',
-    'alarmoffset': lambda b, n: str(b[2]),
-    'alarmsource': lambda b, n: '-3',               # -3 = time only
+    'alarmoffset': lambda b, n: str(b.offset),
+    'alarmsource': lambda b, n: str(b.source),
     'alarmstrings': lambda b, n: str(n),            # 1-based button number
-    'alarmtemperature': lambda b, n: '0',
-    'alarmtime': lambda b, n: '0',                  # measured from CHARGE
+    'alarmtemperature': lambda b, n: str(b.temp),
+    'alarmtime': lambda b, n: str(b.time),
 }
 
 
@@ -138,11 +199,14 @@ def build(name, buttons, lines):
     nbuttons = len(value_of(lines, 'extraeventslabels').split(', '))
     numbers = [nbuttons + 1 + i for i in range(len(buttons))]
 
+    # Every entry becomes a button; only those carrying an offset get an alarm.
+    alarmed = [(b, n) for b, n in zip(buttons, numbers) if b.offset is not None]
+
     append = {}
     for key, fn in BUTTON_FIELDS.items():
         append[key] = ''.join(', ' + fn(b, n) for b, n in zip(buttons, numbers))
     for key, fn in ALARM_FIELDS.items():
-        append[key] = ''.join(', ' + fn(b, n) for b, n in zip(buttons, numbers))
+        append[key] = ''.join(', ' + fn(b, n) for b, n in alarmed)
 
     overrides = OVERRIDES.get(name, {})
 
@@ -162,8 +226,15 @@ def build(name, buttons, lines):
 
     dst = HERE / f'airRoaster_cascadePID_{name}.aset'
     dst.write_text('\n'.join(out), encoding='utf-8')
-    pairs = ', '.join(f'{b[1]} at CHARGE+{b[2]}s [button {n}]'
-                      for b, n in zip(buttons, numbers))
+    refs = {9: 'ON', 0: 'CHARGE', 1: 'DRY END'}
+    def describe(b, n):
+        if b.offset is None:
+            return f'{b.cmd} on the {b.label!r} button [button {n}, visible]'
+        where = f'{refs.get(b.time, b.time)}+{b.offset}s'
+        if b.source != -3:
+            where += f' and BT {"<" if b.cond == 0 else ">"} {b.temp:g}'
+        return f'{b.cmd} at {where} [button {n}]'
+    pairs = ', '.join(describe(b, n) for b, n in zip(buttons, numbers))
     if overrides:
         pairs += ('; ' if pairs else '') + ', '.join(f'{k}={v}' for k, v in overrides.items())
     print(f'{dst.name}: {pairs}')
