@@ -1,0 +1,73 @@
+{
+  "source": "airRoaster_50.alog (2026-09-06), two no-flow charge decays",
+  "model": "3-node lumped + measured reservoir: dTb = k_bw(Tw-Tb)/(1+r_fus*phi); dTw = -f*k_bw/rho*(Tw-Tb) + k_ws*(Ts(t)-Tw); tau_p dTp = (1-beta)Tb + beta Tw - Tp; Ts = T_amb + A exp(-t/tau)",
+  "mass_g": 400.0,
+  "T_amb": 29.0,
+  "T_melt": -2.0,
+  "W_melt": 4.0,
+  "shared": {
+    "k_bw": 0.006184286437693158,
+    "rho": 29.720201748294446,
+    "k_ws": 0.1299484838031904,
+    "k_wa": 0.15049186300397593,
+    "k_ba": 1.0000000002682962e-06,
+    "tau_p": 35.62799524706667,
+    "beta": 0.3427710733320193,
+    "g_fan": 4.618056367071411,
+    "r_fus": 21.35189263121746,
+    "w_c": 0.5368457338243678,
+    "c_b": 1.996436429096216
+  },
+  "identified": {
+    "beta": 0.3427710733320193,
+    "tau_p": 35.62799524706667,
+    "burst_bias_degC": 3.88
+  },
+  "not_identified": [
+    "rho",
+    "C_chamber",
+    "c_b",
+    "T_b0",
+    "r_fus magnitude"
+  ],
+  "C_bed_J_per_K": 798.5745716384864,
+  "C_chamber_J_per_K": 23733.797380153632,
+  "C_chamber_note": "NOT identified -- runs to whatever bound it is given. charge_dip.py fits the mixing fraction from the roasts instead. Recorded here only for provenance.",
+  "h_fus_J_per_g": 42.62769627911359,
+  "h_fus_band_J_per_g": [
+    7.0,
+    35.0
+  ],
+  "h_fus_note": "Zero costs 20% of residual, so some extra cold-side thermal mass is required; 5-25 degC-equivalent all cost under 3%, so the magnitude is open. The point estimate exceeds 35 J/g, which is ALL the fusion enthalpy a 10.5% moisture charge has, so read the band and clamp to it.",
+  "per_arm": {
+    "warm": {
+      "T_b0": 29.0,
+      "t_c": 6.000014035817957,
+      "dw": 14.565446879451846,
+      "T_w0": 144.26544687945184,
+      "reservoir_A": 77.19756132333137,
+      "reservoir_tau": 557.2360249237356,
+      "stated_T_bean": 29.0,
+      "rms": 2.5830610980243676,
+      "neff": 0.2779879933156554
+    },
+    "frozen": {
+      "T_b0": -18.0,
+      "t_c": 8.497577695795894,
+      "dw": 24.999999999289408,
+      "T_w0": 154.6999999992894,
+      "reservoir_A": 83.88684654834296,
+      "reservoir_tau": 510.3846601882962,
+      "stated_T_bean": -18.0,
+      "rms": 1.7748918554305564,
+      "neff": 1.0770386498186304
+    }
+  },
+  "caveats": [
+    "No-flow physics. This card's capacities are NOT identified -- see `not_identified`. What it carries is the probe's weighting onto the chamber walls and the measured fan-burst bias; it measures nothing under forced convection and does not replace plant_roast46.json.",
+    "T_amb is the operator's stated room (29 degC), not the `amb` channel, which is the cold junction and drifts upward all run.",
+    "The arms are not a clean pair: only the frozen arm got a mixing burst, the tip instants differ by ~5 s, and the frozen arm's machine ran 4-5 degC hotter. All three are fitted, not assumed.",
+    "h_fus is identifiable only through the frozen arm's shape. Read the band, not the point estimate -- which exceeds what the moisture physically supplies. The roasts disagree with it outright; see charge_dip.py --fusion.",
+    "The fit is multi-start: the surface has a basin that tells the arms apart by the machine rather than by the beans."
+  ]
+}

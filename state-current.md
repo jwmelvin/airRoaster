@@ -946,6 +946,77 @@ measures, so it is common-mode. Detail, tables and the excitation that would
 settle what is left (it is `a`, not the delay) in state-history.md § Deadtime
 versus lag.
 
+**Roast 50 (2026-09-06, 20:27) is not a roast, and its headline is a negative
+result.** Two cycles of *preheat the empty chamber to BT 130, cut heat and fan
+together with the cooldown guard disabled, tip 400 g in, wait 150 s* — one arm at
+room temperature, one from the freezer. The operator supplied what the log does
+not: freezer **−18 degC** actual, room **~29 degC**, **400 g** both arms;
+`greens_temp` is `0.0` for the fifth run running. The preheat end-states match to
+within 0.1 degC of BT and 0.4 degC of inlet, so the pair is clean.
+
+**The still-air decay cannot measure charge temperature.** Left free, the joint
+fit puts the room-temperature arm at **−2.2 degC** and the freezer arm at its
+**−45 degC bound**, with a **16 kJ/K** chamber to pay for it — and that fit is
+*better* than one with the temperatures held at truth (rms 1.64 against 2.21) on
+residuals whose `neff` is **0.3-1.1 per arm**. `C_chamber` is not identified
+either: `rho` walks to whatever bound it is given, 29.7 against a bound of 30,
+even with the charge temperatures fixed. **The cause is structural and the
+operator named it** — the preheated chamber holds a lot of heat and the BT
+probe's expansion zone is narrow, so in still air BT is an instrument pointed at
+the chamber: **`beta` 0.34 onto the walls, `tau_p` 36 s**, the only two
+parameters stable across every configuration tried.
+
+**The nine-second fan burst is the measurement that does work**, and it is the
+run's real product. BT falls **23.5 → 19.5 degC in 9 s** at fan 64 — **3.9 degC**
+of still-air bias removed — and 19.5 is *below* the 29 degC room air being drawn
+in, so nothing but the bean bed can be what the probe is reading. The procedure
+is therefore **charge, wait, short burst, read the trough**; the wait alone does
+not work. Only the frozen arm got one, which is much of why the joint fit is
+under-determined, so **the cheap follow-up is to repeat the warm arm with a
+burst** — one preheat, no beans consumed.
+
+**Bypassing the cooldown guard is benign from a preheat state.** Inlet falls
+140 → 97 degC in 4 s, soaks back to only **109-111 degC** at +12-18 s — 30 degC
+*below* the running setpoint — then decays with a 510-557 s time constant. The
+interlock held; heat was 0 within 1.5 s in arm 1 and never came on in arm 2. One
+0.5 s sample of `HT 50` is procedural, not a fault: inlet-off was sent while
+Artisan's PID was still running, so it re-sent `INLET 140.1` a tick later and the
+inner loop re-engaged until the fan reached 0 — **kill the outer PID before the
+inlet**, as arm 2 did. Limits worth keeping: this was a *preheat* state (140 degC
+inlet, 45% duty), the element itself is unmeasured, and the `COOL` guard would
+not have released for over four minutes here, so it is correctly sized for
+exactly this soak.
+
+**The dip is now modelled rather than absorbed into `loss(t)`
+(`tools/analysis/charge_dip.py`).** A mixing term in front of the unchanged plant
+card: `dT_mix = phi*(BT_c - T_bean)`, delivered as a **decaying rate** —
+`-(dT_mix/tau_mix)*exp(-t/tau_mix)` — which matters more than any constant in it.
+Written as a relaxation toward `BT_mix` the charge becomes a permanent attractor
+that fights the heater all roast and the model flatlines near 62 degC; as a rate
+it integrates to the right total and stops, and the turning point lands at
+**23-25 s against a measured 22-23.5** with the dip depth within ~1.5 degC.
+`phi` is fitted **to the roasts, not to roast 50** — 0-40 s of BT on roasts
+43/44/46 gives `phi`(400 g) **0.658**, `tau_mix` **12.2 s**, rms **3.08 degC**,
+hence `C_chamber` 353 J/K. **`charge_state.py`'s `k` is not `phi`**: `4k = 0.409`
+is the drop at `+theta` and already folds in the incomplete mix and the heat the
+plant put back, so reading it as the asymptotic fraction under-predicts every
+charge drop by 7-10 degC. That is a reading error, not a bug in that tool.
+
+**One disagreement is left open and neither dataset can close it.** Roast 50 says
+the frozen arm needs extra cold-side thermal mass (`r_fus = 0` costs 20% of
+residual) and cannot say how much (5-25 degC-equivalent all within 3%; the point
+estimate exceeds the 35 J/g such a charge physically has). The roasts say none:
+on a frozen-only calibration group `phi` absorbs any `h_fus` exactly (rms 3.08 at
+every value 0-35 J/g), and the held-out warm pair gets monotonically worse as it
+rises — roast 48 from 6.19 to 10.22. `charge_dip.py` defaults to **0** and
+follows the roasts; `--fusion` prints the table.
+
+**And the standing exposure is unchanged: nothing has yet measured a charge
+temperature under flow.** `charge_state.py`'s `k`, roast 48's +12.8, roast 49's
++15.5 and now `charge_dip.py`'s `phi` all rest on roasts 43/44/46 having been at
+−18 degC. Roast 50 could have broken that dependency and does not, because it has
+no flow. Detail in state-history.md § Roast 50.
+
 **Canonical config is `artisan/airRoaster_cascadePID.aset`** (one file; the
 brief `_edit` variant used while adding the alarms was folded back in and
 removed), with background

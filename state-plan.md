@@ -1356,7 +1356,30 @@ operator proposed independently.
 
 #### The charge-temperature experiment
 
-**Run it next.** Two 400 g batches of the same lot, everything else held
+**Roast 50 (2026-09-06) took a run at this from a different direction and it
+changes the design rather than closing it** — state-history.md § Roast 50. It
+measured the charge decay with **no flow**, and the result is that a still-air BT
+decay **cannot** read bean temperature: the probe's expansion zone is narrow and
+the preheated chamber holds a lot of heat, so BT weights 0.34 onto the walls with
+a 36 s time constant, and the charge temperature trades against that freely
+enough that the best-fitting solution puts a room-temperature charge at −2 degC.
+It did **not** deliver the `C_chamber` calibration it was run for.
+
+**Three things it did settle, and they all feed this run:**
+
+- **Add a nine-second fan burst to any charge-state measurement.** It removes
+  3.9 degC of still-air bias and takes BT below the temperature of the air being
+  drawn in, which no reading of walls or air can do. It is the only
+  charge-temperature instrument this project has that works.
+- **The still-air arms are not interchangeable with a roast.** Under flow the
+  mixing fraction is fitted from the roasts themselves
+  (`tools/analysis/charge_dip.py`, `phi` 0.658 at 400 g), not from roast 50.
+- **The cheapest outstanding measurement is a repeat of roast 50's *warm* arm
+  with a burst.** Only the frozen arm got one, so there is one bed reading and
+  not two, which is most of why its joint fit is under-determined. One preheat,
+  no beans consumed, no roast.
+
+**Then run the pair.** Two 400 g batches of the same lot, everything else held
 identical, one straight from the freezer and one equilibrated at room
 temperature for >= 12 h. Roast 49 is already a usable warm arm, so if only one
 batch can be spared, **make it the frozen one** and pair it against roast 49 —
@@ -1366,8 +1389,12 @@ hotter than the group's and that had to be corrected for rather than avoided.
 What has to be held fixed, and why each one:
 
 - **`greens_temp` recorded on both.** Probe the bean mass, not the air, and enter
-  it in Roast Properties. It is `0.0` on all of roasts 43-49, which is the only
-  reason any of this is inference. This is the whole point of the run.
+  it in Roast Properties. It is `0.0` on all of roasts 43-50, which is the only
+  reason any of this is inference. This is the whole point of the run, and it is
+  now the *only* thing standing between this project and a measured charge
+  temperature under flow: `charge_state.py`'s `k`, roast 48's +12.8, roast 49's
+  +15.5 and `charge_dip.py`'s `phi` all rest on roasts 43/44/46 having been at
+  −18 degC, and nothing has yet tested that.
 - **The preheat trajectory, not just CHARGE_BT.** Inlet air from
   `t in [-theta, 0]` arrives inside the mixing window, so a hotter preheat makes
   the beans look warmer. Hold the inlet flat within +-2 degC for 60 s before
@@ -1382,8 +1409,12 @@ What has to be held fixed, and why each one:
 What it measures: `k` and `C_chamber` in the mixing model, and — the part no
 existing run can give — whether the dip *shape* (depth, turning-point time, the
 recovery slope out of it) is a function of the same variable, or whether bean
-temperature moves more than one thing. `tools/analysis/charge_state.py` already
-runs the estimator and prints the band.
+temperature moves more than one thing. `tools/analysis/charge_state.py` runs the
+proxy and prints the band; `tools/analysis/charge_dip.py` now predicts the whole
+0-90 s arc from `(mass, greens temp)` and is what this run would confirm or
+break. It also carries the one open disagreement: roast 50's still-air fit wants
+a fusion enthalpy and the roasts want none, and a pair with `greens_temp`
+actually recorded is what separates `phi` from `h_fus`.
 
 **Expect the warm run to roast differently, and let it.** Roast 49 finished with
 a 19 s development window against roast 46's 25 s and the background's 26 s, at

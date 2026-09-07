@@ -5,6 +5,10 @@ Conventions that have bitten this project before, encoded here once:
 * The CHARGE origin is ``timex[timeindex[0]]``.  ``timeindex[0] == 0`` is a
   *valid* index meaning "CHARGE is the first sample", not "unset" -- so the
   index is never tested for truthiness.  ``profile_003`` relies on this.
+  **Unset is ``-1``**, and that is not a Python index to be taken quietly:
+  ``timex[-1]`` is the *last* sample and would silently re-base the whole
+  recording onto a negative clock.  A recording with no CHARGE mark (roast 50)
+  keeps its own clock, ``t = timex``, and reports ``has_charge = False``.
 * Special-event values decode as ``(v - 1) * 10``.
 * The ``.alog`` stamps the PID settings at *save* time, not roast time, so
   ``pidKi`` and friends here are advisory only.
@@ -39,10 +43,13 @@ class Profile:
     et: np.ndarray
     extras: dict = field(default_factory=dict)   # name -> (t, y), also CHARGE-based
     marks: dict = field(default_factory=dict)    # e.g. {"DRYe": 194.6}
+    has_charge: bool = True                      # False when timeindex[0] == -1
 
     @property
     def charge_epoch(self) -> float:
         """Unix seconds at CHARGE."""
+        if not self.has_charge:
+            raise RuntimeError(f"{self.path} has no CHARGE mark")
         return self.raw["roastepoch"] + self.raw["timex"][self.raw["timeindex"][0]]
 
     def bt_at(self, t):
@@ -70,7 +77,7 @@ class Profile:
         which is ``etypes[2] == 'T_inlet'`` in this configuration.
         """
         r = self.raw
-        t0 = r["timex"][r["timeindex"][0]]
+        t0 = r["timex"][r["timeindex"][0]] if self.has_charge else 0.0
         out = []
         for idx, typ, val in zip(r["specialevents"], r["specialeventstype"],
                                  r["specialeventsvalue"]):
@@ -86,7 +93,8 @@ def load_profile(path: str) -> Profile:
 
     timex = np.asarray(raw["timex"], dtype=float)
     ti = raw["timeindex"]
-    t0 = timex[ti[0]]                       # index 0 is valid -- see module docstring
+    has_charge = ti[0] >= 0                 # 0 is valid, -1 is unset -- see docstring
+    t0 = timex[ti[0]] if has_charge else 0.0
     t = timex - t0
 
     prof = Profile(
@@ -95,19 +103,28 @@ def load_profile(path: str) -> Profile:
         t=t,
         bt=np.asarray(raw["temp2"], dtype=float),
         et=np.asarray(raw["temp1"], dtype=float),
+        has_charge=has_charge,
     )
 
-    for name, xs, ys in zip(raw.get("extraname1", []),
-                            raw.get("extratimex", []),
-                            raw.get("extratemp1", [])):
-        prof.extras[name] = (np.asarray(xs, dtype=float) - t0,
-                             np.asarray(ys, dtype=float))
+    # Both channels of every extra device.  Channel 2 carries `amb` and -- since
+    # v0.19.0 -- `HT`, the applied heat percent, which three tools were each
+    # reaching into `extratemp2` for by hand.  The two channels never share a
+    # name in this project's configurations, so one flat dict is safe.
+    for key, tkey in (("extraname1", "extratemp1"), ("extraname2", "extratemp2")):
+        for name, xs, ys in zip(raw.get(key, []),
+                                raw.get("extratimex", []),
+                                raw.get(tkey, [])):
+            if not name:
+                continue
+            prof.extras.setdefault(name, (np.asarray(xs, dtype=float) - t0,
+                                          np.asarray(ys, dtype=float)))
 
     for k, name in enumerate(TIMEINDEX_NAMES):
-        if k == 0 or ti[k] == 0:
+        if k == 0 or ti[k] <= 0:
             continue
         prof.marks[name] = float(timex[ti[k]] - t0)
-    prof.marks["CHARGE"] = 0.0
+    if has_charge:
+        prof.marks["CHARGE"] = 0.0
     return prof
 
 

@@ -3504,3 +3504,178 @@ and all at different BT, so gain and lag are confounded with where in the roast
 they were taken. That is a characterisation-run design change, not a new run to
 schedule now: `kf = 0` closed the standing reason for those runs and this does
 not reopen it.
+
+### Roast 50 (2026-09-06, 20:27) — the charge-thermal test, and what a still-air probe cannot see
+
+Not a roast. Two cycles of *preheat the empty chamber to BT 130, cut the heat and
+the fan together with the cooldown guard disabled, tip 400 g in, and watch BT for
+150 s* — arm 1 at room temperature, arm 2 straight out of the freezer. The
+operator's own numbers: the freezer is a real **−18 degC** and the room was
+**about 29 degC**; both charges were **400 g**. `greens_temp` is `0.0` for the
+fifth run running, which is why those had to be supplied by hand.
+
+The two preheat end-states are as close to identical as this machine gets — BT
+129.8/129.7, inlet 140.4/140.8, heat 44-46%/43-46% — which is what makes the pair
+worth anything. Tools: `tools/analysis/charge_thermal.py` (the fit and the
+identifiability report) and `tools/analysis/charge_dip.py` (the predictor built
+on top of it).
+
+| | arm 1, warm | arm 2, frozen |
+|---|---|---|
+| cut | 5:37.6 | 11:51.6 |
+| BT minimum | **45.6 degC at +150 s** | **19.5 degC at +145 s** |
+| mixing burst | none | **fan 64 over +135.4 .. +144.4 s** |
+
+**The chamber was empty for both preheats**, so each cycle is self-contained: the
+reheat from 65 to 129 degC in 20 s at inlet ~260 is three times faster than
+`plant_roast46.json` allows with 400 g in the chamber, so arm 1's beans came out
+before arm 2 went in.
+
+#### The headline is a negative result, and it is the answer to the question the run asked
+
+**The still-air decay does not measure the charge temperature.** Left free, the
+joint fit puts the *room-temperature* arm at **−2.2 degC** and the freezer arm at
+its **−45 degC bound**, and buys a **16 kJ/K** chamber to pay for it. That fit is
+*better* than the one with the temperatures held at their measured values —
+rms 1.64 against 2.21 — on residuals whose effective sample size
+(`plantfit.neff`) is **0.3 to 1.1 per arm**. So the residual gap is not evidence
+of anything, and what settles it is identifiability: `T_b0` trades against
+`beta`, `rho` and `tau_p` freely enough that the estimator will spend 30 degC of
+charge temperature to buy a fraction of a degree of fit.
+
+**The cause is structural and the operator named it** (2026-09-06): the preheated
+chamber holds a lot of heat and the expansion zone the BT probe sits in is
+narrow. In still air the probe is therefore an instrument pointed at the
+*chamber*, not at the beans — the fit puts **`beta` 0.34** of its coupling onto
+the walls with a **36 s** time constant, and those two are the only parameters
+stable across every configuration tried.
+
+**`C_chamber` is not identified either**, which is what the run was designed to
+calibrate. `rho = C_w/C_bed` walks to whatever bound it is given — 29.7 against a
+bound of 30 — *even with the charge temperatures held at their measured values*,
+and `c_b` goes to a bound with it. So roast 50 does **not** supply the
+`C_chamber` in `charge_state.py`'s mixing model, and nothing downstream should
+pretend it does.
+
+#### The nine-second burst is the measurement that does work
+
+Arm 2 got a fan-64 burst at +135 s and arm 1 did not. Across it **BT falls
+23.5 → 19.5 degC in 9 s** and flattens one second after the fan stops. Two things
+follow:
+
+- **3.9 degC of still-air bias**, removed by nine seconds of circulation. That is
+  the probe's wall coupling being switched off, measured rather than fitted.
+- **The trough is the bean bed, near enough directly.** The air being drawn in is
+  the room at 29 degC and BT went to 19.5 — *below the inflow*. Nothing in that
+  chamber but the bean bed is colder than the air entering it.
+
+So the logistical answer is: **charge, wait, then a short burst, and read the
+trough.** The wait on its own does not work, and the reason it does not is the
+narrow expansion zone. It also means the two arms are **not** a like-for-like
+pair as recorded — only one of them has a bed measurement, which is a large part
+of why the joint fit is under-determined. **The cheap follow-up is to repeat the
+warm arm with a burst**; it costs one preheat and no beans that are not reusable.
+
+#### Three more things the recording measures outright, with no model in the path
+
+**The plenum decouples from the bed with no flow.** Inlet in the frozen arm runs
+**4-5 degC warmer** than the warm arm at +60/+90/+120 s (103.2/99.0/95.6 against
+98.2/94.0/91.0) *despite* a 47 degC colder charge. With the fan off, the bean
+charge never reaches the inlet RTD at all.
+
+**The machine's own store decays with a ~510-557 s time constant**, fitted to the
+Inlet channel from +25 s (before that it is the RTD's own dynamics, not the
+reservoir). `charge_thermal.py` uses that as a measured boundary condition rather
+than a fitted node — a three-node model with no source matches 0-100 s and then
+fails twice over, flattening where the data keeps falling and unable to rebound
+at all (+4.7 and +6.1 degC at the minima, −5.7 and −8.7 at +210 s).
+
+**The frozen arm's plenum artefact is why the reservoir is fitted rather than
+read raw**: the burst takes the Inlet RTD 94 → 57 degC and back, which is the
+sensor and not the store, and reading the channel raw shortens the fitted time
+constant on that arm alone from 557 s to 364 s.
+
+#### Bypassing the cooldown guard: benign here, and the limit is worth stating
+
+- Inlet falls **140 → 97 degC in about 4 s** as forced convection is lost, then
+  **soaks back to only 109-111 degC** at +12-18 s — **30 degC below the running
+  setpoint** — before decaying. There is no excursion anywhere in the trace.
+- **The interlock held.** Heat was 0 from 1.5 s after the fan cut in arm 1 and
+  never came on at all in arm 2.
+- **One 0.5 s sample of `HT 50` at 5:38.6**, and it is not a firmware fault. The
+  operator sent inlet-off (`SV` 0), Artisan's PID re-sent `INLET 140.1` on its
+  next tick, the inner loop re-engaged on feedforward while the fan was still at
+  60, and `interlockCap()` zeroed it the moment the fan reached 0. **Procedure:
+  kill the outer PID before the inlet**, which is what arm 2 did — its `SV` stays
+  0 for the whole decay. About 375 J, thermally nothing.
+- **The `COOL` guard is correctly sized for exactly this soak** and would not
+  have released for over four minutes (`COOL_FAN_OFF_C` is 70 degC and the inlet
+  is still at 82 degC at +220 s), which is why the test had to disable it. That
+  is not an argument for leaving it disabled.
+- **The limit:** this was a cut from a *preheat* state — 140 degC inlet, 45%
+  duty — and the element itself is unmeasured; the Inlet RTD is a downstream
+  proxy. It says nothing about a cut from mid-roast at 250 degC inlet and high
+  duty.
+
+#### What the dip predictor took from it, and what it took from the roasts instead
+
+`charge_dip.py` puts a mixing term in front of the existing plant card:
+
+```
+mixing:  dBT/dt = -(dT_mix / tau_mix) * exp(-t / tau_mix)
+plant:   dBT/dt =  a*(Inlet(t - theta) - BT) + loss(t)
+dT_mix = phi*(BT_c - T_bean) + fusion
+```
+
+**Mixing is a finite quantity of heat, not a setpoint, and getting that wrong is
+worth 40 degC.** Written the obvious way — `dBT/dt = -(BT - BT_mix)/tau` — the
+charge becomes a permanent attractor that goes on fighting the heater for the
+whole roast: the model flatlines near 62 degC while roasts 43 and 46 turn at
+58 degC at 23 s and are back through 100 degC by 60 s. As a decaying *rate* it
+integrates to exactly `dT_mix` and then stops, and the plant takes the roast
+back — turning point **23-25 s** against a measured 22-23.5, dip depth within
+about 1.5 degC.
+
+**`phi` is fitted to the roasts, not to roast 50**: 0-40 s of measured BT on
+roasts 43/44/46 at the assumed −18 degC gives **`phi`(400 g) = 0.658,
+`tau_mix` = 12.2 s, rms 3.08 degC**, hence `C_chamber` 353 J/K and a capacity
+ratio of 0.52. Held out, roast 48 reads rms 6.19 and roast 49 rms 3.11 — but
+their charge temperatures came from the same proxy and the same −18 degC
+assumption, so they test the *shape* and not the physics.
+
+**`charge_state.py`'s `k` is not `phi`, and this cost a wrong answer once.**
+`4k = 0.409` is the drop measured at `+theta`; it already folds in how far the
+mix has got by 13.5 s *and* the heat the plant put back over the same window.
+Equating it with the asymptotic mixing fraction under-predicts every charge drop
+by **7-10 degC**. No change is needed in `charge_state.py` — the error was in
+reading its constant as a physical fraction.
+
+#### The one disagreement in the set: the fusion enthalpy
+
+A frozen 400 g charge at 10.5% moisture carries up to **14 kJ** of fusion
+enthalpy on top of about 26 kJ of sensible heat, and how much of that water is
+freezable at all is a real question — bound water in a cellular matrix does not
+all freeze.
+
+- **Roast 50 says some is needed and cannot say how much.** `r_fus = 0` costs
+  **20%** of residual, so the frozen arm does want extra cold-side thermal mass;
+  but 5 to 25 degC-equivalent all cost **under 3%**, and the point estimate comes
+  out **above 35 J/g**, which is *all* the fusion enthalpy such a charge has.
+- **The roasts say none.** On a frozen-only calibration group `phi` and `h_fus`
+  are the same parameter — the calibration rms is **3.08 at every value from 0 to
+  35 J/g**, exactly absorbed. The only lever is the held-out warm pair, and it
+  gets monotonically worse as `h_fus` rises: roast 48 from **6.19 to 10.22**,
+  roast 49 from **3.11 to 9.45**.
+
+`charge_dip.py` defaults to **0** and follows the roasts, with `--fusion`
+printing the table. The disagreement is real, unresolved, and cannot be closed by
+either dataset in hand.
+
+#### What is still resting on one assumption
+
+**Nothing in this project has yet measured a charge temperature under flow.** The
+whole chain — `charge_state.py`'s `k`, roast 48's +12.8, roast 49's +15.5, and
+now `charge_dip.py`'s `phi` — rests on roasts 43/44/46 having been at −18 degC.
+Roast 50 could have broken that dependency and does not, because it has no flow.
+The fix has been in the runbook since 2026-09-05 and costs nothing: **record
+`greens_temp`.**
