@@ -10,138 +10,103 @@
 > when a plan section turns into a record of what happened rather than a
 > statement of what to do, move it to *history*.
 
-## HANDOFF — roast 54: the same run again, with the gate actually armed (2026-09-07)
+## HANDOFF — the dip model's joint refit, then roast 55 (2026-09-07)
 
 **If you are a fresh context, this section is the whole job.** Everything below it
 is background.
 
-### What roast 53 settled, and why it failed anyway
+### What roast 54 settled
 
-Roast 53 ran the charge gate for the first time. **Three of the four checks still
-failed, and none of it was the tuning or the operator.** Two config defects, both
-now fixed in `artisan/airRoaster_cascadePID_chargetemp.aset`; full record in
-state-history.md § Roast 53.
+The charge gate worked. **Three of the four checks pass and the fourth is no
+longer a loop problem** — full record in state-history.md § Roast 54.
 
-1. **`pidOnCHARGE=true` cancelled the gate.** `markCharge` calls `pidOn()` when
-   that flag is set and the PID is not already active (canvas.py:14656), so the
-   `CHARGE` button's `PID OFF` was undone by the CHARGE mark itself. The gate held
-   from −6.5 s to +1.0 s — entirely before the beans reach the sensor. The
-   `CHARGE+15 s → PID ON` alarm fired into an already-running loop. **The button
-   was pressed correctly**: `pidOn()` sets `slider_force_move` and the log carries
-   its signature, a `T_inlet -> 142` event at +1.0 s repeating a value that had
-   stood since −26.5 s.
-2. **The kick is the lookahead, not the pre-CHARGE frozen target.**
-   `svLookahead = 3` is ignored before CHARGE and takes effect on the sample
-   CHARGE is marked, aiming 3 s ahead of a bed falling 6 degC/s. The output
-   floors, `_back_calculate_integral` converts the clamped excess into stored
-   integral (`Iterm` 1.2 → 37.8 in two samples), and `Ki = 0.07` cannot unwind it.
-   The port reproduces roast 53's SV to **rms 2.1 degC over 0-30 s, peak 238
-   against a measured 238**. Now `svLookahead = 0` by default, which removes the
-   window instead of racing the `LA 0` alarm — and makes the gate robust to a
-   missed `CHARGE` press.
+| check | roast 52 | roast 53 | **roast 54** | pass |
+|---|---|---|---|---|
+| peak SV, first minute | 275 | 238 | **193** | under ~200 — pass |
+| seconds of heat at 100% | 23.5 | 14.0 | **3.0** | 0 — near |
+| seconds on the 140 floor (`SV <= 141.5`) | 42.0 | 46.9 | **36.0** | under ~10 — **fail** |
+| worst BT error vs background, 30-90 s | +21.3 at 58 s | +14.1 at 56 s | **+5.5 at 63 s** | single digits — pass |
 
-On the replay, either fix alone drops the peak SV from 238 to **174-179**.
+Time-to-BT 150/180/196.5 at **−1.5 / +0.2 / −2.5 s**, the tightest of the series.
+**From 90 s to DROP the worst absolute error is 1.8 degC.** The fan step fired at
+120.0 s and cost nothing. The PID port reproduces the roast to rms 0.74 degC over
+120-240 s with peak `Iterm` 17.3 against roast 53's 44.1: **there is no windup
+left and nothing to tune.**
 
-**The fan step worked exactly as specified** — alarm-fired at 120.0 s, error runs
-monotonically +1.8 → 0.0 straight through it — and tracking from 90 s on was the
-best yet: |error| ≤ 0.3 degC from 140 s to DRY END, time-to-BT 150/180/196.5 at
-**+0.4 / +3.2 / −2.0 s**. Do not touch either.
+The remaining failure is one event, and it is the target's: the gate held, BT fell
+**8.5 degC below the generated background** by 16 s, the loop was switched on into
+that error, drove 193, and then spent 28 s on the floor paying for the overshoot.
 
-### The run to queue
+### The job: one joint refit of the dip model
 
-**Reload the `.aset` in Artisan before the roast** — the fixes are file settings,
-not commands, so a running Artisan still holds the old ones.
+Roast 54 is the first roast that satisfies `charge_dip.py`'s own assumption —
+inlet held at its pre-charge value through the dip, `dekick_tp.py` removing only
+0.3 degC. **The free dip is measured: TP 55.6 degC at 23.0 s** (free window is
+0-29 s; the PID ON at 15.5 s cannot reach BT before 15.5 + theta). The model
+generates **62.3 at 29 s** — 6.7 degC too shallow and 6 s too late.
 
-400 g of the same −12 degC lot, config
-`artisan/airRoaster_cascadePID_chargetemp.aset`, background
-`artisan/profile_400g_m12C.alog` (regenerate with
+**The two known defects push the same way, which contradicts what the roast-53
+handoff said.** Adding the pour ramp at fixed `tau_mix` does move the turning
+point later; in a *joint* fit it lets `tau_mix` shorten and the turning point moves
+**earlier**. Fitting `(dT_mix, tau_mix)` to roast 54's 0-29 s at fixed `w_c`:
+
+| `w_c` | `dT_mix` | `tau_mix` | rms 0-29 s | model TP |
+|---|---|---|---|---|
+| 0 s (today) | 107.6 | 13.70 | 2.83 | 53.1 at 29.0 s |
+| 2 s | 100.8 | 10.54 | 1.12 | 54.9 at 28.0 s |
+| **3 s** | **98.1** | **9.39** | **1.04** | **55.5 at 26.5 s** |
+| 5 s | 93.8 | 7.40 | 2.24 | 56.3 at 23.5 s |
+
+Measured 55.6 at 23.0 s. Without a ramp the fit hits `tau_mix = 13.7` and still
+cannot turn before 29 s — the bare exponential cannot be both that deep and that
+early.
+
+So: **port `charge_thermal.py`'s `w_c` into `charge_dip.dip()` and refit
+`(w_c, phi400, tau_mix)` together**, then re-run the 43/44/46 calibration, which
+currently absorbs the missing ramp. Do not fix the pour ramp and the turning
+point as two separate changes.
+
+**Depth and charge state are not separable from one roast.** Refitting `T_bean`
+alone gives −25.8 degC and matches the depth to 0.8 degC while leaving the phase
+at 30 s; `charge_state.py` independently reads roast 54 at **−24.1 degC** against
+an entered −12.0 (roast 53: −19.3, roast 51: −15.7, all three entered −12.0).
+Whatever the refit does to `phi`, it is fitting depth against an unknown charge
+state — say so in the record, and do not treat the new `phi` as physics.
+
+### Then roast 55
+
+400 g of the same lot, same config, **new background from the refitted model**.
+Regenerate with
 `tools/make_charge_background.py --mass 400 --greens-temp <measured> --charge-bt 130.2`
-if the measured charge temperature differs). Preheat fan 58 to equilibrium, press
-the **`CHARGE`** button as you tip, and let the alarms do the rest. Record
-`greens_temp` **and `moisture_greens`** in Roast Properties — roast 53 has
-`moisture_greens = 0.0`, i.e. not entered.
+— note that `--check` **rewrites the background file**, so run it before the roast
+and not after. Record `greens_temp` **and `moisture_greens`**; `moisture_greens`
+is `0.0` for the second roast running.
 
-### Run these, in this order
+Expected on a correct dip model: the 30-90 s error and the floor seconds both
+collapse, because they are the same event. Nothing else should move — do not
+retune `pidKp` 3.0 / `pidKi` 0.07 / `svLookahead` 0 -> 6 at 90 s, and do not touch
+the fan step.
 
-```bash
-python3 tools/analysis/charge_state.py 43 44 45 46 48 49 50 51 52 53 54
-.venv/bin/python tools/analysis/charge_dip.py --fusion
-.venv/bin/python tools/make_charge_background.py --mass 400 --greens-temp -12 --charge-bt 130.2 --check
-```
+### Checking the gate in the log
 
-Then the four numbers, all against `profile_400g_m12C.alog` (`SV` and `HT` are
-extra channels; `roastdata.load_profile` returns them in `.extras`):
+**The roast-53 handoff's check was wrong** and roast 54 disproved it. `markCharge`
+re-records every visible non-zero slider at CHARGE (canvas.py:14694-14709), and
+`EventRecordAction`'s duplicate guard (canvas.py:15854-15856) compares only against
+the single most recent event *of any type* — so the `Air -> 64` the CHARGE button
+fires a few seconds earlier reliably breaks the guard and a duplicate `T_inlet`
+event lands at +1.0 s on **every** roast, gated or not. That duplicate is not
+`pidOn()`'s signature and proves nothing.
 
-| check | roast 52 | roast 53 | pass |
-|---|---|---|---|
-| peak SV in the first minute | 275 | **238** | **under ~200** (the port says 174-181) |
-| seconds of heat at 100% | 23.4 | **13.9** | **0** |
-| seconds on the 140 floor | 38.6 | **46.9** | **under ~10** |
-| worst BT error vs background, 30-90 s | +21.3 at 58 s | **+14.1 at 56 s** | **single digits** |
-
-(All three roasts recomputed on one 0.5 s grid, so these differ from the figures
-in the roast-53 handoff by up to 1.5 s.) Time-to-BT 150/180/196.5 should stay
-inside roughly ±3 s, and the fan step at 2:00 should still cost nothing.
-
-**First thing to check in the log**: the `T_inlet` special events over 0-15 s
-should now be *empty*. If any appear, the gate is still not arming and the cause
-is upstream of the config — check that Artisan actually reloaded the `.aset`.
-
-**Do not retune `pidKp` 3.0 / `pidKi` 0.07 / the lookahead switch.** Four roasts
-now put time-to-BT inside ±3.2 s and every problem found since roast 46 has been
-the target or an Artisan mechanism, never the gains.
-
-### Do not fix the dip model before roast 54 — run it on the background unchanged
-
-The two known defects both stand, and **neither should be touched first.** Roast
-54 is the run that measures what to fix them to.
-
-**The turning point looks 9 s late, and about half of that is the loop.** Roast 53
-measured **62.4 degC at 20 s** against the background's **62.06 at 29 s**.
-But `charge_dip.py` builds the dip with the **inlet held at its pre-charge
-value**, and no roast in the series has satisfied that — the loop railed
-`T_inlet` to 240-300 through every dip. `tools/analysis/dekick_tp.py` backs that
-excess out with the plant card:
-
-| roast | peak inlet 0-40 s | measured TP | de-kicked TP |
-|---|---|---|---|
-| 50 (warm) | 221 | 80.2 degC at 21.8 s | 77.5 at **32.0 s** |
-| 51 | 252 | 63.8 degC at 21.0 s | 62.5 at **24.0 s** |
-| 53 | 240 | 62.4 degC at 20.0 s | 61.1 at **23.5 s** |
-| the model | — | — | 62.1 at **29.0 s** |
-
-So the residual is **~5 s, not 9**, and the depth is right to ~1 degC. That is a
-first-order estimate on a `theta` band of 13 +5/−1 s, not a measurement — but it
-is enough to say that refitting now would fit the model to the overshoot the loop
-itself caused, which is the circularity `make_charge_background.py --check`
-already guards against by scoring only 0-18 s. **Roast 54 with a working gate is
-the first roast where the inlet is actually held near 140 through the dip, which
-is the assumption the model is built on.**
-
-**The pour ramp is entirely inside the gate.** `charge_dip.dip()` starts its
-mixing exponential at `t = 0` with no pour ramp, so the generated curve falls too
-fast early — roast 53 measured 117.2 at 3 s against a background 110.7, roast 52
-was ~10 degC out at 4 s — and it closes by 10 s. With the gate armed the loop
-takes no action over 0-15 s, so that stretch is a *scoring reference* and not a
-setpoint: fixing it changes nothing the machine does. `charge_thermal.py` already
-has the ramp (`w_c`) and `charge_dip.py` does not; **~2 s of pour ramp is the
-fix**, and it can wait.
-
-**And the two push opposite ways.** Delaying the mixing exponential's start moves
-the turning point ~1 s *later*, widening the phase gap rather than closing it. So
-fix them together, against roast 54's dip, rather than one at a time now.
-
-Running roast 54 on the background unchanged also makes it a clean A/B against
-roast 53 — same lot, same mass, same background, one variable moved. Even on the
-current background the replay puts the gated loop's peak at **174**, inside the
-145-181 the port calls correct.
+**The check that works**: `T_inlet` must carry *nothing* between +1 s and the
+`PID ON` alarm at +15.5 s. Roast 54 is clean by that test; roast 53 ramped to 238.
 
 ### Where the strategy stands
 
 Settled and not worth re-opening: `k = 0.1056` measured from roasts 50/51 across a
 37 degC span to 0.34%; `h_fus` under ~1 J/g; the plant has no fan term; the
 13.5 s is total apparent lag rather than transport; the preheat equilibrium is
-fan 58 / BT 130.2 / Temp_Drive 10.25.
+fan 58 / BT 130.2 / Temp_Drive 10.25. The charge gate and the alarm-fired fan step
+are now both proven and should be left alone.
 
 ### The mass term still disagrees with `phi(mass)`
 
@@ -158,22 +123,22 @@ model predicts roast 52 should read **+3.4%**, i.e. `k = 0.1084`. It reads
 **−2.2%**, so the model is **5.4% out** over a 5% change in mass, and in the
 **wrong direction**. Two caveats: `n = 1`, and both roasts carry
 `greens_temp = −12.0` exactly, which may be one measurement entered twice. Roast
-53 does not settle it: at 400 g it adds no mass leverage, and `charge_state.py`
-puts its inferred `T_bean` at −19.3 degC, inside the 400 g calibration band and
-so consistent with roast 51. **Treat any background generated away
-from 400 g as unvalidated** and generate at the mass actually being roasted rather
-than scaling. Resolving it needs a deliberate mass pair at one charge temperature.
+54 does not settle it either — it is 400 g, and its inferred `T_bean` of −24.1
+degC is 4.8 degC colder than roast 53's on identical entered greens temperature,
+which is itself a reason to distrust the entered value rather than the model.
+**Treat any background generated away from 400 g as unvalidated** and generate at
+the mass actually being roasted rather than scaling. Resolving it needs a
+deliberate mass pair at one charge temperature.
 
-Open, in order: (1) roast 54's four checks; (2) then, and only then, the dip
-model's turning-point phase and the pour ramp **together**; (2b) the mass term;
-(3) whether charge state reaches
-the cup, which needs a *warm* charge on the same configuration dropped at the same
-BT to the tenth (roasts 50/51 differed 54.5 s vs 45.0 s above BT 196.5 but also
-dropped 1.1 degC apart, which spoiled it); (4) **step 9, `INLET TRIM`** —
-deliberately deferred, not dropped. Its tracking case is now marginal (four roasts
-inside ±3.2 s) and what survives is robustness: it stops the outer integrator
-being a ramp-follower and decouples the loop from the profile's shape.
-**Re-decide it honestly after roast 54.**
+Open, in order: (1) the dip model's joint refit; (2) roast 55 against it; (3) the
+mass term; (4) whether charge state reaches the cup, which needs a *warm* charge
+on the same configuration dropped at the same BT to the tenth (roasts 50/51
+differed 54.5 s vs 45.0 s above BT 196.5 but also dropped 1.1 degC apart, which
+spoiled it); (5) **step 9, `INLET TRIM`** — deliberately deferred, not dropped.
+Its tracking case is now **weaker still**: roast 54 held |error| under 1.8 degC
+from 90 s to DROP and put time-to-BT inside ±2.5 s. What survives is robustness —
+it stops the outer integrator being a ramp-follower and decouples the loop from
+the profile's shape. **Re-decide it honestly after roast 55.**
 
 ## Development framework (read this first if you are new here)
 

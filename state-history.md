@@ -3977,3 +3977,153 @@ The two defects also push opposite ways: ~2 s of pour ramp delays the mixing
 exponential's start and moves the turning point ~1 s *later*, widening the phase
 gap. Fix them together, after roast 54, and run roast 54 on the background
 unchanged — which also makes it a clean A/B against roast 53.
+
+### Roast 54 (2026-09-07, 14:09) — the gate held, and the free dip is finally measured
+
+400 g of the same Kenya lot at `greens_temp = -12.0`, same config
+(`airRoaster_cascadePID_chargetemp.aset` with `pidOnCHARGE=false` and
+`svLookahead=0`), same background (`profile_400g_m12C.alog`, unchanged) — one
+variable moved against roast 53. **The gate held, three of the four checks pass,
+and the fourth is no longer a loop problem.**
+
+| check | roast 51 | roast 52 | roast 53 | **roast 54** | pass |
+|---|---|---|---|---|---|
+| peak SV, first minute | 300 | 275 | 238 | **193** | under ~200 — **pass** |
+| seconds of heat at 100% | 25.5 | 23.5 | 14.0 | **3.0** | 0 — **near** |
+| seconds on the 140 floor | 29.0 | 42.0 | 46.9 | **36.0** | under ~10 — **fail** |
+| worst BT error vs background, 30-90 s | +19.2 at 56 s | +21.3 at 58 s | +14.1 at 56 s | **+5.5 at 63 s** | single digits — **pass** |
+
+(The floor row counts `SV <= 141.5`, which is the definition the earlier rows
+were computed with. On a strict `SV <= 140.5` the same four roasts read
+25.0 / 38.5 / 41.0 / **28.0** s.)
+
+Time-to-BT 150/180/196.5 came in at **−1.5 / +0.2 / −2.5 s**, the tightest of the
+series; DRYe −3.0 s, FCs −3.5 s, DROP 424.5 s against the background's 425.0 at
+BT 200.1. **From 90 s to DROP the worst absolute error is 1.8 degC** (roast 53:
+7.3). The fan step fired at exactly 120.0 s and again cost nothing — error runs
+−1.7, −1.7, −1.8, −1.6 across it.
+
+#### The gate
+
+`T_inlet` carries **exactly one event between CHARGE and 15.5 s**, and it is not
+a command (see below). The next event is `188` at **15.5 s**, the
+`CHARGE+15 s -> PID ON` alarm. Inlet sat at 143-145 from CHARGE to 16 s against
+roast 53's climb to 230 by 14 s. Every alarm fired as configured: `LA 0` at +1 s,
+`LA 6` at +90 s (which is the SV step 147 -> 171 at 91 s, present in roast 53
+too), `PID ON` at +15 s, `Fan 60` at +120 s.
+
+The PID port reproduces the whole roast: driven by roast 54's measured BT with
+the loop held off to 15.5 s, `svLookahead` 0 then 6 at 90 s,
+
+```
+   rms(replay - measured SV)   0-30 s  7.4    0-60 s  5.4    120-240 s  0.74 degC
+   peak SV  replay 189   measured 193      max Iterm 0-60 s  17.3  (roast 53: 44.1)
+```
+
+**There is no windup left.** The two remaining defects are both the target, not
+the loop.
+
+#### The `T_inlet` duplicate at CHARGE+1 s is `markCharge`, not `pidOn()` — the roast-53 record was wrong about this
+
+Roast 54 carries a `T_inlet -> 143` event at +1.0 s repeating the 143 that had
+stood since −9.5 s — the same signature the roast-53 section above attributes to
+`pidOn()` and calls proof that the PID was off. **That reading is wrong**, and
+roast 54 disproves it directly: `pidOnCHARGE` is `false` here and the PID is
+demonstrably off through 15.5 s, yet the duplicate appears anyway.
+
+The real source is `markCharge` itself. After setting `timeindex[0]` it walks all
+four sliders and re-records every visible non-zero one
+(**canvas.py:14694-14709**, "mark active slider values that are not zero").
+`EventRecordAction`'s duplicate guard (**canvas.py:15854-15856**) compares only
+against `specialeventstype[-1]` / `specialeventsvalue[-1]` — *the single most
+recent event of any type* — so the `Air -> 64` the CHARGE button fires a few
+seconds earlier reliably breaks the guard for `T_inlet`. All four roasts show the
+pattern:
+
+| roast | last event before CHARGE | at +1.0 s |
+|---|---|---|
+| 51 | Air 64 at −7.0 s | T_inlet 146 |
+| 52 | T_inlet 141 at −3.5 s | Air 64 **and** T_inlet 147 |
+| 53 | Air 64 at −6.5 s | T_inlet 142 |
+| 54 | Air 64 at −4.5 s | T_inlet 143 |
+
+The `pidOnCHARGE` diagnosis stands on its own — the flag was `true` in the file
+and canvas.py:14656 calls `pidOn()` — but the log signature cited for it was
+misread, and the handoff's "first thing to check: the events over 0-15 s should
+be empty" is not achievable. **The check that actually works is that there is
+nothing between +1 s and the PID ON alarm.**
+
+#### The free dip, measured for the first time
+
+Roast 54 is the first roast in the series that satisfies `charge_dip.py`'s own
+assumption — inlet held at its pre-charge value through the dip. `dekick_tp.py`
+now has almost nothing to remove:
+
+| roast | peak inlet 0-40 s | measured TP | de-kicked TP | kick added by TP |
+|---|---|---|---|---|
+| 51 | 252 | 63.8 at 21.0 s | 62.5 at 24.0 s | 0.7 degC |
+| 53 | 240 | 62.4 at 20.0 s | 61.1 at 23.5 s | 0.5 degC |
+| **54** | **204** | **55.6 at 23.0 s** | **55.2 at 24.5 s** | **0.3 degC** |
+| the model | — | — | 62.1 at 29.0 s | — |
+
+The free window runs 0 to ~29 s: the PID ON at 15.5 s cannot reach BT before
+15.5 + theta = 29 s, so the turning point at 23.0 s is genuinely free.
+
+**Against that window the model is wrong two ways, and the de-kicked estimates
+above understated both.** Measured TP 55.6 at 23.0 s against 62.3 at 29 s: the
+dip is **6.7 degC deeper and 6 s earlier** than generated. The depth alone is
+absorbable by charge state — refitting `T_bean` over 6-30 s gives −25.8 degC and
+matches the depth to 0.8 degC — but that leaves the turning point at 30 s and
+makes the phase *worse*. `charge_state.py` independently reads roast 54 at
+**T_bean = −24.1 degC** (roast 53: −19.3, roast 51: −15.7, all three entered as
+−12.0), so depth and charge state are not separable from one roast.
+
+**The two known defects turn out to push the same way, not opposite ways.** The
+roast-53 section predicted that adding the pour ramp would move the turning point
+~1 s later and widen the phase gap. That is true only at fixed `dT_mix` and
+`tau_mix`; in a joint fit the ramp *lets `tau_mix` shorten*, and the turning point
+moves earlier. Fitting `(dT_mix, tau_mix)` to roast 54's free window 0-29 s at a
+range of fixed pour widths `w_c`:
+
+| `w_c` | `dT_mix` | `tau_mix` | rms 0-29 s | model TP |
+|---|---|---|---|---|
+| 0 s (today) | 107.6 | 13.70 | 2.83 | 53.1 at 29.0 s |
+| 2 s | 100.8 | 10.54 | 1.12 | 54.9 at 28.0 s |
+| **3 s** | **98.1** | **9.39** | **1.04** | **55.5 at 26.5 s** |
+| 4 s | 95.8 | 8.35 | 1.56 | 56.0 at 25.0 s |
+| 5 s | 93.8 | 7.40 | 2.24 | 56.3 at 23.5 s |
+
+Measured: 55.6 at 23.0 s. Without the ramp the fit hits `tau_mix = 13.7` and
+still cannot produce a turning point before 29 s — the single exponential is
+structurally unable to be both that deep and that early. With `w_c = 3 s` the rms
+over the whole free window falls from 2.83 to **1.04 degC** and the phase gap
+closes from 6 s to 3.5 s; `w_c = 5 s` closes the phase entirely at the cost of
+rms. So the fix is **one joint refit of `(w_c, dT_mix, tau_mix)`**, not two
+independent corrections, and the calibration roasts 43/44/46 have to be refit
+with it (their `phi` and `tau_mix` absorb the missing ramp today).
+
+#### What the remaining failure actually is
+
+The 36 s on the floor and the +5.5 degC error at 63 s are the *same* event and
+they are the model's, not the loop's. The sequence:
+
+```
+   0-16 s   gate held, inlet 143-145; BT falls to 8.5 degC BELOW the background
+  15.5 s   PID ON into a −8.5 degC error; SV 188-193, heat 100% for 2.5 s
+  23.0 s   free turning point, 55.6 degC (the background turns at 29 s, 62.1)
+  29-40 s   the 15.5 s command arrives; BT crosses the background at 38 s
+  48-76 s   SV on the floor unwinding a +5 degC overshoot
+```
+
+The loop was handed a target that is too shallow and too late, drove hard at the
+resulting −8.5 degC error, and then spent 28 s on the floor paying for it. Both
+the 100%-heat seconds (16.0-18.0 s, plus one sample at 91.5 s when `LA 6` steps
+the target) are responses to a *commanded step*, not railing: peak `Iterm` is
+17.3 against roast 53's 44.1.
+
+**Fix the dip model and this check goes with it.** There is nothing left to tune.
+
+#### Housekeeping
+
+`moisture_greens` is still `0.0` — not entered, for the second roast running.
+Weight loss 10.85% (53: 11.08, 52: 11.92, 51: 12.25).
