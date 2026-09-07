@@ -1373,7 +1373,8 @@ It did **not** deliver the `C_chamber` calibration it was run for.
   charge-temperature instrument this project has that works.
 - **The still-air arms are not interchangeable with a roast.** Under flow the
   mixing fraction is fitted from the roasts themselves
-  (`tools/analysis/charge_dip.py`, `phi` 0.658 at 400 g), not from the charge-thermal test.
+  (`tools/analysis/charge_dip.py`, `phi` 0.712 at 400 g, on the operator's
+  temperature scale), not from the charge-thermal test.
 - **The cheapest outstanding measurement is a repeat of the charge-thermal test's *warm* arm
   with a burst.** Only the frozen arm got one, so there is one bed reading and
   not two, which is most of why its joint fit is under-determined. One preheat,
@@ -1569,47 +1570,20 @@ has already displaced. It appears on every roast including the gated one. The
 `pidOnCHARGE` conclusion is unaffected — that rests on the flag's value in the
 file and on canvas.py:14656.
 
-#### The dip model's joint refit — one change, not two (2026-09-07)
+#### The dip model's joint refit — DONE 2026-09-07
 
-Roast 54 is the first roast in the series that holds the inlet at its pre-charge
-value through the dip, which is the assumption `charge_dip.dip()` is built on, so
-it is the **first measurement of the free dip**: TP **55.6 degC at 23.0 s**,
-free window 0-29 s (the `PID ON` at 15.5 s cannot reach BT before `15.5 + theta`).
-The model generates **62.3 at 29 s** — 6.7 degC too shallow and 6 s too late.
+Superseded by state-history.md § The dip model's joint refit. The ramp is in
+(`charge_dip.mix_kernel`, `w_c = 2.10 s`), the calibration group moved to the
+roasts with an *entered* greens temperature (`phi400` 0.7116, `tau_mix` 10.84),
+and the generated background's worst error against roast 54's free dip fell from
+22.6 to 2.6 degC. Two things it left behind, both live:
 
-**Fix the pour ramp and the turning point together.** The roast-53 record claimed
-they push opposite ways; that holds only at fixed `tau_mix`. In a joint fit the
-ramp lets `tau_mix` shorten and the turning point moves **earlier**. Fitting
-`(dT_mix, tau_mix)` to roast 54's free window at fixed pour width `w_c`:
-
-| `w_c` | `dT_mix` | `tau_mix` | rms 0-29 s | model TP |
-|---|---|---|---|---|
-| 0 s (today) | 107.6 | 13.70 | 2.83 | 53.1 at 29.0 s |
-| 2 s | 100.8 | 10.54 | 1.12 | 54.9 at 28.0 s |
-| **3 s** | **98.1** | **9.39** | **1.04** | **55.5 at 26.5 s** |
-| 5 s | 93.8 | 7.40 | 2.24 | 56.3 at 23.5 s |
-
-Without a ramp the fit runs `tau_mix` to 13.7 and still cannot turn before 29 s:
-the bare exponential is structurally unable to be both that deep and that early.
-
-The work:
-
-- port `charge_thermal.py`'s pour ramp (`w_c`) into `charge_dip.dip()`;
-- refit `(w_c, phi400, tau_mix)` jointly, and **re-run the 43/44/46 calibration**
-  — its `phi` and `tau_mix` currently absorb the missing ramp, so the existing
-  numbers are not a valid starting point;
-- keep `--check`'s 0-18 s acceptance window, and add roast 54 scored over its
-  **full free window 0-29 s**, which is the only such window on record.
-
-**Do not read the new `phi` as physics.** Depth and charge state are the same
-parameter here: refitting `T_bean` alone gives −25.8 degC and matches the depth
-to 0.8 degC, and `charge_state.py` independently reads roast 54 at **−24.1 degC**
-against an entered −12.0 (roast 53: −19.3, roast 51: −15.7, all entered −12.0).
-The refit fits depth against an unknown charge state; say so in the record.
-
-**Note that `make_charge_background.py --check` rewrites the background file.**
-Run it before a roast, never after one, or the profile the roast was scored
-against is gone.
+- **The turning point is still ~6 s late** and that is residual model error, not
+  the expected offset this file used to claim. It costs under 2.6 degC because
+  the minimum is flat. Do not fit it away.
+- **`phi` is depth per degC on the operator's temperature scale, not physics.**
+  Anything fitted or evaluated against a charge temperature must stay on one
+  scale; settling it needs a measured *core* temperature.
 
 #### The fan step is timed, not hand-pressed
 

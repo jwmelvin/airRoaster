@@ -4127,3 +4127,145 @@ the target) are responses to a *commanded step*, not railing: peak `Iterm` is
 
 `moisture_greens` is still `0.0` — not entered, for the second roast running.
 Weight loss 10.85% (53: 11.08, 52: 11.92, 51: 12.25).
+
+### The dip model's joint refit (2026-09-07) — a pour ramp and a scale error
+
+The job the roast-54 handoff set: port `charge_thermal.py`'s pour ramp `w_c` into
+`charge_dip.dip()` and refit `(w_c, phi400, tau_mix)` jointly, rather than fixing
+the ramp and the turning point as two changes. Done, and it found a second defect
+the handoff had not separated out.
+
+#### The ramp, and what leaving it out was costing
+
+`dip()`'s mixing rate was a bare exponential starting at `t = 0`. The charge is a
+ramp — 400 g takes a second or two to tip in — so each parcel poured at `s` mixes
+on its own `tau_mix` and the rate is the convolution of a uniform pour with the
+exponential. That has a closed form, and it is now `charge_dip.mix_kernel`:
+
+```
+g(t) = exp(-t/tau_mix) * (exp(min(t, w_c)/tau_mix) - 1) / w_c
+```
+
+It integrates to exactly 1, so the ramp changes **when** the deficit is drawn and
+never how much — the heat stays conserved, which is the property that made the
+decaying-rate formulation right in the first place. At `w_c -> 0` it collapses to
+the old `exp(-t/tau_mix)/tau_mix`.
+
+**The missing ramp was not costing the first two seconds, it was costing the
+phase.** Without it the fit has to buy the dip's depth by stretching `tau_mix`,
+and a long `tau_mix` turns late. Profiling `w_c` with `phi` and `tau_mix`
+re-optimised at each value (`charge_dip.py --ramp`):
+
+| `w_c` | `phi400` | `tau_mix` | cal rms | roast 54 TP |
+|---|---|---|---|---|
+| **0 s (the old model)** | 0.7837 | 14.86 | 2.73 | 52.2 at 30.0 s |
+| 1 s | 0.7446 | 12.55 | 1.73 | 53.9 at 30.0 s |
+| **2.1 s (shipped)** | **0.7118** | **10.84** | **1.31** | **55.3 at 28.5 s** |
+| 3 s | 0.6888 | 9.64 | 1.58 | 56.3 at 27.0 s |
+| 5 s | 0.6474 | 7.34 | 3.00 | 57.9 at 23.5 s |
+| 7 s | 0.6154 | 5.42 | 4.40 | 59.0 at 21.0 s |
+
+measured 55.6 at 23.0 s. The minimum is real and one-basined, the calibration rms
+halves, and `w_c` and `tau_mix` correlate at **−0.77** — they trade, so **read the
+band 1.5-3 s and not a fourth decimal**. The residuals are autocorrelated as
+everywhere else in this directory, so the naive standard errors (`w_c` ±0.10) are
+optimistic and are not quoted as a result.
+
+**`w_c` is identified without roast 54 at all.** The old 43/44/46 group profiled
+on its own puts the minimum at 2.8 s and drops its rms 3.08 → 1.76. The ramp is
+not something roast 54 alone asked for; it is something the whole series wanted
+and the previous fit was absorbing into `tau_mix`.
+
+`charge_thermal.py`'s card says `w_c = 0.54 s`, and that is not a contradiction
+worth resolving: that fit is no-flow and `w_c` there only scales a wall-to-bed
+coupling. Under flow the roasts want 2.1 s and say so with a clear minimum.
+
+#### The second defect: phi was on the wrong temperature scale
+
+The handoff warned that depth and charge state are not separable from one roast.
+They are worse than inseparable — they were being **mixed across two scales**,
+and that, not the ramp, is most of roast 54's 6.7 degC.
+
+`phi` was fitted on roasts 43/44/46, whose charge temperature is *assumed* at
+−18 degC because nothing was entered. `make_charge_background.py` then evaluated
+that `phi` at the operator's *entered* −12.0. Twelve degC of charge temperature
+is worth 0.07 of `phi`, so the two scales do not commute, and the generated dip
+came out shallow by exactly that product. Both branches fit the data
+(`charge_dip.py --scale`):
+
+| branch | group | `phi400` | `tau_mix` | `w_c` | rms | `dT_mix` at BT 129.8 |
+|---|---|---|---|---|---|---|
+| A | 43/44/46 at assumed −18, 54 at `charge_state.py`'s −24.1 | 0.6475 | 9.99 | 2.51 | 1.64 | 99.6 at −24.1 |
+| **B (shipped)** | **50/51/53/54 at the entered greens temperatures** | **0.7116** | **10.84** | **2.10** | **1.31** | **100.9 at −12.0** |
+
+**They ask for the same dip.** That is the whole point: the operator's
+thermometer offset cancels out of the answer as long as the number fitted on and
+the number evaluated at are read the same way. Branch B is shipped because its
+scale is the one `--greens-temp` is handed. Branch A is kept as a held-out check
+and reports a visibly different `phi` on purpose.
+
+Two independent corroborations that the entered −12.0 is not the bean's core:
+`charge_state.py` reads roast 54 at −24.1 degC, and letting `T_bean(54)` float
+in the branch-A joint fit lands it at **−23.9** — two estimators with nothing in
+common agreeing to 0.2 degC. Neither settles it, because both are anchored on the
+same −18 assumption. **`phi` is depth per degC on the operator's scale and is not
+physics**; settling it needs a charge whose *core* temperature is measured.
+
+#### The calibration group changed, and so did the fit window
+
+`CAL_RIDS` is now `50/51/53/54` — every roast carrying an entered greens
+temperature — replacing 43/44/46. Each roast is scored over its own **loop-free
+window** (`charge_dip.free_window`): `theta` seconds after that roast's inlet
+first leaves the preheat, past which the residual is the plant card replaying the
+loop's own kick. That is 15.0/16.0/18.5 s for roasts 50/51/53 and **30.0 s** for
+roast 54. Only roast 54's window reaches past its own turning point, so the
+descent is fitted by four roasts and the *turn* by one. Leave-one-out is stable:
+`phi400` 0.689-0.712, `tau_mix` 10.5-10.8, `w_c` 2.05-2.28.
+
+#### The fusion enthalpy: zero again, and now for a better reason
+
+`--fusion` used to argue from held-out warm roasts whose temperatures came from
+the same proxy. The recorded group makes the argument directly: **roast 50 is a
++25 degC charge, the only *measured* charge temperature in the entire set, and
+unfrozen**, so `h_fus` cannot touch its depth — every J/g raises its residual as
+the frozen roasts pull `phi` down. Across 0-35 J/g roast 50's rms goes
+1.18 → 4.52 while the frozen roasts improve by a tenth. `h_fus = 0` stands, still
+against `charge_thermal.py`'s still-air preference for 7-35, and the disagreement
+is still unresolved.
+
+#### What the refit fixed, and the one defect it did not
+
+Against roast 54 over its full 30 s free window, the generated background's worst
+error falls from **22.6 degC** (`profile_003`) to **2.6 degC**.
+
+**The turning point is still ~6 s late, and that is now residual error rather
+than an expected offset.** `make_charge_background.py` used to claim the opposite
+— that 27-29 s against the roasts' 21-22 s was correct because those roasts
+turned early only *because* the loop kicked. Roast 54 disproved it: the gate
+held, `dekick_tp.py` puts the loop's whole contribution to its turning point at
+**0.3 degC**, and it turned at 55.6 at 23.0 s. The generated curve turns at 55.0
+at 29 s. No value of `w_c` fixes it — a single exponential mix cannot be both
+this deep and turn this early against this plant card — and the docstring has
+been corrected to say so.
+
+It costs little because the minimum is flat, and the residual is a clean phase
+signature against roast 54:
+
+| t (s) | 5 | 10 | 15 | 20 | 23 | 25 | 30 |
+|---|---|---|---|---|---|---|---|
+| background − BT | −1.0 | +0.9 | +2.0 | +1.5 | +0.7 | −0.2 | −2.6 |
+
+The background runs ~2 degC **above** the bed through the descent and ~2.5 degC
+**below** it by 30 s. So at the `PID ON` alarm the loop sees about 2 degC of
+error where roast 54's background handed it 8.5, and by 24 s the sign has flipped
+to the direction that makes the loop back off rather than kick. The remaining gap
+is the one defect the model still has; it is not licence to fit the turning point.
+
+#### Also changed
+
+- `make_charge_background.py --check` now scores each reference roast over its
+  own free window instead of a fixed 0-18 s, and **roast 54 is a reference** —
+  the only free dip on record.
+- `--no-write` added. `--check` generates the background and *then* reports on
+  it, so running it after a roast destroys the profile that roast was scored
+  against. `--no-write` scores without touching the disk.

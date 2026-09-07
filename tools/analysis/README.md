@@ -20,7 +20,7 @@ reproduces the outer loop so tuning can be tested before it is roasted.
 | `charge_state.py` | how cold the beans were: the control-independent mixing proxy, air-corrected; **stdlib only** |
 | `charge_thermal.py` | the charge-thermal test's two no-flow charge decays. Primarily an **identifiability report**: what the still-air decay measures (the probe's weighting onto the chamber, the fan-burst bias) and what it cannot (the chamber capacity, the charge temperature). ~14 min |
 | `dekick_tp.py` | how much of a measured turning point is the loop's own kick: backs the inlet excess out of the dip with the plant card, so the dip model is not refitted against the overshoot it caused |
-| `charge_dip.py` | the charge dip from `(mass, greens temp)`: a mixing term in front of the plant card, calibrated against the roasts rather than against the charge-thermal test |
+| `charge_dip.py` | the charge dip from `(mass, greens temp)`: a mixing term (pour ramp + exponential) in front of the plant card, fitted jointly to roasts 50/51/53/54 over their loop-free windows. `--ramp` profiles `w_c`; **`--scale` is the one to read before trusting `phi`** |
 | `../make_charge_background.py` | merges that dip into a background's first two minutes, leaving the ramp and every mark untouched |
 | `plant_roast46.json` | the plant card `tools/merge_inlet_base.py` reads: `a`, `theta` and the loss cubic, with provenance |
 | `plant_roast48.json` | roast 48's plant, **not** an authoring source (`supersedes_plant_roast46: false`); its settled content is `kf` |
@@ -47,6 +47,7 @@ the paths are at the top of `roast46_refit.py`.
 
 ```bash
 .venv/bin/python tools/analysis/charge_thermal.py --no-bootstrap --no-profile
+.venv/bin/python tools/analysis/charge_dip.py --ramp --scale
 .venv/bin/python tools/analysis/charge_dip.py --fusion --sweep
 python3 tools/analysis/roast47_ff.py --emit-card    # no venv: stdlib only
 python3 tools/analysis/roast48_ff.py --emit-card    # reads roast 47 too, for the pooled fit
@@ -57,7 +58,7 @@ python3 tools/analysis/charge_state.py              # run this after every roast
 has on the charge state, and it stops being an inference the moment `greens_temp`
 is filled in.
 
-Ten traps the code encodes so they cannot be repeated:
+Twelve traps the code encodes so they cannot be repeated:
 
 - **`timeindex[0] == -1` means CHARGE is unset, and `-1` is a legal Python
   index.** `timex[-1]` is the *last* sample, so a recording with no CHARGE mark
@@ -65,9 +66,24 @@ Ten traps the code encodes so they cannot be repeated:
   somewhere else. `load_profile` tests `>= 0` and sets `has_charge`.
 - **A proxy constant is not a physical fraction.** `charge_state.py`'s
   `4k = 0.409` is the drop measured at `+theta`; the *asymptotic* mixing
-  fraction is 0.658, because at 13.5 s the mix is incomplete and the plant is
+  fraction is 0.71, because at 13.5 s the mix is incomplete and the plant is
   already pushing back. Reading one as the other under-predicts every charge
   drop by 7-10 degC. `charge_dip.py` fits `phi` rather than reading `k`.
+- **A parameter fitted against an assumed input is on that assumption's scale,
+  and handing it a measured input is a bug.** `charge_dip.py`'s `phi` was
+  fitted on roasts whose charge temperature was *assumed* at -18 degC, then
+  evaluated by `make_charge_background.py` at the operator's *entered* -12 --
+  and 12 degC of charge temperature is worth 0.07 of `phi`, so the generated
+  dip came out 6.7 degC shallow and roast 54 fell through its own background.
+  Both scales fit the data equally well (`--scale`); only one matches the
+  number the tool is handed. Fit and evaluate on one scale, and say in the
+  card which scale that is.
+- **A missing ramp does not cost you the first two seconds, it costs you the
+  phase.** `charge_dip.py`'s mix had no pour ramp, so the fit bought the dip's
+  depth by stretching `tau_mix` to 12-15 s and then turned 6-7 s late. Adding
+  `w_c` (a uniform pour convolved with the exponential, normalised so the heat
+  is conserved) drops `tau_mix` to 10.8 and halves the residual. The two trade
+  at -0.77: read the band, not the fourth decimal.
 - **Mixing is a finite quantity of heat, not a setpoint.** Written the obvious
   way -- `dBT/dt = -(BT - BT_mix)/tau` -- the charge becomes a permanent
   attractor that fights the heater for the whole roast, and the model flatlines

@@ -10,7 +10,7 @@
 > when a plan section turns into a record of what happened rather than a
 > statement of what to do, move it to *history*.
 
-## HANDOFF — the dip model's joint refit, then roast 55 (2026-09-07)
+## HANDOFF — roast 55, against the refitted dip model (2026-09-07)
 
 **If you are a fresh context, this section is the whole job.** Everything below it
 is background.
@@ -31,61 +31,64 @@ Time-to-BT 150/180/196.5 at **−1.5 / +0.2 / −2.5 s**, the tightest of the se
 **From 90 s to DROP the worst absolute error is 1.8 degC.** The fan step fired at
 120.0 s and cost nothing. The PID port reproduces the roast to rms 0.74 degC over
 120-240 s with peak `Iterm` 17.3 against roast 53's 44.1: **there is no windup
-left and nothing to tune.**
+left and nothing to tune.** The remaining failure was one event and it was the
+target's — the gate held, BT fell **8.5 degC below the generated background**, the
+loop was switched on into that error, drove 193, and spent 28 s on the floor.
 
-The remaining failure is one event, and it is the target's: the gate held, BT fell
-**8.5 degC below the generated background** by 16 s, the loop was switched on into
-that error, drove 193, and then spent 28 s on the floor paying for the overshoot.
+### The dip model has been refitted — DONE 2026-09-07
 
-### The job: one joint refit of the dip model
+Full record in state-history.md § The dip model's joint refit. Two defects, and
+the handoff had only separated out the first:
 
-Roast 54 is the first roast that satisfies `charge_dip.py`'s own assumption —
-inlet held at its pre-charge value through the dip, `dekick_tp.py` removing only
-0.3 degC. **The free dip is measured: TP 55.6 degC at 23.0 s** (free window is
-0-29 s; the PID ON at 15.5 s cannot reach BT before 15.5 + theta). The model
-generates **62.3 at 29 s** — 6.7 degC too shallow and 6 s too late.
+1. **The pour ramp was missing.** `charge_dip.mix_kernel` now convolves a uniform
+   pour of width `w_c` with the mixing exponential, normalised so the heat is
+   conserved. Without it the fit bought the dip's depth by stretching `tau_mix`
+   to 15 s and turned 6-7 s late. `w_c = 2.10 s`, and the old 43/44/46 group
+   wanted it too (its own rms 3.08 → 1.76), so this is not roast 54's finding
+   alone.
+2. **`phi` was on the wrong temperature scale.** It was fitted against an
+   *assumed* −18 degC and evaluated at the operator's *entered* −12.0; 12 degC of
+   charge temperature is worth 0.07 of `phi`, which is most of the 6.7 degC. The
+   calibration group is now every roast with an **entered** greens temperature
+   (50/51/53/54), each scored over its own loop-free window, so the operator's
+   thermometer offset cancels.
 
-**The two known defects push the same way, which contradicts what the roast-53
-handoff said.** Adding the pour ramp at fixed `tau_mix` does move the turning
-point later; in a *joint* fit it lets `tau_mix` shorten and the turning point moves
-**earlier**. Fitting `(dT_mix, tau_mix)` to roast 54's 0-29 s at fixed `w_c`:
+Shipped: `phi400` **0.7116**, `tau_mix` **10.84 s**, `w_c` **2.10 s**, `h_fus` 0,
+rms **1.31 degC**. Against roast 54's free dip the generated background's worst
+error over 0-30 s falls from **22.6 degC to 2.6**.
 
-| `w_c` | `dT_mix` | `tau_mix` | rms 0-29 s | model TP |
-|---|---|---|---|---|
-| 0 s (today) | 107.6 | 13.70 | 2.83 | 53.1 at 29.0 s |
-| 2 s | 100.8 | 10.54 | 1.12 | 54.9 at 28.0 s |
-| **3 s** | **98.1** | **9.39** | **1.04** | **55.5 at 26.5 s** |
-| 5 s | 93.8 | 7.40 | 2.24 | 56.3 at 23.5 s |
+**The turning point is still ~6 s late** (model 55.0 at 29 s, measured 55.6 at
+23.0 s) and that is residual model error, not the expected offset
+`make_charge_background.py` used to claim. It costs under 2.6 degC because the
+minimum is flat. **Do not fit it away**, and do not read `phi` as physics — it is
+depth per degC on the operator's scale (`charge_dip.py --scale`).
 
-Measured 55.6 at 23.0 s. Without a ramp the fit hits `tau_mix = 13.7` and still
-cannot turn before 29 s — the bare exponential cannot be both that deep and that
-early.
+### The job: roast 55
 
-So: **port `charge_thermal.py`'s `w_c` into `charge_dip.dip()` and refit
-`(w_c, phi400, tau_mix)` together**, then re-run the 43/44/46 calibration, which
-currently absorbs the missing ramp. Do not fix the pour ramp and the turning
-point as two separate changes.
+400 g of the same lot, same config, **new background from the refitted model**:
 
-**Depth and charge state are not separable from one roast.** Refitting `T_bean`
-alone gives −25.8 degC and matches the depth to 0.8 degC while leaving the phase
-at 30 s; `charge_state.py` independently reads roast 54 at **−24.1 degC** against
-an entered −12.0 (roast 53: −19.3, roast 51: −15.7, all three entered −12.0).
-Whatever the refit does to `phi`, it is fitting depth against an unknown charge
-state — say so in the record, and do not treat the new `phi` as physics.
+```
+.venv/bin/python tools/make_charge_background.py \
+    --mass 400 --greens-temp <measured> --charge-bt 130.2 --check
+```
 
-### Then roast 55
+- **`--greens-temp` must be read the way roasts 50/51/53/54's were** — the same
+  thermometer, the same spot on the bag. The model is calibrated on that scale
+  and a systematic offset of `d` degC moves the dip by `0.71*d`.
+- **`--check` writes the background file.** Run it before the roast, not after,
+  or pass `--no-write` to score without touching the disk.
+- Record `greens_temp` **and `moisture_greens`**; `moisture_greens` is `0.0` for
+  the second roast running.
+- Do not retune `pidKp` 3.0 / `pidKi` 0.07 / `svLookahead` 0 -> 6 at 90 s, and do
+  not touch the fan step. Nothing in the loop changed.
 
-400 g of the same lot, same config, **new background from the refitted model**.
-Regenerate with
-`tools/make_charge_background.py --mass 400 --greens-temp <measured> --charge-bt 130.2`
-— note that `--check` **rewrites the background file**, so run it before the roast
-and not after. Record `greens_temp` **and `moisture_greens`**; `moisture_greens`
-is `0.0` for the second roast running.
-
-Expected on a correct dip model: the 30-90 s error and the floor seconds both
-collapse, because they are the same event. Nothing else should move — do not
-retune `pidKp` 3.0 / `pidKi` 0.07 / `svLookahead` 0 -> 6 at 90 s, and do not touch
-the fan step.
+**What to expect, and it is a prediction the roast can falsify.** The residual is
+a phase signature: the background runs ~2 degC *above* the bed through the descent
+and ~2.5 degC *below* it by 30 s. So at the `PID ON` alarm the loop should see
+about **2 degC** of error where roast 54 handed it 8.5, and by ~24 s the sign
+should flip to the direction that makes the loop back off rather than kick. The
+floor seconds and the 30-90 s error are the same event and should both collapse
+— not to zero, because ~2.5 degC of phase error remains.
 
 ### Checking the gate in the log
 
@@ -123,22 +126,24 @@ model predicts roast 52 should read **+3.4%**, i.e. `k = 0.1084`. It reads
 **−2.2%**, so the model is **5.4% out** over a 5% change in mass, and in the
 **wrong direction**. Two caveats: `n = 1`, and both roasts carry
 `greens_temp = −12.0` exactly, which may be one measurement entered twice. Roast
-54 does not settle it either — it is 400 g, and its inferred `T_bean` of −24.1
-degC is 4.8 degC colder than roast 53's on identical entered greens temperature,
-which is itself a reason to distrust the entered value rather than the model.
-**Treat any background generated away from 400 g as unvalidated** and generate at
-the mass actually being roasted rather than scaling. Resolving it needs a
-deliberate mass pair at one charge temperature.
+54 does not settle it either — it is 400 g, and two independent estimators put its
+charge near −24 degC on an entered −12.0, which is itself a reason to distrust the
+entered value rather than the model. **Treat any background generated away from
+400 g as unvalidated** and generate at the mass actually being roasted rather than
+scaling. Resolving it needs a deliberate mass pair at one charge temperature.
 
-Open, in order: (1) the dip model's joint refit; (2) roast 55 against it; (3) the
-mass term; (4) whether charge state reaches the cup, which needs a *warm* charge
-on the same configuration dropped at the same BT to the tenth (roasts 50/51
-differed 54.5 s vs 45.0 s above BT 196.5 but also dropped 1.1 degC apart, which
-spoiled it); (5) **step 9, `INLET TRIM`** — deliberately deferred, not dropped.
-Its tracking case is now **weaker still**: roast 54 held |error| under 1.8 degC
-from 90 s to DROP and put time-to-BT inside ±2.5 s. What survives is robustness —
-it stops the outer integrator being a ramp-follower and decouples the loop from
-the profile's shape. **Re-decide it honestly after roast 55.**
+Open, in order: (1) roast 55 against the refitted model; (2) the mass term;
+(3) **a measured charge temperature at a bean's core** — the refit made this the
+binding constraint on the dip model, because `phi` and the charge temperature are
+one parameter until something measures the bean rather than the bag; (4) whether
+charge state reaches the cup, which needs a *warm* charge on the same
+configuration dropped at the same BT to the tenth (roasts 50/51 differed 54.5 s
+vs 45.0 s above BT 196.5 but also dropped 1.1 degC apart, which spoiled it);
+(5) **step 9, `INLET TRIM`** — deliberately deferred, not dropped. Its tracking
+case is now **weaker still**: roast 54 held |error| under 1.8 degC from 90 s to
+DROP and put time-to-BT inside ±2.5 s. What survives is robustness — it stops the
+outer integrator being a ramp-follower and decouples the loop from the profile's
+shape. **Re-decide it honestly after roast 55.**
 
 ## Development framework (read this first if you are new here)
 
@@ -1119,33 +1124,52 @@ exactly this soak.
 
 **The dip is now modelled rather than absorbed into `loss(t)`
 (`tools/analysis/charge_dip.py`).** A mixing term in front of the unchanged plant
-card: `dT_mix = phi*(BT_c - T_bean)`, delivered as a **decaying rate** —
-`-(dT_mix/tau_mix)*exp(-t/tau_mix)` — which matters more than any constant in it.
-Written as a relaxation toward `BT_mix` the charge becomes a permanent attractor
-that fights the heater all roast and the model flatlines near 62 degC; as a rate
-it integrates to the right total and stops, and the turning point lands at
-**23-25 s against a measured 22-23.5** with the dip depth within ~1.5 degC.
-`phi` is fitted **to the roasts, not to the charge-thermal test** — 0-40 s of BT on roasts
-43/44/46 gives `phi`(400 g) **0.658**, `tau_mix` **12.2 s**, rms **3.08 degC**,
-hence `C_chamber` 353 J/K. **`charge_state.py`'s `k` is not `phi`**: `4k = 0.409`
-is the drop at `+theta` and already folds in the incomplete mix and the heat the
-plant put back, so reading it as the asymptotic fraction under-predicts every
-charge drop by 7-10 degC. That is a reading error, not a bug in that tool.
+card: `dT_mix = phi*(BT_c - T_bean)`, delivered as a **decaying rate** — which
+matters more than any constant in it. Written as a relaxation toward `BT_mix` the
+charge becomes a permanent attractor that fights the heater all roast and the
+model flatlines near 62 degC; as a rate it integrates to the right total and
+stops. **Refitted 2026-09-07** (state-history.md § The dip model's joint refit):
+the rate now carries a **pour ramp** — a uniform pour of width `w_c` convolved
+with the exponential, normalised so the heat is still conserved
+(`charge_dip.mix_kernel`) — because without it the fit buys the dip's depth by
+stretching `tau_mix` to 15 s and then turns 6-7 s late. Fitted jointly to roasts
+**50/51/53/54** over each one's loop-free window: `phi`(400 g) **0.7116**,
+`tau_mix` **10.84 s**, `w_c` **2.10 s**, rms **1.31 degC**, hence `C_chamber`
+276 J/K. `w_c` and `tau_mix` trade at −0.77 — read the band 1.5-3 s.
+**`charge_state.py`'s `k` is not `phi`**: `4k = 0.409` is the drop at `+theta`
+and already folds in the incomplete mix and the heat the plant put back, so
+reading it as the asymptotic fraction under-predicts every charge drop by
+7-10 degC. That is a reading error, not a bug in that tool.
+
+**`phi` is depth per degC on the operator's temperature scale, and mixing scales
+is a bug that has already cost one roast.** The old `phi` (0.658) was fitted
+against a charge temperature *assumed* at −18 degC and then evaluated by
+`make_charge_background.py` at the operator's *entered* −12.0 — and 12 degC of
+charge temperature is worth 0.07 of `phi`, which is most of why roast 54's
+background came out 6.7 degC shallow. The calibration group is now every roast
+with an **entered** greens temperature, so the operator's thermometer offset
+cancels. The old group, refitted, gives `phi` 0.6475 at a charge temperature of
+−24.1 and **asks for the same dip** (99.6 degC against 100.9); `--scale` prints
+both. Two independent estimators put roast 54's charge near −24 (`charge_state.py`
+−24.1; floating `T_bean` in the joint fit −23.9) against an entered −12.0, and
+neither settles it, because both are anchored on the same −18 assumption.
 
 **One disagreement is left open and neither dataset can close it.** The charge-thermal test says
 the frozen arm needs extra cold-side thermal mass (`r_fus = 0` costs 20% of
 residual) and cannot say how much (5-25 degC-equivalent all within 3%; the point
-estimate exceeds the 35 J/g such a charge physically has). The roasts say none:
-on a frozen-only calibration group `phi` absorbs any `h_fus` exactly (rms 3.08 at
-every value 0-35 J/g), and the held-out warm pair gets monotonically worse as it
-rises — roast 48 from 6.19 to 10.22. `charge_dip.py` defaults to **0** and
-follows the roasts; `--fusion` prints the table.
+estimate exceeds the 35 J/g such a charge physically has). The roasts say none,
+and since the refit the argument is direct rather than by held-out proxy: **roast
+50 is the only *measured* charge temperature in the set (+25 degC) and is
+unfrozen**, so `h_fus` cannot touch its depth — across 0-35 J/g its rms goes
+1.18 → 4.52 while the frozen roasts improve by a tenth. `charge_dip.py` defaults
+to **0** and follows the roasts; `--fusion` prints the table.
 
 **And the standing exposure is unchanged: nothing has yet measured a charge
-temperature under flow.** `charge_state.py`'s `k`, roast 48's +12.8, roast 49's
-+15.5 and now `charge_dip.py`'s `phi` all rest on roasts 43/44/46 having been at
-−18 degC. The charge-thermal test could have broken that dependency and does not, because it has
-no flow. Detail in state-history.md § The charge-thermal test.
+temperature under flow, or at a bean's core.** `charge_state.py`'s `k`, roast
+48's +12.8, roast 49's +15.5 and `charge_dip.py`'s `phi` all rest on charge
+temperatures that are either assumed or read off the outside of a bag. The
+charge-thermal test could have broken that dependency and does not, because it
+has no flow. Detail in state-history.md § The charge-thermal test.
 
 **Roasts 50 and 51 (2026-09-07) are the charge-temperature pair, and
 `greens_temp` is finally a measurement: +25.0 and −12.0 degC**, 400 g in / 349 and
@@ -1192,6 +1216,10 @@ reaching BT before ~13.5 s its correction lands at 18-28 s, too late to help and
 early enough to overshoot. **`charge_dip.py` predicts the turning point to 0-3 s**
 (84.0 at 22.0 s vs 80.2 at 22.0; 64.9 at 24.0 vs 63.8 at 21.0; rms 4.2-4.5 degC
 over 0-60 s). The model is right and the background is 15-16 s wrong.
+*Superseded in part:* those measured turning points are the loop's, not the
+bed's — roast 54's **free** dip turns at 23.0 s and the refitted model still
+turns ~6 s late against it (state-history.md § The dip model's joint refit). The
+background being 15-16 s wrong stands; the model matching to 0-3 s does not.
 
 **And the tuning after the dip is the best on record.** Time-to-BT 150/180/196.5
 lands at **−0.4 / +1.7 / −2.0 s** and **−0.4 / +2.2 / −2.0 s** against
