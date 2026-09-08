@@ -100,12 +100,15 @@ verify from the log afterwards by the SV step, which at 105 s should be
 `(bkg(117) − bkg(111)) x 4.8 ≈ 17 degC`.
 
 **Background: `artisan/profile_400g_m5C_v4.alog`, unchanged.** Its FCs mark of
-198.8 is known to be wrong for this coffee (see item 3), but **fixing it is not
-a back-half edit**: the RoR spec is fitted globally, so moving the mark to 197.7
-moves BT by **−4.8 degC at 60 s** and the RoR peak from 52 s to 73 s — inside
-the window all four checks live in, and not even monotone in the mark. The mark
-is a label the cascade never reads; the curve is what the loop follows. **Fix it
-at roast 58, alone.** See state-plan.md § Bean reference.
+198.8 is known to be wrong for this coffee (see item 3). That fix stays roast
+58's, alone, but **the reason has changed** and it is now a much smaller edit
+than this section used to claim. The −4.8 degC at 60 s was a *solver* artefact,
+not a global fit doing its job: the exponential spec has four free parameters
+against three marks, so the ramp was undetermined and the optimizer picked it.
+With `--ror-peak-at` pinning it (2026-09-08, § Regenerating the background),
+moving the mark 198.8 → 197.7 costs **+0.26 degC at 60 s**, monotone, and does
+not move the peak at all. The mark is still a label the cascade never reads; the
+curve is still what the loop follows. See state-plan.md § Bean reference.
 
 **Do not try to size the lookahead change with `replay_pid`.** It is fed
 measured BT, so a sustained lookahead change reads as a permanent P offset the
@@ -189,11 +192,31 @@ follows; `--fcs <s>:<BT>` sets the crack mark, and the per-lot value comes from
 state-plan.md § Bean reference. Generate at the mass and charge temperature
 actually being roasted — **never scale** (see § The mass term below).
 
-**A regenerated background is a change to the first minute, not just the back
-half.** The RoR spec is one three-parameter exponential fitted to `BT(DRY END)`,
-`BT(FCs)` and `RoR(FCs)`, so every constraint moves the whole curve: FCs
-198.8 → 195.5 costs −3.66 degC at 61 s and shifts the RoR peak 52 s → 69 s.
-**Never run a regenerated background and a control change in the same roast.**
+**The first-minute coupling was a solver defect, and it is fixed (2026-09-08).**
+The exponential RoR spec has **four** free parameters (`tau_r, R0, R_inf,
+tau_d`), not the three every document here claimed; DRY END, FCs and RoR@FCs
+supply three. The fit was underdetermined by exactly one, and every point along
+the leftover direction hit all three marks to 1e-14 while giving a different
+roast — BT at 60 s anywhere over 71-81 degC, the RoR peak anywhere over 44-83 s
+— with the winner picked by whichever multi-start converged lower on
+floating-point noise. That, not physics, is what made a 1.1 degC change to a
+mark 340 s away move BT at 60 s by 4.8 degC, non-monotonically.
+
+`make_background.py` now takes **`--ror-peak-at` (default 53 s since CHARGE)** as
+a fourth constraint. The system is square with it and converges to 1e-14 across
+−24…+25 degC and 250…500 g in both `--development` and `--drop` mode. What is
+left is the honest coupling: over `--fcs` 195.5-198.8, BT at 60 s moves **0.8
+degC, monotone** (was 7.2 degC, non-monotone). See tools/README.md § The ramp
+used to be a lottery.
+
+The default 53 s is where `profile_400g_m5C_v4.alog` — roast 56's background,
+the only curve to pass all four checks — happens to peak, so the fix reshapes
+nothing silently. It is a lottery draw promoted to a spec, **not a measurement**;
+vary it deliberately, one roast at a time. The reachable band at 400 g / −5 degC
+is about 45-80 s.
+
+**Still do not run a regenerated background and a control change in the same
+roast** — the 0.8 degC has been seen in the fit, not yet on the machine.
 
 ### The alarm table can silently disagree with the .aset — CHECK IT EVERY ROAST
 

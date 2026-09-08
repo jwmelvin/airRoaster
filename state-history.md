@@ -4943,6 +4943,12 @@ encodes four traps that each produced a wrong number here:
 
 #### And it sharpens the background-authoring warning
 
+> **Superseded 2026-09-08, later the same day.** The numbers below are real
+> outputs of the tool, but the cause diagnosed here is wrong: the spec is not a
+> three-parameter fit and the first minute is not a side effect of the back-half
+> marks. It was an **underdetermined solver**. See § The ramp was never fitted
+> at all, below.
+
 Roast 56's regeneration exercise had already shown that moving the FCs mark
 reshapes the first minute, because the RoR spec is one three-parameter
 exponential fitted to `BT(DRY END)`, `BT(FCs)` and `RoR(FCs)`. Sweeping the
@@ -4961,3 +4967,100 @@ first minute is a side effect of the back-half marks. Until the spec pins
 something in the ramp as well, **never run a regenerated background and a
 control change in the same roast**, and always print the 30-120 s column before
 loading one.
+
+### The ramp was never fitted at all (2026-09-08)
+
+The section above closed with "until the spec pins something in the ramp as
+well". Doing that turned up the reason the ramp needed pinning, and it is not
+the one that section gives.
+
+**`make_background.py`'s exponential RoR spec has four free parameters, and the
+marks supply three.**
+
+    RoR(u) = (1 - exp(-u/tau_r)) * (R_inf + (R0 - R_inf) * exp(-u/tau_d))
+
+`tau_r, R0, R_inf, tau_d` — four. `--development` mode constrains `BT(DRY END)`,
+`BT(FCs)` and `RoR(FCs)` — three. `--drop` mode constrains three BT marks —
+also three. Every document in this repo, including the tool's own docstring,
+said "three free parameters against three marks, so the marks are hit rather
+than approached". The second clause was true. The first was not, and nobody had
+counted.
+
+So `least_squares` was solving a system with a **one-dimensional null manifold**,
+and the four multi-starts were four draws from it. Fixing `tau_r` and refitting
+the rest, at 400 g / −5 degC / `--fcs 399:197.7`:
+
+| `tau_r` | 4 | 8 | 15 | 22 | 30 | 40 | 50 |
+|---|---|---|---|---|---|---|---|
+| `R0` | 54.3 | 57.9 | 65.1 | 73.5 | 84.5 | 100.0 | 116.9 |
+| `R_inf` | 5.82 | 6.17 | 6.68 | 7.09 | 7.45 | 7.76 | 7.96 |
+| `tau_d` | 142 | 133 | 121 | 110 | 101 | 92 | 86 |
+| max\|resid\| | 3e-14 | 3e-14 | 0 | 3e-14 | 3e-14 | 3e-14 | 0 |
+| **BT at 60 s** | 80.8 | 78.7 | 75.8 | 73.9 | 72.7 | 71.8 | 71.3 |
+| **RoR peak at** | 44 s | 53 s | 64 s | 71 s | 77 s | 81 s | 83 s |
+
+Every column hits all three marks to machine zero. They differ by **9.5 degC of
+BT at 60 s and 39 s of peak timing** — the whole width of the window the four
+roast checks are scored in. Which column came out was decided by which start
+converged marginally lower on floating-point noise.
+
+**That is the real explanation of the 4.8 degC.** The back-half marks hardly
+constrain the ramp at all, and the "1.1 degC at 340 s away moves the first
+minute by 4.8 degC, non-monotonically" was the solver sliding along the manifold
+between one draw and the next. The non-monotonicity was the tell and it was read
+as a property of the curve. It never was one. The four authored backgrounds show
+the same thing directly: their RoR peaks sit at 65, 68, 53 and 69 s
+(`m12C_v3`, `m12C_v4`, `m5C_v4`, `m5C_fc195_v5`) and nobody chose any of them.
+
+#### The fix: pin the peak's time
+
+`--ror-peak-at <s since CHARGE>`, default **53**, added as a fourth residual —
+`ror_spec_deriv(u_peak) == 0`, the analytic stationarity condition, because an
+`argmax` over the 1 s grid is a staircase a least-squares step cannot descend.
+The system is square with it. What is left is the honest coupling:
+
+| `--fcs` | 198.8 | 197.7 | 197.4 | 195.5 | spread |
+|---|---|---|---|---|---|
+| BT at 60 s, ramp free | 80.6 | 74.8 | 78.1 | 73.4 | 7.2 degC, non-monotone |
+| BT at 60 s, peak at 53 s | 78.4 | 78.7 | 78.8 | 79.3 | **0.8 degC, monotone** |
+
+0.25 degC of first minute per degC of a mark 340 s away, in the direction that
+makes sense: a cooler FCs target needs a weaker decline, so slightly more rate
+early to still make DRY END at 192 s. DRY END itself, 132 s away, moves BT at
+60 s by 1.0 degC per 2 degC — larger, nearer, monotone. **A back-half edit is a
+back-half edit again**, and one-variable-at-a-time attribution works.
+
+Verified to 1e-14 with RoR monotone both sides of the peak across **−24…+25 degC
+and 250…500 g**, in both `--development` and `--drop` mode. The reachable peak
+band at 400 g / −5 degC is about **45-80 s**; outside it the residual does not go
+to zero and the check block says so in as many words, because an unsatisfied pin
+is an unpinned ramp.
+
+#### Two choices worth recording
+
+**The peak's *time*, not its height.** Height is nearly invariant along the old
+manifold — 48.2 degC/min at `tau_r` 4 down to 43.5 at 50 — so
+`d(peak height)/d(tau_r) = −0.10 degC/min/s` against
+`d(peak time)/d(tau_r) = +0.85 s/s`. Pinning height to ±0.1 degC/min would buy
+what pinning time to ±0.85 s buys; it is an eight-times-worse identifier of the
+missing parameter. tools/README.md's line that the peak's timing "is not a spec
+but is diagnostic" is now inverted: it is a spec, because something in the ramp
+has to be, and it is the best-conditioned thing available.
+
+**The default 53 s is not a measurement.** It is where `profile_400g_m5C_v4.alog`
+happens to peak — roast 56's background, the only curve to have passed all four
+checks — chosen so the fix reshapes nothing silently. It is one of the lottery
+draws above, promoted to a spec so that it stops moving on its own. The
+delivered peaks in the logs cannot supply a better number: roasts 51-54 peak at
+36-39 s because the loop was slamming heat after the charge, and 55 and 56 peak
+at 106 and 64 s because that is what their own backgrounds asked for. It is a
+design parameter now, and the first roast that varies it deliberately is the one
+that measures it.
+
+`--decline linear` has three parameters and was always square; it takes no pin
+and never had this defect. `--free-ramp` reproduces the old behaviour for
+regenerating a pre-2026-09-08 file to compare against, with a warning saying the
+ramp is undetermined.
+
+**No background file was regenerated.** Roast 57 runs `profile_400g_m5C_v4.alog`
+unchanged, as § HANDOFF specifies; this is desk work on the generator only.

@@ -60,18 +60,44 @@ against.
 *coffee*, not the crop or the bag, so a new bag under the same hr_id is
 invisible; that is the one thing the tool cannot tell you.
 
-**Regenerating for a new FC temperature is a change to the first minute.** The
-RoR spec is one three-parameter exponential fitted to `BT(DRY END)`, `BT(FCs)`
-and `RoR(FCs)`, so every constraint moves the whole curve — and the early ramp
-is not even monotone in the mark. At 400 g / −5 degC, BT at 60 s:
+**Regenerating for a new FC temperature used to be a change to the first
+minute; since 2026-09-08 it is barely one.** The old behaviour was a defect, not
+a property of a global fit — the exponential spec has **four** free parameters
+(`tau_r, R0, R_inf, tau_d`) and DRY END / FCs / RoR@FCs supply **three**, so the
+ramp was undetermined and the optimizer chose it off floating-point noise. At
+400 g / −5 degC, BT at 60 s:
 
-| `--fcs` | 198.8 | 197.7 | 197.4 | 195.5 |
-|---|---|---|---|---|
-| BT at 60 s | 78.1 | 73.3 | 74.1 | 74.5 |
-| RoR peak at | 52 s | 73 s | 70 s | 69 s |
+| `--fcs` | 198.8 | 197.7 | 197.4 | 195.5 | spread |
+|---|---|---|---|---|---|
+| **before** — ramp free | 80.6 | 74.8 | 78.1 | 73.4 | 7.2 degC, non-monotone |
+| **now** — `--ror-peak-at 53` | 78.4 | 78.7 | 78.8 | 79.3 | 0.8 degC, monotone |
 
-**Never run a regenerated background and a control change in the same roast**,
-and print the 30-120 s column before loading one.
+### The RoR-peak pin is a specification in force
+
+`make_background.py --ror-peak-at <s since CHARGE>`, **default 53**, is the
+fourth constraint that makes the fit square. Rules:
+
+- **Leave it at 53 unless you are deliberately testing it.** 53 s is where
+  `profile_400g_m5C_v4.alog` (roast 56's background, the only curve to pass all
+  four checks) happens to peak, so the fix reshapes nothing silently. It is a
+  lottery draw promoted to a spec, **not a measurement of the machine.**
+- **It is a design number now, so it can be swept** — one roast at a time, like
+  any other. Earlier peak = more rate demanded while the loop is still
+  recovering from the charge and `Ki` is gated; later = the reverse. Reachable
+  band at 400 g / −5 degC is about **45-80 s**; outside it the tool says the
+  constraint is not satisfied and the ramp is unpinned again.
+- **The peak's *time* is pinned, not its height.** Height varies only 48.2 to
+  43.5 degC/min along the whole old null manifold, so it identifies the missing
+  parameter ~8× worse (−0.10 degC/min/s against +0.85 s/s).
+- **`--decline linear` takes no pin** — three parameters, always square.
+  `--free-ramp` reproduces the pre-fix behaviour for comparing against an old
+  file, and warns that it is doing so.
+- **Verified** to 1e-14 with RoR monotone across −24…+25 degC and 250…500 g, in
+  both `--development` and `--drop` mode.
+
+**Still never run a regenerated background and a control change in the same
+roast**, and print the 30-120 s column before loading one — the 0.8 degC has
+been demonstrated in the fit, not yet on the machine.
 
 **Cheapest reading of all this**: the FCs mark is a *label*. Nothing in the
 cascade reads it — `calcSV` reads only `BT(t + svLookahead)` and `drop_t`

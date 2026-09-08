@@ -9,10 +9,10 @@ USAGE -- the whole recipe is four lines; tools/README.md is the orientation.
         --compare artisan/<the background it replaces>.alog --out artisan/<new>.alog
 
 Pass --mass and --greens-temp for the roast you are ACTUALLY about to run --
-never scale.  Read the printed check block before loading it: three marks at
-0.00, RoR monotone both sides of the peak, and the 30-120 s row against
---compare, because moving a back-half mark moves the first minute too.  The
-rest of this docstring is why the curve is shaped this way.
+never scale.  Read the printed check block before loading it: all FOUR
+constraints at 0.00, RoR monotone both sides of the peak, and the 30-120 s row
+against --compare.  The rest of this docstring is why the curve is shaped this
+way.
 
 `make_charge_background.py` **merges** a computed dip into an existing Designer
 curve and smoothsteps back onto it.  That was the right move while the ramp was
@@ -54,11 +54,45 @@ worth being able to see that, but `exp` is the default.
     RoR(u) = (1 - exp(-u/tau_r)) * (R_inf + (R0 - R_inf) * exp(-u/tau_d))
     u = t - t_TP,  BT(t) = BT_TP + integral of RoR/60
 
-``tau_r`` is the rise off the turning point; the bracket is the decline.  Three
-free parameters against three marks, so the marks are hit rather than
-approached.  The ``(1 - exp(-u/tau_r))`` factor is what makes the join smooth:
-the dip arrives at the TP with RoR 0 by definition and the spec leaves it at
-RoR 0, so BT is C1 there with no blend and no window to choose.
+``tau_r`` is the rise off the turning point; the bracket is the decline.  The
+``(1 - exp(-u/tau_r))`` factor is what makes the join smooth: the dip arrives at
+the TP with RoR 0 by definition and the spec leaves it at RoR 0, so BT is C1
+there with no blend and no window to choose.
+
+**That is FOUR free parameters, and the marks supply only three.**  This file
+used to say "three free parameters against three marks, so the marks are hit
+rather than approached", and the second half of that was true while the first
+half was not: DRY END, FCs and RoR-at-FCs pin three of `tau_r, R0, R_inf,
+tau_d`, and the fourth was left to whichever of the four multi-starts converged
+marginally lower on floating-point noise.  Every point on that one-dimensional
+null manifold hits all three marks to 1e-14 -- and they are not the same curve:
+
+    tau_r    R0    R_inf  tau_d   max|resid|  BT(60 s)  RoR peak
+      4.0  54.25   5.82  142.06     3e-14       80.8    48.2 @ 44 s
+     15.0  65.11   6.68  120.65     0e+00       75.8    45.5 @ 64 s
+     30.0  84.49   7.45  100.70     3e-14       72.7    44.1 @ 77 s
+     50.0 116.89   7.96   85.63     0e+00       71.3    43.5 @ 83 s
+
+Nine degC of BT at 60 s and forty seconds of peak timing, every one of them
+"fitted".  This is what produced the reported horror that a 1.1 degC change to
+the FCs mark -- 340 s away -- moved BT at 60 s by 4.8 degC and the peak by 21 s,
+non-monotonically in the mark.  **The coupling was never physical.**  The
+back-half marks hardly constrain the ramp at all; the solver was sliding along
+the manifold, and the shape of the window all four roast checks are scored in
+was decided by numerical noise.
+
+``--ror-peak-at`` (default 53 s since CHARGE) is the fourth constraint, and the
+system is square with it.  What remains is the real coupling, and it behaves:
+
+    --fcs        198.8  197.7  197.4  195.5    spread
+    BT at 60 s, free     80.6   74.8   78.1   73.4   7.2 degC, non-monotone
+    BT at 60 s, pinned   78.4   78.7   78.8   79.3   0.8 degC, monotone
+
+0.25 degC of first minute per degC of a mark 340 s away, in a direction that
+makes sense (a cooler FCs target needs a weaker decline, so a little more rate
+early to still make DRY END).  That is a background you can attribute a roast
+to.  See `fit` for why the peak's *time* and not its height, and
+tools/README.md for the operator-facing version.
 
     .venv/bin/python tools/make_background.py --mass 400 --greens-temp -12
     .venv/bin/python tools/make_background.py --mass 400 --greens-temp -12 \\
@@ -106,6 +140,13 @@ DEFAULT_MARKS = {'dry_end': (192.0, 149.6), 'fcs': (399.0, 197.5),
 # is a default, not a measurement of your coffee -- pass --ror-at-fcs too.
 FC_ROR_DEFAULT = 8.3          # degC/min through first crack
 DEVELOPMENT_DEFAULT = 28.0    # s from FCs to DROP
+# The fourth constraint (2026-09-08).  53 s is where the RoR peaks in
+# `profile_400g_m5C_v4.alog` -- the background roast 56 was scored against, and
+# the only curve that has passed all four roast checks.  It is NOT a
+# measurement: it is the draw the underdetermined solver happened to make on
+# that run, promoted to a spec so that it stops moving on its own.  Vary it
+# deliberately, one roast at a time, like any other design number.
+ROR_PEAK_AT_DEFAULT = 53.0    # s since CHARGE
 
 
 def _mark(s):
@@ -138,6 +179,34 @@ def ror_spec(u, params, decline='exp'):
     return np.maximum(rise * fall, 0.0)
 
 
+def ror_spec_deriv(u, params, decline='exp'):
+    """``dRoR/du`` in degC/min per second -- the analytic derivative of `ror_spec`.
+
+    Used to pin the RoR peak: the peak is where this is zero, and asking the
+    solver for ``ror_spec_deriv(u_peak) == 0`` is smooth and exact, where an
+    ``argmax`` over the 1 s grid would be a staircase the least-squares step
+    cannot descend.  Not clipped at zero the way `ror_spec` is -- the clip only
+    ever bites well past DROP, and the peak is never there.
+    """
+    tau_r = params[0]
+    uu = np.clip(u, 0.0, None)
+    rise = 1.0 - np.exp(-uu / tau_r)
+    d_rise = np.exp(-uu / tau_r) / tau_r
+    if decline == 'exp':
+        R0, R_inf, tau_d = params[1], params[2], params[3]
+        fall = R_inf + (R0 - R_inf) * np.exp(-uu / tau_d)
+        d_fall = -(R0 - R_inf) / tau_d * np.exp(-uu / tau_d)
+    elif decline == 'linear':
+        fall = params[1] - params[2] * uu
+        d_fall = -params[2] * np.ones_like(uu)
+    elif decline == 'quad':
+        fall = params[1] - params[2] * uu + params[3] * uu * uu
+        d_fall = -params[2] + 2.0 * params[3] * uu
+    else:
+        raise ValueError(decline)
+    return d_rise * fall + rise * d_fall
+
+
 def build(t, dip_bt, i_tp, params, decline='exp'):
     """BT over ``t``: the dip up to its turning point, the spec after it."""
     u = t - t[i_tp]
@@ -149,7 +218,7 @@ def build(t, dip_bt, i_tp, params, decline='exp'):
     return y, R
 
 
-def fit(t, dip_bt, i_tp, marks, decline='exp', ror_mark=None):
+def fit(t, dip_bt, i_tp, marks, decline='exp', ror_mark=None, peak_at=None):
     """Fit the spec so the curve passes through the marks.
 
     ``marks`` are ``(t, BT)`` pairs.  ``ror_mark``, if given, is a
@@ -158,6 +227,42 @@ def fit(t, dip_bt, i_tp, marks, decline='exp', ror_mark=None):
     temperature is whatever the curve gives, rather than being pinned.  That is
     how the operator actually roasts: FCs is a *temperature* the coffee decides
     and DROP is a *time past it*.
+
+    ``peak_at`` is the **fourth** constraint: the time (seconds since CHARGE, as
+    everything else in this file is measured) at which the RoR is to peak.  It
+    is what makes the exponential family determined.
+
+    WHY IT IS NEEDED -- this was a real defect, found 2026-09-08.  ``exp`` has
+    **four** free parameters, not the three this file used to claim, and the
+    back-half marks supply only three residuals.  The system was underdetermined
+    by exactly one, with a one-dimensional null manifold along which every point
+    hits all three marks to machine zero:
+
+        tau_r    R0    R_inf  tau_d   max|resid|  BT(60 s)  RoR peak
+          4.0  54.25   5.82  142.06     3e-14       80.8    48.2 @ 44 s
+         15.0  65.11   6.68  120.65     0e+00       75.8    45.5 @ 64 s
+         30.0  84.49   7.45  100.70     3e-14       72.7    44.1 @ 77 s
+         50.0 116.89   7.96   85.63     0e+00       71.3    43.5 @ 83 s
+
+    Nine degC of BT at 60 s and forty seconds of peak timing, all equally
+    "fitted".  Which one came out was decided by which of the four multi-starts
+    converged marginally lower on floating-point noise -- so a 1.1 degC change
+    to a mark 340 s away appeared to move the first minute by 4.8 degC and the
+    peak by 21 s, and was not even monotone in the mark.  **That coupling was
+    never physical.**  The marks barely constrain the ramp at all; the solver
+    was sliding along the manifold, and the shape of the region the loop is most
+    stressed in was a lottery draw.  See tools/README.md.
+
+    WHY THE PEAK *TIME* AND NOT ITS HEIGHT.  Height is nearly constant along the
+    manifold -- 48.2 to 43.5 degC/min over the whole range above -- so it barely
+    identifies the missing parameter: ``d(peak height)/d(tau_r) = -0.10`` against
+    ``d(peak time)/d(tau_r) = +0.85``.  Pinning the height to +-0.1 degC/min
+    would buy what pinning the time to +-0.85 s buys.  tools/README.md used to
+    say the peak's timing "is not a spec but is diagnostic"; it is a spec now,
+    because something in the ramp has to be.
+
+    ``linear`` has three parameters and was always square -- it never had this
+    defect and takes no peak constraint.
     """
     # Multi-start: a single start converges to a local minimum on some charge
     # temperatures (found at -5 degC, which stopped 0.35 degC/min short on the
@@ -174,11 +279,20 @@ def fit(t, dip_bt, i_tp, marks, decline='exp', ror_mark=None):
                    [3., 10., 0.0, -1e-2], [120., 150., 1.0, 1e-2]),
     }[decline]
 
+    # dRoR/du at the pinned peak is O(0.5) degC/min/s for a 15 s miss, so this
+    # weight puts the peak residual in the same numeric range as the degC ones.
+    # The system is square with an exact root, so the weight only conditions the
+    # step; it does not move the answer.
+    peak_w = 10.0
+    u_peak = None if peak_at is None else peak_at - float(t[i_tp])
+
     def resid(p):
         y, R = build(t, dip_bt, i_tp, p, decline)
         out = [float(np.interp(tm, t, y)) - bm for tm, bm in marks]
         if ror_mark is not None:
             out.append(float(np.interp(ror_mark[0], t, R)) - ror_mark[1])
+        if u_peak is not None:
+            out.append(float(ror_spec_deriv(u_peak, p, decline)) * peak_w)
         return out
 
     best = None
@@ -215,6 +329,17 @@ def main():
                     help='degC/min through first crack, the third constraint in '
                          f'--development mode (roasts 50-55: 6.2-9.8, mean '
                          f'{FC_ROR_DEFAULT})')
+    ap.add_argument('--ror-peak-at', type=float, default=ROR_PEAK_AT_DEFAULT,
+                    help='seconds since CHARGE at which the RoR peaks -- the '
+                         'FOURTH constraint, and what makes the exponential fit '
+                         'determined at all (default '
+                         f'{ROR_PEAK_AT_DEFAULT:.0f}). Ignored for --decline '
+                         'linear, which is square without it')
+    ap.add_argument('--free-ramp', action='store_true',
+                    help='drop the peak constraint and reproduce the '
+                         'pre-2026-09-08 behaviour, in which the ramp was '
+                         'undetermined and the solver picked it. Only for '
+                         'regenerating an old file to compare against')
     ap.add_argument('--template', default=TEMPLATE,
                     help="only for the file's Artisan metadata; no curve is read")
     ap.add_argument('--compare', default=None, help='an existing background to print beside')
@@ -258,7 +383,21 @@ def main():
           f"thermometer offset of\n        d degC moves the dip by {phi400:.2f}*d "
           "(charge_dip.py --scale).")
 
-    params, err = fit(t, dip_bt, i_tp, marks, args.decline, ror_mark)
+    # `linear` is square on the marks alone; `exp` and `quad` carry a spare
+    # parameter and are underdetermined without the peak pin (see `fit`).
+    peak_at = None
+    if not args.free_ramp and args.decline != 'linear':
+        peak_at = args.ror_peak_at
+        if peak_at <= t[i_tp]:
+            ap.error(f'--ror-peak-at {peak_at:.0f} is at or before the turning '
+                     f'point ({t[i_tp]:.0f} s); the ramp does not exist yet')
+    if args.free_ramp:
+        print("   *** --free-ramp: the ramp is UNDETERMINED. The marks fix only "
+              "three of the\n       four parameters and the solver picks the "
+              "rest; BT at 60 s can land anywhere\n       over a ~9 degC range. "
+              "For comparison against old files only.")
+
+    params, err = fit(t, dip_bt, i_tp, marks, args.decline, ror_mark, peak_at)
     bt, R = build(t, dip_bt, i_tp, params, args.decline)
 
     names = ['DRY END', 'FCs', 'DROP']
@@ -267,23 +406,41 @@ def main():
         print(f"   {n:<8s}  {tm:5.0f} s ({tm//60:.0f}:{tm%60:02.0f})  {bm:6.1f}   "
               f"{float(np.interp(tm, t, bt)):6.1f}   {e:+6.2f} degC")
     if dev_mode:
+        # err is [*marks, ror_mark, peak] -- index, do not use err[-1], which is
+        # the peak residual whenever the ramp is pinned.
         print(f"   RoR@FCs   {args.fcs[0]:5.0f} s          "
               f"{args.ror_at_fcs:6.1f}   {float(np.interp(args.fcs[0], t, R)):6.1f}   "
-              f"{err[-1]:+6.2f} degC/min")
+              f"{err[len(marks)]:+6.2f} degC/min")
         print(f"   DROP      {t_drop:5.0f} s "
               f"({t_drop//60:.0f}:{t_drop%60:02.0f})     ---   "
               f"{float(np.interp(t_drop, t, bt)):6.1f}      --   "
               f"<- {args.development:.0f} s past FCs, temperature NOT pinned")
     i_pk = int(np.argmax(R))
+    # The peak is flat, so a 1 s argmax can sit a couple of seconds off the true
+    # stationary point.  Refine on a 0.1 s grid for reporting.
+    uf = np.arange(0.0, float(t_drop - t[i_tp]), 0.1)
+    Rf = ror_spec(uf, params, args.decline)
+    j_pk = int(np.argmax(Rf))
+    t_pk, R_pk = float(t[i_tp] + uf[j_pk]), float(Rf[j_pk])
+    if peak_at is not None:
+        print(f"   RoR peak  {peak_at:5.0f} s ({peak_at//60:.0f}:{peak_at%60:02.0f})"
+              f"      --   {t_pk:6.1f}   {t_pk - peak_at:+6.2f} s"
+              f"    <- the FOURTH constraint; without it the ramp is a lottery")
     rising = bool(np.all(np.diff(R[i_tp:i_pk + 1]) >= -1e-9))
     falling = bool(np.all(np.diff(R[i_pk:int(t_drop) + 1]) <= 1e-9))
-    print(f"\n   RoR peaks at {R[i_pk]:.1f} degC/min at {t[i_pk]:.0f} s "
+    print(f"\n   RoR peaks at {R_pk:.1f} degC/min at {t_pk:.0f} s "
           f"(roast 54's machine delivered 72)")
     print(f"   monotone rising TP->peak: {rising};  monotone falling peak->DROP: "
           f"{falling};  RoR at DROP {float(np.interp(t_drop, t, R)):.1f}")
     if not falling:
         print("   *** RoR is NOT monotone after the peak -- the marks are not "
               "reachable by this\n       family; try --decline exp, or move a mark.")
+    if peak_at is not None and abs(t_pk - peak_at) > 0.5:
+        print(f"   *** the RoR peak landed at {t_pk:.0f} s, not the "
+              f"{peak_at:.0f} s asked for. That constraint is\n       NOT "
+              "satisfied, so the ramp is back to being whatever the solver "
+              "picked.\n       At 400 g / -5 degC the reachable band is about "
+              "45-80 s; move --ror-peak-at\n       into it, or a mark.")
 
     cols = [30, 60, 90, 120, 180, 240, 300, 360, 420]
     cols = [c for c in cols if c <= t_drop]
@@ -326,7 +483,9 @@ def main():
         + (f"DRY END, FCs and RoR {args.ror_at_fcs:.1f} degC/min at FCs; DROP "
            f"{args.development:.0f} s past FCs at "
            f"{float(np.interp(t_drop, t, bt)):.1f} degC."
-           if dev_mode else "DRY END/FCs/DROP."))
+           if dev_mode else "DRY END/FCs/DROP.")
+        + (f" RoR peak pinned at {peak_at:.0f} s." if peak_at is not None
+           else " RAMP UNPINNED (--free-ramp): underdetermined."))
     out = args.out or os.path.join(
         REPO, 'artisan',
         f"profile_{args.mass:.0f}g_{args.greens_temp:+.0f}C_authored.alog"
