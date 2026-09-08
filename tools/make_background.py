@@ -138,11 +138,19 @@ def fit(t, dip_bt, i_tp, marks, decline='exp', ror_mark=None):
     how the operator actually roasts: FCs is a *temperature* the coffee decides
     and DROP is a *time past it*.
     """
-    x0, lo, hi = {
-        'exp':    ([25., 55., 8., 120.], [3., 10., 0., 20.], [120., 150., 40., 600.]),
-        'linear': ([25., 55., 0.11], [3., 10., 0.0], [120., 150., 1.0]),
-        'quad':   ([25., 55., 0.11, 1e-4], [3., 10., 0.0, -1e-2],
-                   [120., 150., 1.0, 1e-2]),
+    # Multi-start: a single start converges to a local minimum on some charge
+    # temperatures (found at -5 degC, which stopped 0.35 degC/min short on the
+    # RoR mark while -12 hit machine zero).  Four starts and tight tolerances
+    # take every charge temperature from -24 to +25 to a residual under 1e-13.
+    starts, lo, hi = {
+        'exp':    ([[25., 55., 8., 120.], [15., 70., 4., 150.],
+                    [40., 45., 10., 90.], [10., 90., 2., 200.]],
+                   [3., 10., 0., 20.], [120., 150., 40., 600.]),
+        'linear': ([[25., 55., 0.11], [15., 70., 0.15], [40., 45., 0.08]],
+                   [3., 10., 0.0], [120., 150., 1.0]),
+        'quad':   ([[25., 55., 0.11, 1e-4], [15., 70., 0.15, 1e-4],
+                    [40., 45., 0.08, -1e-4]],
+                   [3., 10., 0.0, -1e-2], [120., 150., 1.0, 1e-2]),
     }[decline]
 
     def resid(p):
@@ -152,8 +160,13 @@ def fit(t, dip_bt, i_tp, marks, decline='exp', ror_mark=None):
             out.append(float(np.interp(ror_mark[0], t, R)) - ror_mark[1])
         return out
 
-    r = least_squares(resid, x0, bounds=(lo, hi))
-    return r.x, np.asarray(r.fun)
+    best = None
+    for x0 in starts:
+        r = least_squares(resid, x0, bounds=(lo, hi),
+                          xtol=1e-14, ftol=1e-14, gtol=1e-14)
+        if best is None or np.max(np.abs(r.fun)) < np.max(np.abs(best.fun)):
+            best = r
+    return best.x, np.asarray(best.fun)
 
 
 def main():
