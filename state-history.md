@@ -4490,3 +4490,119 @@ which is precisely what the lowered SV floor exists to make survivable.
 
 `make_charge_background.py` is superseded but kept: it is the curve v2 came from
 and the record of the merge approach.
+
+### Roast 55 (2026-09-07, 21:37) — the floor was the constraint, and all four checks pass
+
+400 g of the same lot at `greens_temp = -12.0`, `airRoaster_cascadePID_floor100.aset`
+(`pidKp` 2.4, `pidKi` 0.056, `positiveTargetMin` 100) against
+`profile_400g_m12C_v3.alog`. Two changes from roast 54 — the authored background
+and the lowered SV floor — acting in disjoint regions as planned.
+
+| check | roast 52 | roast 53 | roast 54 | **roast 55** | pass |
+|---|---|---|---|---|---|
+| peak SV, first minute | 275 | 238 | 193 | **154** | under ~200 — **pass** |
+| seconds of heat at 100% | 23.5 | 14.0 | 2.0 | **1.0** | 0 — **near** |
+| seconds **saturated** at own floor | 42.0 | 46.9 | 40.0 | **0.0** | under ~10 — **pass** |
+| worst BT error vs background, 30-90 s | +21.3 | +14.1 | +5.5 | **−4.9** | single digits — **pass** |
+| worst \|bkg − BT\| over 0-30 s | — | — | 8.6 | **3.9** | — |
+
+Tracking rms by window, against each roast's own background:
+
+| roast | 30-90 s | 90-DROP | 120-DROP | peak SV | min SV |
+|---|---|---|---|---|---|
+| 51 | 11.71 | 1.09 | — | 300 | 140 |
+| 53 | 11.60 | 1.35 | — | 238 | 140 |
+| 54 | 3.88 | 0.68 | — | 193 | 140 |
+| **55** | **2.70** | 1.50 | **0.79** | **154** | **122** |
+
+**The floor was the binding constraint, and this settles it.** The loop spent
+**41.5 s below the old 140 clamp**, bottoming at **SV 122** from 31.5 to 72.5 s —
+using 18 degC of range that did not exist on roasts 51-54 — and **never saturated
+at all**. Where roast 54 sat 40 s pinned at 140 with the heater at 46% and a bed
+it could not pull down, roast 55 regulated through the whole recovery. The count
+at `SV <= 141.5` is still 44.5 s, but that number no longer means saturation: it
+is the loop working in the band it now has.
+
+`SV` never approached the new 100 floor, so **100 was deep enough** and the 80
+fallback is not needed.
+
+**The gate held.** `T_inlet` carries only the known duplicate at +1.0 s and then
+nothing until the PID ON alarm at +15.5 s; the inlet sat at 144.8-146.0 and SV at
+145 throughout. Free dip measured **TP 55.6 degC at 27.0 s** against v3's 55.1 at
+29.0 s — depth right to 0.5 degC, phase 2 s.
+
+**And the dip model's "6 s phase error" is smaller than the roast-to-roast
+scatter.** Roasts 54 and 55 are nominally identical and turned at **23.0 s and
+27.0 s** — at *exactly* the same depth, 55.6 degC both times. The depth is
+strikingly repeatable; the timing is not. § The dip model's joint refit records
+the ~6 s lateness as the model's one remaining defect. It is at most half that,
+and it is inside the scatter of the measurement it was scored against.
+
+**The PID port reproduces roast 55 to rms 1.70 degC of SV** over 30-180 s — but
+only when the integrator is seeded at `iterm0 = 21.3`. Started at zero it is out
+by rms 22.7 and commands the floor. That is a direct confirmation of the floor
+change's arithmetic: § The SV floor predicted the preheat would have to build
+`Iterm` to **20.2** to hold SV 140.4 under the new mapping, and the roast says
+21.3. **Any future replay of a lowered-floor roast must seed the integrator.**
+
+#### The one new artifact: a single overcorrection at 40-95 s
+
+| window | 30-60 s | 60-95 s | 95-120 s | 120-DROP |
+|---|---|---|---|---|
+| rms | 2.49 | 3.29 | 4.10 | **0.79** |
+| worst | +3.3 | −5.3 | −5.3 | −2.3 |
+
+The bed ran **+3.3 above** the background at 40-50 s, the loop pulled SV to 122,
+and that correction landed 13.5 s later — right when v3 demands its peak RoR
+(47.7 degC/min at 60 s). The bed then fell **−4.9 behind** by 90 s, and the one
+sample of 100% heat is at 92.0 s recovering from it. From 120 s to DROP the
+tracking is the best in the series at rms 0.79.
+
+So the sign flipped and the magnitude fell (+5.5 → −4.9), but the loop now
+oscillates once where it used to saturate once. **This is a deadtime problem, not
+a gain problem**: `svLookahead` is 0 until 90 s — chosen when the dip was a mess
+and the loop had to be stopped from chasing a falling target — so through the
+whole steep recovery the loop is tracking a target 13.5 s stale.
+
+Replaying roast 55's measured BT through the port with the integrator seeded
+(the validated configuration above):
+
+| t (s) | 50 | 60 | 75 | 90 | 105 |
+|---|---|---|---|---|---|
+| measured SV | 122 | 126 | 142 | 160 | 192 |
+| LA 6 from 90 s (as run) | 121 | 124 | 141 | 159 | 191 |
+| **LA 6 from 45 s** | **143** | **155** | **180** | **202** | 214 |
+| LA 6 from 30 s | 148 | 159 | 184 | 207 | 219 |
+
+Six seconds of lookahead is worth 4.8 degC of target at 60 s, against a 4.9 degC
+undershoot. Switching at **45 s** leaves the 40 s correction intact (127 either
+way) and only starts anticipating after it; switching at 30 s fights the +3.3
+overshoot instead. **Caveat: `replay_pid` is fed measured BT, so it says what the
+controller would have commanded, not what BT would have resulted.**
+
+#### First crack is hotter than the background assumes, and that is the stretch
+
+Operator: *"The FC for this coffee seems to be a bit higher than our model, which
+stretches out the overall roast (I usually go by time past FC)."* Correct, and
+the arithmetic closes exactly.
+
+| roast | 50 | 51 | 52 | 53 | 54 | 55 | mean | v3 |
+|---|---|---|---|---|---|---|---|---|
+| FCs BT | 201.2 | 198.1 | 200.1 | 197.4 | 197.3 | 198.7 | **198.8** | **197.5** |
+| RoR at FCs (slope over ±15 s) | 8.3 | 9.8 | 7.6 | 8.8 | 8.9 | 6.2 | **8.3** | 9.3 |
+| DROP − FCs | 26.0 | 35.5 | 25.0 | 31.5 | 29.0 | 23.0 | **28.3** | 26 |
+
+`profile_003`'s 197.5 sits at the **bottom** of the range. A mark 1.3 degC low,
+at the 8.3 degC/min the roasts actually run through FC, is **9.4 s** — and roast
+55's FCs landed at **408 s against the background's 399**. The lag is the mark,
+not the loop.
+
+**`make_background.py` gains a `--development` mode**, which is how the operator
+roasts: FCs is a *temperature the coffee decides* and DROP is a *time past it*.
+It replaces the pinned DROP temperature with `--ror-at-fcs` as the third
+constraint, so the three fitted are `BT(DRY END)`, `BT(FCs)` and `RoR(FCs)`, and
+DROP is placed at `FCs + --development` with whatever temperature follows.
+
+`artisan/profile_400g_m12C_v4.alog`: FCs 6:39 at **198.8**, RoR at FCs 8.3, DROP
+28 s later at 7:07 / 202.5. All three constraints hit to 0.00, RoR monotone from
+its 46.3 peak, dip identical to v3 (3.94 degC worst against roast 55 either way).

@@ -74,8 +74,17 @@ TEMPLATE = os.path.join(REPO, 'artisan/profile_003.alog')
 # BT 130.2 / inlet 140.4 / Temp_Drive 10.25).
 INLET_PRECHARGE = 140.4
 # profile_003's marks, which roasts 50-54 were designed and scored against.
+# NOTE the FCs temperature: 197.5 is at the BOTTOM of what this coffee actually
+# cracks at (roasts 50-55: mean 198.8, median 198.4, range 197.3-201.2).  A
+# background whose FC mark is 1.3 degC low arrives there ~9 s early at the
+# ~8.3 degC/min the roasts run through FC, and the whole roast stretches past
+# it -- roast 55's FCs landed at 408 s against the background's 399.  Prefer
+# --development mode below, and set --fcs to the coffee's own FC temperature.
 DEFAULT_MARKS = {'dry_end': (192.0, 149.6), 'fcs': (399.0, 197.5),
                  'drop': (425.0, 201.4)}
+# Measured over roasts 50-55 (slope fitted over FCs +-15 s, and DROP - FCs).
+FC_ROR_DEFAULT = 8.3          # degC/min through first crack
+DEVELOPMENT_DEFAULT = 28.0    # s from FCs to DROP
 
 
 def _mark(s):
@@ -119,8 +128,16 @@ def build(t, dip_bt, i_tp, params, decline='exp'):
     return y, R
 
 
-def fit(t, dip_bt, i_tp, marks, decline='exp'):
-    """Fit the spec so the curve passes through the marks."""
+def fit(t, dip_bt, i_tp, marks, decline='exp', ror_mark=None):
+    """Fit the spec so the curve passes through the marks.
+
+    ``marks`` are ``(t, BT)`` pairs.  ``ror_mark``, if given, is a
+    ``(t, degC/min)`` pair used **instead of** a third BT mark -- this is
+    `--development` mode, where DROP is placed a fixed time after FCs and its
+    temperature is whatever the curve gives, rather than being pinned.  That is
+    how the operator actually roasts: FCs is a *temperature* the coffee decides
+    and DROP is a *time past it*.
+    """
     x0, lo, hi = {
         'exp':    ([25., 55., 8., 120.], [3., 10., 0., 20.], [120., 150., 40., 600.]),
         'linear': ([25., 55., 0.11], [3., 10., 0.0], [120., 150., 1.0]),
@@ -129,8 +146,11 @@ def fit(t, dip_bt, i_tp, marks, decline='exp'):
     }[decline]
 
     def resid(p):
-        y, _ = build(t, dip_bt, i_tp, p, decline)
-        return [float(np.interp(tm, t, y)) - bm for tm, bm in marks]
+        y, R = build(t, dip_bt, i_tp, p, decline)
+        out = [float(np.interp(tm, t, y)) - bm for tm, bm in marks]
+        if ror_mark is not None:
+            out.append(float(np.interp(ror_mark[0], t, R)) - ror_mark[1])
+        return out
 
     r = least_squares(resid, x0, bounds=(lo, hi))
     return r.x, np.asarray(r.fun)
@@ -148,7 +168,19 @@ def main():
     ap.add_argument('--decline', choices=('exp', 'linear', 'quad'), default='exp')
     ap.add_argument('--dry-end', type=_mark, default=DEFAULT_MARKS['dry_end'])
     ap.add_argument('--fcs', type=_mark, default=DEFAULT_MARKS['fcs'])
-    ap.add_argument('--drop', type=_mark, default=DEFAULT_MARKS['drop'])
+    ap.add_argument('--drop', type=_mark, default=None,
+                    help='<s>:<BT>. Pins DROP temperature. Mutually exclusive '
+                         'with --development')
+    ap.add_argument('--development', type=float, default=None,
+                    help='seconds from FCs to DROP (roasts 50-55: 23-36, mean '
+                         f'{DEVELOPMENT_DEFAULT:.0f}). DROP temperature then '
+                         'follows from the curve instead of being pinned, which '
+                         'is how the operator roasts. Implies --ror-at-fcs as '
+                         'the third constraint')
+    ap.add_argument('--ror-at-fcs', type=float, default=FC_ROR_DEFAULT,
+                    help='degC/min through first crack, the third constraint in '
+                         f'--development mode (roasts 50-55: 6.2-9.8, mean '
+                         f'{FC_ROR_DEFAULT})')
     ap.add_argument('--template', default=TEMPLATE,
                     help="only for the file's Artisan metadata; no curve is read")
     ap.add_argument('--compare', default=None, help='an existing background to print beside')
@@ -162,8 +194,19 @@ def main():
     phi400, tau_mix, w_c, cal_rms = cd.calibrate(plant, c_b, args.h_fus)
     C_ch = cd.C_chamber_from_phi(phi400, c_b)
 
-    marks = [args.dry_end, args.fcs, args.drop]
-    t_drop = args.drop[0]
+    if args.drop and args.development:
+        ap.error('--drop and --development are mutually exclusive')
+    dev_mode = args.drop is None
+    if dev_mode:
+        if args.development is None:
+            args.development = DEVELOPMENT_DEFAULT
+        t_drop = args.fcs[0] + args.development
+        marks = [args.dry_end, args.fcs]
+        ror_mark = (args.fcs[0], args.ror_at_fcs)
+    else:
+        t_drop = args.drop[0]
+        marks = [args.dry_end, args.fcs, args.drop]
+        ror_mark = None
     t = np.arange(0.0, t_drop + 2.0, 1.0)
     dip_bt = cd.dip(t, args.charge_bt, args.greens_temp, args.mass,
                     lambda _t: args.inlet_precharge, plant,
@@ -181,7 +224,7 @@ def main():
           f"thermometer offset of\n        d degC moves the dip by {phi400:.2f}*d "
           "(charge_dip.py --scale).")
 
-    params, err = fit(t, dip_bt, i_tp, marks, args.decline)
+    params, err = fit(t, dip_bt, i_tp, marks, args.decline, ror_mark)
     bt, R = build(t, dip_bt, i_tp, params, args.decline)
 
     names = ['DRY END', 'FCs', 'DROP']
@@ -189,6 +232,14 @@ def main():
     for (tm, bm), n, e in zip(marks, names, err):
         print(f"   {n:<8s}  {tm:5.0f} s ({tm//60:.0f}:{tm%60:02.0f})  {bm:6.1f}   "
               f"{float(np.interp(tm, t, bt)):6.1f}   {e:+6.2f} degC")
+    if dev_mode:
+        print(f"   RoR@FCs   {args.fcs[0]:5.0f} s          "
+              f"{args.ror_at_fcs:6.1f}   {float(np.interp(args.fcs[0], t, R)):6.1f}   "
+              f"{err[-1]:+6.2f} degC/min")
+        print(f"   DROP      {t_drop:5.0f} s "
+              f"({t_drop//60:.0f}:{t_drop%60:02.0f})     ---   "
+              f"{float(np.interp(t_drop, t, bt)):6.1f}      --   "
+              f"<- {args.development:.0f} s past FCs, temperature NOT pinned")
     i_pk = int(np.argmax(R))
     rising = bool(np.all(np.diff(R[i_tp:i_pk + 1]) >= -1e-9))
     falling = bool(np.all(np.diff(R[i_pk:int(t_drop) + 1]) <= 1e-9))
@@ -230,7 +281,7 @@ def main():
     raw['temp1'] = [float(x) for x in
                     np.interp(t[:n], src_t, np.asarray(raw['temp1'], dtype=float))]
     raw['timeindex'] = [0, int(round(args.dry_end[0])), int(round(args.fcs[0])),
-                        0, 0, 0, int(round(args.drop[0])), 0]
+                        0, 0, 0, int(round(t_drop)), 0]
     raw['roastingnotes'] = (
         f"Authored by tools/make_background.py: {args.mass:.0f} g at "
         f"greens_temp {args.greens_temp:+.1f} degC (operator scale), charge BT "
@@ -238,7 +289,10 @@ def main():
         f"charge_dip (phi {phi400:.4f}, tau_mix {tau_mix:.2f}, w_c {w_c:.2f}) to "
         f"TP {dip_bt[i_tp]:.1f} at {t[i_tp]:.0f} s; RoR '{args.decline}' spec "
         f"{np.array2string(params, precision=4)} thereafter, fitted to "
-        f"DRY END/FCs/DROP.")
+        + (f"DRY END, FCs and RoR {args.ror_at_fcs:.1f} degC/min at FCs; DROP "
+           f"{args.development:.0f} s past FCs at "
+           f"{float(np.interp(t_drop, t, bt)):.1f} degC."
+           if dev_mode else "DRY END/FCs/DROP."))
     out = args.out or os.path.join(
         REPO, 'artisan',
         f"profile_{args.mass:.0f}g_{args.greens_temp:+.0f}C_authored.alog"
