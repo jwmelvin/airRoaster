@@ -927,6 +927,111 @@ be to enable the predictor, and the channel route achieves that without it. The
 1 Hz WebSocket link is not a limitation — 1 s against 17 s of deadtime — and the
 background curve authoring belongs in Artisan's Designer.
 
+#### Normalize the charge with the PREHEAT, not the background (operator, 2026-09-08)
+
+**The idea.** Instead of authoring a different roast for every greens
+temperature, preheat *hotter* for a cold charge and *cooler* for a warm one, so
+every batch arrives at the same post-dip state and the loop sees the same job.
+Modelled in `tools/analysis/preheat_lever.py`; run it rather than trusting the
+summary here.
+
+**It works in the model, and the lever is small enough to be practical.**
+
+```
+preheat BT = 124.4 − 1.17 × greens_temp        (400 g, operator's thermometer scale)
+```
+
+| spread over greens −24…+25 degC, 400 g | TP | BT@60 | BT@90 | rms 30-90 s |
+|---|---|---|---|---|
+| preheat fixed at 130.2 (today) | 29.2 | 27.5 | 23.8 | 1.11-16.71 |
+| compensated | **5.3** | **0.9** | **7.6** | **0.18-2.71** |
+
+Roast 56 tracked its own background at rms 0.94 degC over 30-90 s, so the
+compensated residual is at the noise floor of what the machine achieves.
+
+**The prize is not the tracking number, it is what the loop is asked for.**
+Regenerating the background at each charge temperature with the RoR peak pinned
+at 53 s, the *demanded* peak RoR spans **33.5-55.4 degC/min** today and
+**42.8-49.0** compensated — spread 21.9 falling to 6.2, against a machine
+ceiling of 72. Nearly a third of the demonstrated rate range is currently spent
+on charge temperature alone.
+
+**Why it works is not the phrase "retained energy".** `phi = 0.712` at 400 g
+implies `C_chamber = 276` against `m·c_b = 680` — **the chamber is worth about
+162 g of coffee**, 41% of the charge. It is not a flywheel, so raising the
+preheat by 1 degC hands the bed only `(1 − phi) = 0.29`. The lever reaches
+0.40-0.47 because a *settled* preheat is two things: a hotter store and a hotter
+inlet. The deficit is spent once; the inlet keeps delivering. **Two thirds
+store, one third flow.**
+
+Consequences worth keeping:
+
+- **Match the loop's window, not the turning point.** TP-matching is the obvious
+  target and it is wrong — it lands the TP exactly and then over-drives the
+  recovery (BT@90 spread 14.4 against 7.6). Fit the preheat over 30-90 s.
+- **The lever is mass-dependent** — 0.85 at 250 g to 1.33 at 500 g, because
+  `phi` saturates. **Never scale it**, same rule as the background itself.
+- **The inlet floor binds at the WARM end, and 100 clears it.** Greens +25 needs
+  preheat 95.2 / inlet 102.0; the old 140 floor would have blocked everything
+  above about greens −5. `floor100.aset` is what makes this possible at all.
+- **The region compensation changes is the region the loop is gated out of.**
+  PID is OFF from CHARGE and its first correction lands ~28.5 s, just past the
+  TP (§ The charge gate). Compensation reshapes 0..TP and normalizes TP onward.
+- **Keep regenerating the dip.** A compensated roast starts at its own preheat,
+  so BT at CHARGE is up to ±27 degC from a fixed file — the 0-30 s check would
+  blow up. `make_background.py` already redraws the dip for free; what becomes
+  invariant is the *design* half, which is the half that matters.
+
+##### THE HALF THAT IS NOT MEASURED — this gates the whole idea
+
+`charge_dip`'s calibration roasts 50/51/53/54 charged at BT **129.7, 131.0,
+130.5, 129.8**. A spread of **1.3 degC**. Nobody has ever preheated this machine
+anywhere but 130.
+
+- `d(TP)/d(greens)` = **0.60** is a measurement — roast 50 at room temperature
+  against 51/53/54 out of the freezer.
+- `d(TP)/d(preheat)` = **0.40** is **structure, not data.** It follows from
+  `dT_mix = phi·(BT_c − T_bean)` putting the two temperatures in one bracket.
+
+**So the model cannot falsify the idea; it assumes the trade it is being asked
+about.** Do not ship the rule on the model alone.
+
+**The experiment is one roast** (`preheat_lever.py --experiment`). Hold the mass
+and the greens temperature, step the **preheat** by 10-15 degC, regenerate the
+background at the new preheat (`--charge-bt`, `--inlet-precharge`) so the loop is
+not asked to fight the step, and read the TP off the log. The 130.2 baseline is
+already four roasts deep, so one point gives the gain.
+
+| preheat | inlet | predicted TP | predicted BT@60 |
+|---|---|---|---|
+| 130.2 (baseline) | 140.4 | 59.25 | 73.21 |
+| 140.2 | 151.4 | 63.40 (+4.15) | 77.86 (+4.65) |
+| 145.2 | 156.9 | 65.48 (+6.23) | 80.19 (+6.98) |
+
+A 10 degC step clears the dip model's 1.31 degC calibration rms and the −12
+group's 2.7 degC scatter. **A measured gain below ~0.3 or above ~0.55 moves the
+lever enough to matter; inside that band, ship the rule.** The same roast also
+tests the two things the model has nothing to say about: whether **fan 60 still
+settles** at the higher preheat, and what **Temp_Drive** does there (predicted
+11.8 at BT 145 on a linear-loss slope, 16.0 on roast 47's empty-chamber slope —
+that spread is itself the measurement).
+
+**Three ways it could fail on the machine, none of them in the model:**
+
+1. **`phi` may not be constant in preheat.** The BT probe is not the chamber
+   wall. If a hotter preheat stores energy the probe reads differently, `phi`
+   moves and the lever with it.
+2. **Losses look super-linear.** Roast 47's grid implies ~0.38 degC of
+   Temp_Drive per degC of BT against 0.10 for a loss linear in (BT − ambient).
+   A 152 degC preheat may not settle at fan 60, and the walls may give more back
+   during the pour.
+3. **Scorching.** Tipping into 152 degC is not tipping into 130 degC. Operator
+   judgement, and it caps the cold end of the range independently of the model.
+
+**Ordering.** This is *not* roast 57's or 58's — 57 is `LA 12` and 58 is the FC
+mark, both already single-variable. It slots after them, and the preheat step is
+itself a clean single variable.
+
 #### Measure the charge temperature instead of inferring it (operator, 2026-09-06)
 
 **Charge with the fan off, read the incoming bean temperature off the BT probe's
