@@ -819,6 +819,78 @@ alongside the existing `inletBase`/`inletTrim` pair, plus
 `slider_min < positiveTargetMin` (pid_control.py:1302), so a drive range
 starting at 0 needs slider 3's minimum moved below it.
 
+##### The development plan — five stages, and only one of them costs beans
+
+Gated on the preheat characterisation (state-current.md § HANDOFF § 0 and § 1),
+because stage A's design constants come out of it.
+
+**A. Bench, no beans — the Temp_Drive ladder.** This is § 0 of roast 57 and it is
+already scheduled. It yields `d(TD)/d(BT)`, which is the **DC gain of the
+drive→BT loop** and therefore decides whether this design is nearly an integrator
+(type-2, no ramp error) or a high-gain type-0. It also gives the settling ceiling
+at fan 60, which bounds the drive range.
+
+*Kill criterion:* if `d(TD)/d(BT)` comes back **above ~0.5**, the drive→BT loop
+has a DC gain under 2 and a time constant near today's — the structural benefit
+is mostly gone, and the measured drift table above (1.0-2.3× over the drying
+ramp) is then the whole story. **Stop here and reconsider.**
+
+**B. Desk — settle the four design questions.** None need hardware.
+
+1. **The staleness fallback.** A frozen drive keeps ramping; a frozen absolute SV
+   does not. The fallback must **latch the last effective absolute SV**, not zero
+   the drive and not hold the drive. `INLET_TRIM_STALE_MS`'s 15 s and its
+   "logged once per stale run" pattern are the shape; the *action* is different
+   and this is the one place the existing code must not simply be copied.
+2. **The BT path into the setpoint.** BT enters its own setpoint with gain 1.
+   Decide: which filtered `btTemp`, what slew limit on the base, and what happens
+   across an RTD fault (hold last good, and for how long before the failsafe).
+3. **The mode transition at CHARGE+15.** The gate holds an absolute SV through
+   the dip and drive engages with the PID. That handover must be bumpless in
+   *both* directions — the firmware seeds `drive = inletSV − btTemp` on entry,
+   and Artisan's PID integrator must map to that same drive. This is the same
+   integrator-handover problem the cascade already has at CHARGE+15, at a
+   different scale; § Roast 44 outer-loop analysis and § Roast 53 are the prior
+   art.
+4. **The drive range and the slider assumption.** Map
+   `positiveTargetMin`/`Max` onto a drive range — roasts 53-56 ran
+   Temp_Drive **29-94 degC**, so something like 0-160 covers it with margin.
+   Artisan asserts `slider_min < positiveTargetMin < positiveTargetMax <
+   slider_max` (`pid_control.py:1302`), so slider 3's minimum has to move below
+   the drive floor. **Do not leave the 0-320 slider range and a 0 floor: that
+   violates the assertion Artisan states.**
+
+**C. Firmware — `INLET DRIVE <degC>`, and a bench drill.** One command beside the
+existing `inletBase`/`inletTrim` pair (`inletEffectiveSV()`, airRoaster.ino:2543
+is the single place that assigns `inletSV`, so this is a small change in a place
+already designed for it). Drill it exactly like § NEXT 14: bounds, `INLET DRIVE
+0`, bare `INLET DRIVE` reporting, the staleness ramp, clearing on `INLET OFF` /
+`INLET 0` / `TUNE` / failsafe, auth under `AUTH MODE FULL`, and a regression run
+that never sends the command. **Add one drill § NEXT 14 has no analogue for: with
+the drive engaged, spoof an RTD fault and confirm the setpoint holds rather than
+following BT to zero.**
+
+**D. Empty chamber, no beans — first light.** Run the whole cascade against a
+background with no charge in the drum, exactly as roast 47's grid did. The plant
+is wrong (no bed) so tracking numbers mean nothing, but **every failure mode
+worth finding is structural**: the CHARGE+15 handover, the staleness fallback,
+the drive range mapping, whether BT noise reaches the heat, and whether the loop
+is stable at all with BT inside its own setpoint. **This stage is free and it is
+where the design should break if it is going to.**
+
+**E. One roast — and not on `C1043`.** By the time this runs it is a
+single-variable change against a known-good baseline. Score it on the four checks
+plus the 120 s→DROP tracking rms and, specifically, **the drift in the loop's own
+output** — the quantity the whole design is about. Predicted: the same tracking
+as roast 56 with 2-3× less effort drift over the drying ramp, and **no floor
+saturation at any BT**, which is the claim that is most worth checking because it
+is the one the measured drift table does not already answer.
+
+**Where LA 12 sits.** Deferred (state-history.md § The LA 12 plan, deferred).
+If stage E lands, a lookahead patch on a type-1 ramp error is treating a symptom
+the loop no longer has — so **decide LA 12 after E, not before.** If A's kill
+criterion fires, LA 12 comes straight back as the cheap fix it was.
+
 ##### The unmeasured number is the same one the preheat work needs
 
 `d(TD)/d(BT)` — how much more drive it takes to hold a hotter BT — is the DC gain

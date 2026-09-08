@@ -5064,3 +5064,36 @@ ramp is undetermined.
 
 **No background file was regenerated.** Roast 57 runs `profile_400g_m5C_v4.alog`
 unchanged, as § HANDOFF specifies; this is desk work on the generator only.
+
+### The LA 12 plan, deferred (2026-09-08)
+
+Roast 57 was scoped as a lookahead switch — a 27th event button `LA 12`
+(`pidLookahead(12)`) and an eighth alarm row at `CHARGE + 105`, aimed at roast
+56's residual: dead on the curve at 120 s (−0.08) and **−2.91 degC by 200 s**,
+the integrator's fill rate against the drying ramp. The sizing was phase
+arithmetic — at 105-120 s the background runs 25-27 degC/min, so 12 s of
+lookahead is worth ~5 degC of SV, and the SV step at 105 s should be
+`(bkg(117) − bkg(111)) × 4.8 ≈ 17 degC`. 105 s was chosen because it precedes
+the divergence and the loop is calm there (roast-56 error +0.46 to −0.08 over
+105-120 s).
+
+**The operator redirected roast 57 to the preheat step instead (2026-09-08), and
+this is deferred rather than cancelled.** Three things to carry:
+
+- **The config is already built and checked in** — `LA 12` and its alarm row are
+  in `artisan/airRoaster_cascadePID_floor100.aset`. Nothing needs authoring.
+  `pidLookahead(<n>)` takes an arbitrary integer (`main.py:10935-10945`).
+- **Roast 57 keeps the baseline.** Its background converges to roast 56's by
+  160-200 s (+0.62 / −0.12), so the 140-200 s residual stays comparable and the
+  case for LA 12 is not weakened by the detour.
+- **It may become unnecessary.** § Temp_Drive as the effort variable attacks the
+  same lag *structurally* — it is the operating-point term of step 9's
+  feedforward, supplied by measurement — and if that lands, a lookahead patch on
+  a type-1 ramp error is treating a symptom the loop no longer has. **Decide LA
+  12 after the Temp_Drive question, not before.**
+
+**Do not try to size it with `replay_pid`.** It is fed measured BT, so a
+sustained lookahead change reads as a permanent P offset the real loop would
+erase as BT caught up — it reports `LA 12` commanding SV 278 at 300 s, which is
+the artifact, not a prediction. The phase arithmetic above is the honest sizing.
+

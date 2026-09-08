@@ -10,7 +10,7 @@
 > when a plan section turns into a record of what happened rather than a
 > statement of what to do, move it to *history*.
 
-## HANDOFF — roast 57 (2026-09-07)
+## HANDOFF — roast 57 (2026-09-08): the preheat step
 
 **If you are a fresh context, this section is the whole job.** Everything below it
 is background.
@@ -53,68 +53,130 @@ Roast 56 also carried an **unplanned third change**: the charge was
 differ by at most 6.96 degC at 57 s and by under 0.4 degC after 130 s), but it
 means 0-120 s carried two changes at once.
 
-### The job: roast 57 — one change, and a decision
+### The job: roast 57 — step the PREHEAT, and read three things off one roast
 
-#### 1. The residual has moved to the drying ramp, 140-200 s
+**This replaces the `LA 12` lookahead plan** (operator, 2026-09-08). LA 12 is not
+cancelled, it is deferred — and it may turn out to be unnecessary, because the
+Temp_Drive loop attacks the same 140-200 s lag structurally (state-plan.md
+§ Temp_Drive as the effort variable). The old plan is preserved in
+state-history.md § The LA 12 plan, deferred.
 
-Roast 56 enters 120 s dead on the curve (−0.08) and diverges to **−2.91 degC by
-165 s** before recovering to under 0.5 by 250 s. This is the only window where it
-is worse than roast 55 (120-DROP rms 1.28 vs 0.79), and it is **not** the
-background: v3 and v4 agree to 0.35 degC and their RoRs to 1.5 degC/min across
-140-220 s.
+**Bean budget: 2-3 loads of `C1043` remain.** That is the binding constraint on
+everything below. See § The bean budget.
 
-It is the integrator's fill rate against the drying ramp. Backing the terms out
-of the recorded SV (`output = (SV − 100)/2` under the 100/300 mapping,
-`Iterm = output − Kp x (bkg(t + LA) − BT)`):
+#### 0. BENCH FIRST — the Temp_Drive ladder, and it costs no beans
 
-| t (s) | 90 | 105 | 120 | 140 | 160 | 180 | 200 | 240 |
-|---|---|---|---|---|---|---|---|---|
-| roast 55 `Iterm` | 18.2 | 26.1 | 32.1 | 36.7 | 40.9 | 44.6 | 48.7 | 54.3 |
-| roast 56 `Iterm` | 25.8 | 27.9 | 29.8 | 32.6 | 37.7 | 43.7 | 48.1 | 54.5 |
+**Do this before the roast, in one preheat session, and do not charge if it
+fails.** At fan **60**, under the PID, settle and record `Temp_Drive`
+(`Inlet − BT`, the Y3−Y2 channel) at each rung:
 
-Roast 55 reached 140 s with **4 more duty** (8 degC of SV) because it had spent
-90-120 s digging out of a 5 degC undershoot, and the big error pumped the
-integrator. **Fixing the undershoot removed the error that was pre-charging the
-integrator for the ramp.** −2.6 degC where the background runs 25-27 degC/min is
-**~6 s of phase** — the residual of a 13.5 s apparent plant lag against 6 s of
-lookahead.
+| BT | settle until Temp_Drive is flat, then record | predicted |
+|---|---|---|
+| 130.2 | the historical point — this is the anchor | 10.25 (roasts 53-56 read 11.6-13.5) |
+| 140 | | 11.2 (slope 0.10) … 14.0 (slope 0.383) |
+| **145** | **the rung roast 57 runs at** | 11.8 … 16.0 |
+| 152 | the coldest-charge rung the schedule would ever ask for | 12.4 … 18.6 |
 
-**The change, and the only one: `LA 12` from 105 s.** It supplies 6 s of phase
-exactly where it is missing, and costs little late — by 300 s the background
-runs 10 degC/min, so 12 s of lookahead is worth only 2 degC of target. The
-alternative, raising `Ki`, changes the dip as well and gives up the
-disjoint-regions property that has made the last four roasts readable.
+**This one ladder is the most valuable measurement on the list.** `d(TD)/d(BT)`
+is bracketed 0.10-0.383 and has never been measured, and it sets **three**
+separate things: the preheat lever (state-plan.md § Normalize the charge with
+the PREHEAT), how integrator-like a Temp_Drive loop is (§ Temp_Drive as the
+effort variable), and how much of `plant_roast46.json`'s `loss(t)` is really a
+BT-dependent loss aliased into a time function. Measuring it inside **one
+session** removes the machine-history scatter that makes the across-roast
+readings (11.62 / 11.92 / 13.19 / 13.45) useless for a slope.
 
-**105 s, not 120.** The `Fan 60` alarm is already at 120 s; firing both there
-would put two step disturbances on the same tick and make neither attributable.
-105 s also precedes the divergence, which is what anticipation is for — at
-105-120 s the roast-56 error is +0.46 to −0.08, so the loop is calm when the
-step lands.
+**Abort criteria, and they are the point of doing this first:**
 
-**The config is already in `artisan/airRoaster_cascadePID_floor100.aset`** —
-a 27th event button `LA 12` (`pidLookahead(12)`, action 20, type 4, invisible
-like `LA 0` and `LA 6`) and an eighth alarm row at `CHARGE + 105` firing it.
-`pidLookahead(<n>)` takes an arbitrary integer (`main.py:10935-10945`). **Still
-check all eight rows in the dialog before the roast** — see the box below — and
-verify from the log afterwards by the SV step, which at 105 s should be
-`(bkg(117) − bkg(111)) x 4.8 ≈ 17 degC`.
+- **If a rung will not settle** — BT flat, inlet off its floor, Temp_Drive
+  steady — that rung is unreachable at fan 60 and the schedule stops below it.
+  Drop roast 57 to the highest rung that did settle and regenerate.
+- **If 145 will not settle**, run the roast at **140** instead (predicted TP
+  shift +4.15 rather than +6.24 — still clears the noise) and say so in the log.
+- The empty-chamber evidence behind the 0.383 slope is explicitly warned as
+  trend-only (25 s windows against a ~45 s time constant), so **a reading
+  outside 0.10-0.383 is a result, not an error.**
 
-**Background: `artisan/profile_400g_m5C_v4.alog`, unchanged.** Its FCs mark of
-198.8 is known to be wrong for this coffee (see item 3). That fix stays roast
-58's, alone, but **the reason has changed** and it is now a much smaller edit
-than this section used to claim. The −4.8 degC at 60 s was a *solver* artefact,
-not a global fit doing its job: the exponential spec has four free parameters
-against three marks, so the ramp was undetermined and the optimizer picked it.
-With `--ror-peak-at` pinning it (2026-09-08, § Regenerating the background),
-moving the mark 198.8 → 197.7 costs **+0.26 degC at 60 s**, monotone, and does
-not move the peak at all. The mark is still a label the cascade never reads; the
-curve is still what the loop follows. See state-plan.md § Bean reference.
+#### 1. The roast: preheat 130.2 → 145.2, everything else held
 
-**Do not try to size the lookahead change with `replay_pid`.** It is fed
-measured BT, so a sustained lookahead change reads as a permanent P offset the
-real loop would erase as BT caught up — it reports `LA 12` commanding SV 278 at
-300 s, which is the artifact, not a prediction. The phase arithmetic above is
-the honest sizing.
+**One change.** Same coffee (`C1043`), same mass (400 g), **same greens
+temperature (−5.0)**, same fan schedule, same gate, same gains. Only the preheat
+moves.
+
+| | roast 56 | **roast 57** |
+|---|---|---|
+| preheat BT | 130.2 | **145.2** |
+| precharge inlet | 141.8 | **~157** (whatever § 0 measured) |
+| background | `profile_400g_m5C_v4.alog` | **`profile_400g_m5C_pre145_v6.alog`** |
+| FCs mark | 198.8 | 197.7 (see § 3 — it rides along, and cannot confound) |
+| `.aset` | `…_floor100.aset` | **`…_preheat.aset`** — see the box below |
+
+> **`floor100.aset` would fire `LA 12` at 105 s and give you two variables.**
+> Roast 57's plan was written before the lookahead row existed; the row is real,
+> enabled, and checked in — `alarmflag=0, 1, 1, 1, 1, 1, 1, **1**`, row 8,
+> `CHARGE + 105 s`, button 27. **Load
+> `artisan/airRoaster_cascadePID_preheat.aset` instead.** It is `floor100.aset`
+> with exactly one field changed, `alarmflag` row 8 → `0`, and nothing else: same
+> gains, same floor 100, same seven other alarms, same buttons. Verify with
+> `diff` before trusting it, and then still check row 8 reads **off** in the
+> Alarms dialog — see § The alarm table can silently disagree with the .aset.
+
+**The background is already generated and checked in.** All four constraints at
+0.00, RoR monotone, peak 42.4 degC/min at 53 s. If § 0 reads a settled inlet more
+than ~3 degC off 157, regenerate — but the whole 11.8-vs-16.0 Temp_Drive spread
+is worth only **0.56 degC of TP**, so this is a tidiness fix, not a correctness
+one:
+
+```
+.venv/bin/python tools/make_background.py --mass 400 --greens-temp -5 \
+    --charge-bt 145.2 --inlet-precharge <measured> \
+    --fcs 399:197.7 --development 28 --ror-at-fcs 9.4 \
+    --compare artisan/profile_400g_m5C_v4.alog \
+    --out artisan/profile_400g_m5C_pre145_v6.alog
+```
+
+**`greens_temp = -5.0` is a hard requirement, not a nicety.** The measurement is
+`TP(57) − TP(56)` with everything else cancelled, and greens temperature enters
+the TP at **0.60 degC/degC** — so 2 degC of drift is 1.2 degC of TP, 19% of the
+signal. Read it the same way, from the same place, at the same time out of the
+freezer. If it cannot be matched, record what it actually was and say so: the
+roast is still readable against the model, just with the model's own 1.85 degC
+bias back in play.
+
+#### 1a. What the roast measures
+
+**`d(TP)/d(preheat)` — the number the whole preheat idea rests on.** Every
+calibration roast charged at BT 129.7-131.0, a 1.3 degC spread, so this gain is
+currently *structure* (it follows from `dT_mix = phi·(BT_c − T_bean)` putting
+both temperatures in one bracket) and not data. The model **assumes the trade it
+is being asked about** and cannot falsify it.
+
+| | value |
+|---|---|
+| roast 56's measured TP | **61.10 degC at 26 s** |
+| model for roast 56 | 59.25 (so the model runs **1.85 degC deep** here) |
+| model for roast 57 | 65.48 |
+| **predicted TP** | **≈ 67.3** (model + the same bias), i.e. **ΔTP ≈ +6.2** |
+| repeatability to beat | roasts 54 and 55, gated, same lot/mass/greens: TP **55.60 and 55.60** |
+
+**Read the gain as `ΔTP / 15.0`.** Predicted **0.415**.
+
+- **0.30 … 0.55** → the lever stands. Ship
+  `preheat = 124.4 − 1.17 × greens_temp` at 400 g and move on.
+- **outside that band** → recompute the lever from the measured gain before any
+  compensated roast. `tools/analysis/preheat_lever.py` is the tool; the lever is
+  `0.60 / measured_gain`.
+- **ΔTP under ~2** → the mechanism is not there and the whole preheat idea is
+  dead. That is a real possible outcome and it is worth one roast to find out.
+
+#### 1b. It is still a readable roast for two other things
+
+- **The 140-200 s lag.** The two backgrounds differ by **+0.62 degC at 160 s and
+  −0.12 at 200 s** — they have converged by then. So roast 57's drying-ramp
+  residual is directly comparable with roast 56's −2.91, and the LA 12 question
+  keeps its baseline.
+- **`C1043`'s first-crack temperature**, which is why this roast is worth
+  spending a scarce load on. See § 3.
 
 #### 2. Decide step 9, `INLET TRIM` — the tracking case is dead
 
@@ -148,14 +210,29 @@ at 397.5 and 395.5 s, *early*. Roast 56's change 1 was chasing noise. It did no
 harm — BT was +0.33 degC from the background at the crack — but it was not a
 correction.
 
-**Roast 56's 195.3 is the outlier of its own lot**, 2.4 degC below the other
-four, which sit in a 0.5 degC band. Either a new bag under the same hr_id
+**Roast 56's 195.3 is the outlier of its own lot.** `beans.py --coffee C1043`
+now reads eight roasts: 196.0 / 196.6 / 197.4 / 197.7 / 197.8 / 197.9 / **195.3**
+(and one 250 g Behmor-era entry excluded by mass). Seven sit in a 1.9 degC band;
+195.3 is 1.2 degC below the lowest of them. Either a new bag under the same hr_id
 (artisan.plus identifies the coffee, not the crop or the bag) or a crack marked
 early by ear. `artisan/profile_400g_m5C_fc195_v5.alog` is parked at 195.5 and
-**rests on that single reading**; a curve at ~197.7 is the better bet unless the
-next roast of `C1043` also reads low. **Either way it is roast 58's change, not
-roast 57's.** Run `tools/analysis/beans.py --coffee C1043` first; per-lot FC is
-derived, never recorded by hand (state-plan.md § Bean reference).
+**rests on that single reading**; 197.7 is the better bet.
+
+**It has been folded into roast 57 and no longer needs a roast of its own.**
+That was decided on arithmetic, not on principle — the mark change costs
+**+0.00 degC at the TP and +0.26 at 60 s** against the preheat step's +6.24 and
++4.69, so it is **0% of the primary signal and 5% of the secondary one** and
+cannot confound it. (Before the RoR peak was pinned it would have been −4.8 degC
+at 60 s, which is why it was ever a roast of its own; see § Regenerating the
+background.) Roast 57 therefore reads `C1043`'s crack temperature *as an
+observation* — the mark is a label the cascade never reads — and settles the
+195.3 question in the same load.
+
+**What settles it:** roast 57 cracking at 197-198 makes 195.3 a one-off and the
+lot's number is 197.7. Cracking at ~195 twice running makes it a real property of
+this bag, and the background moves to 195.5 for the remaining loads. Either way
+run `beans.py --coffee C1043` again afterwards; per-lot FC is derived, never
+recorded by hand (state-plan.md § Bean reference).
 
 DROP came **19 s** after FCs, not the 28 the background specifies. Left at 28
 for now — the DROP mark only closes the control window (`calcSV` returns `None`
@@ -163,19 +240,67 @@ past `drop_t`) and every roast has dropped well inside it.
 
 ### What to expect
 
-- The 140-200 s lag should close from −2.9 toward ~−1. Watch that `LA 12` does
-  not overshoot at 115-160 s, where the background is steepest after the dip.
-- The four checks should be unchanged: `LA 12` starts at 105 s and all four are
-  scored at or before it (peak SV and the 0-30 s dip are in the first minute;
-  the 30-90 s error window closes 15 s before the switch).
-- 120-DROP rms should come back toward roast 55's 0.79.
-- Nothing before 105 s changes, so **any movement in the first 90 s means
-  something else moved** — check the alarm table, the background file and the
-  charge temperature first.
-- FC will land before the 399 s mark again — v4 passes 197.7 at **391 s** and
-  195.3 at **375 s**, so the crack time itself distinguishes them. **Either way it is expected and not a finding**; the mark is
-  deliberately not being moved this roast. Which of the two it is settles
-  roast 58's background.
+**Primary.** TP **≈ 67.3 degC** (61.10 + 6.2), still at **26-30 s**. The TP
+*time* barely moves with preheat (the model says +0 s), so a large shift in the
+turn time means something other than the preheat moved — check greens
+temperature and the fan step first.
+
+**The first 90 s is the whole experiment.** BT should run **+6.2 degC at 30 s,
++4.7 at 60 s, +3.0 at 90 s** above roast 56, converging to **+0.6 at 160 s** and
+**−0.1 at 200 s**. That is the background's own shape, so if the loop tracks,
+these are the numbers.
+
+**The four checks should be unchanged**, and this is a real prediction rather
+than a hope: the demanded peak RoR *falls* from 44.9 to **42.4 degC/min**,
+because a higher turning point needs less ramp to make DRY END. So peak SV, heat
+at 100% and floor saturation should all be **as good as roast 56 or better**. If
+any of them degrades, the preheat has changed something the dip model does not
+contain — which is itself the finding.
+
+**Watch for, and log:**
+
+- **the settled Temp_Drive at 145** — § 0's ladder is the measurement, but record
+  the value the roast actually charged from too.
+- **scorching or tipping.** 145 degC is 15 degC hotter than the beans have ever
+  been tipped into. It is well under the ~200 degC surface temperature that
+  scorches, and the bed drops the chamber immediately, so this is expected to be
+  a non-event — but it is the one risk the model has nothing to say about, and
+  **the operator's judgement overrides the schedule.** Look at the beans.
+- **first crack time and temperature.** v6 passes **195.3 at 384 s and 197.7 at
+  399 s** — 15 s apart, so the crack *time* distinguishes them on its own. (v4
+  was 375 / 391; the mark is now on the curve rather than 8 s past it, because
+  197.7 is the mark v6 was fitted to.)
+- **the 140-200 s residual**, comparable with roast 56's −2.91 (§ 1b).
+
+**What would make this roast uninterpretable:** a greens temperature that is not
+−5, a different mass, or the alarm table having drifted. Check all three before
+charging.
+
+### The bean budget — 2-3 loads of `C1043` left
+
+**`C1043` is only irreplaceable for one question: what this lot cracks at.**
+Everything else on the list is a *machine* measurement — the dip is over by 29 s,
+the loop's window is 30-200 s, and first crack is at ~395 s. A control experiment
+scored on 0-200 s does not care which coffee is in the drum.
+
+So the rule is: **spend `C1043` where the lot matters, and run machine work on
+whatever else is in the cupboard.**
+
+| load | what | why it must be `C1043` |
+|---|---|---|
+| **1 — roast 57** | the preheat step | it is not required, but it is free: the crack reading rides along and settles the 195.3 question in a load that was being spent anyway |
+| **2 — reserve** | only if roast 57's crack reading is ambiguous (marked uncertainly, or lands between 195.5 and 197.7) | confirming the lot's number |
+| **3 — if it exists** | the first compensated roast, or the Temp_Drive first light | not required — prefer another coffee and keep this one |
+
+**On another coffee, the only cost is a less well-targeted back half**: a lot
+with no cascade-era history has no derived `--fcs` / `--ror-at-fcs`, so use
+`beans.py`'s pooled default and accept that first crack lands early or late.
+**That is not a defect for a control experiment** — the four checks and the
+loop's window all close 200 s before the crack. Say so in the log rather than
+pretending the back half was on target.
+
+**Do not spend a `C1043` load on:** the Temp_Drive bench work (no beans at all),
+the empty-chamber shakedown (no beans), or a second preheat rung (any coffee).
 
 ### Regenerating the background
 
@@ -239,6 +364,10 @@ whole table too, but the `alarmsets` slots in these files are empty.
 **Before every roast, open Alarms and check every row against this table.** The
 time column is `mm:ss`, so 120 s reads `02:00`, not `:20`.
 
+**For roast 57 the eighth row must read `off`** — that is the only difference
+between `floor100.aset` and `preheat.aset`, and it is the difference between one
+variable and two.
+
 | # | On | From | Time | Source | Cond | Value | Action | Button |
 |---|---|---|---|---|---|---|---|---|
 | 1 | off | CHARGE | 00:01 | | > | 0 | Playback ON | |
@@ -248,7 +377,7 @@ time column is `mm:ss`, so 120 s reads `02:00`, not `:20`.
 | 5 | ON | ON | 16:00 | BT | < | 131 | Event Button | 23 = `ARM bak` |
 | 6 | ON | CHARGE | 00:15 | | > | 0 | Event Button | 25 = `PID on` |
 | 7 | ON | CHARGE | 02:00 | | > | 0 | Event Button | 26 = `Fan 60` |
-| **8** | ON | CHARGE | **01:45** | | > | 0 | Event Button | **27 = `LA 12`** |
+| **8** | **off for roast 57** (ON in `floor100.aset`) | CHARGE | **01:45** | | > | 0 | Event Button | **27 = `LA 12`** |
 
 (Button numbers in `alarmstrings` are 1-based into `extraeventslabels`, which is
 0-based: `alarmstrings` `21` is `extraeventslabels[20]` = `LA 6`.)
