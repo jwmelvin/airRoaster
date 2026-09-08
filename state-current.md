@@ -412,7 +412,11 @@ fast-forwarded into `main`; its on-roaster validation is still pending
 working branch is **`feature/artisan-pid`**, which carries **v0.19.0** (flashed
 2026-09-06 and validated on roast 47: the `SV`/`HT` `getData` nodes are live;
 `INLET TRIM` is flashed but still un-drilled — state-plan.md § NEXT item 14) and
-now **v0.20.0** (unflashed): the measured `feedforward()` map. Note that
+now **v0.20.0** — the measured `feedforward()` map. **v0.20.0 IS flashed**
+(corrected 2026-09-08; this paragraph said "unflashed" and contradicted its own
+§ Step 8, which records roast 48 on 2026-09-06 as *"the first roast on v0.20.0"*
+and scores fourteen windows *"against the map flashed in v0.20.0"* at bias
++1.07% / rms 1.61%). Every roast from 48 on has run it. Note that
 `feature/vision-uvc-probe` holds two commits that exist on no other branch and
 have never been pushed. Start each new effort on a fresh branch off `main`.
 Commit per phase with a message naming the phase. The user's Artisan config
