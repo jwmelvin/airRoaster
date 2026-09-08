@@ -21,7 +21,8 @@ reproduces the outer loop so tuning can be tested before it is roasted.
 | `charge_thermal.py` | the charge-thermal test's two no-flow charge decays. Primarily an **identifiability report**: what the still-air decay measures (the probe's weighting onto the chamber, the fan-burst bias) and what it cannot (the chamber capacity, the charge temperature). ~14 min |
 | `dekick_tp.py` | how much of a measured turning point is the loop's own kick: backs the inlet excess out of the dip with the plant card, so the dip model is not refitted against the overshoot it caused |
 | `charge_dip.py` | the charge dip from `(mass, greens temp)`: a mixing term (pour ramp + exponential) in front of the plant card, fitted jointly to roasts 50/51/53/54 over their loop-free windows. `--ramp` profiles `w_c`; **`--scale` is the one to read before trusting `phi`** |
-| `../make_charge_background.py` | merges that dip into a background's first two minutes, leaving the ramp and every mark untouched |
+| `../make_background.py` | **authors a whole background**: the dip, then a RoR specification integrated to BT — smooth by construction, marks fitted exactly, no Designer curve and no blend. `--decline linear` shows why the decline has to be exponential |
+| `../make_charge_background.py` | the older **merge**: splices that dip into an existing Designer curve and smoothsteps back onto it. Superseded by `make_background.py` — the blend leaves a bulge and then a cliff in RoR that no window removes |
 | `plant_roast46.json` | the plant card `tools/merge_inlet_base.py` reads: `a`, `theta` and the loss cubic, with provenance |
 | `plant_roast48.json` | roast 48's plant, **not** an authoring source (`supersedes_plant_roast46: false`); its settled content is `kf` |
 | `ff_roast47.json` | the `feedforward()` card: the product-form coefficients, the affine fallback and the fitted box |
@@ -47,6 +48,7 @@ the paths are at the top of `roast46_refit.py`.
 
 ```bash
 .venv/bin/python tools/analysis/charge_thermal.py --no-bootstrap --no-profile
+.venv/bin/python tools/make_background.py --mass 400 --greens-temp -12
 .venv/bin/python tools/analysis/charge_dip.py --ramp --scale
 .venv/bin/python tools/analysis/charge_dip.py --fusion --sweep
 python3 tools/analysis/roast47_ff.py --emit-card    # no venv: stdlib only

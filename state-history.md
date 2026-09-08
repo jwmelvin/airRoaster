@@ -4422,3 +4422,71 @@ survives both changes. Note also state-plan.md § What was ruled out, whose
 "pure reparameterisation" row was being read as a standing objection to this; it
 answers a different question (can the range be used to shrink the integrator's
 swing?) and says nothing about saturation. Corrected there.
+
+### Authoring the background outright (2026-09-07) — RoR as the specification
+
+Operator: *"I prefer that background profiles have a smooth shape. This work
+accommodating the dip is disrupting that... There's nothing really special about
+the Artisan designer."*
+
+Both halves are right. The merge in `make_charge_background.py` has a defect no
+choice of blend window removes: the merged curve sits below its source, has to
+climb back onto it, and then stops climbing. `profile_400g_m12C_v2.alog` runs
+**38 → 43 → 41 → 25 degC/min across 60-150 s** — a bulge and then a cliff, in
+exactly the window where the loop is still recovering from the charge. And the
+Designer contributes nothing here except the file's metadata.
+
+**`tools/make_background.py` authors the whole curve from a RoR specification**,
+with the same division of labour drawn in the right place:
+
+    0 .. TP      the dip.  Physics (charge_dip, inlet held at the preheat).
+    TP .. DROP   the design.  RoR(u) integrated to BT.
+
+    RoR(u) = (1 - exp(-u/tau_r)) * (R_inf + (R0 - R_inf) exp(-u/tau_d))
+    u = t - t_TP,   BT(t) = BT_TP + integral of RoR/60
+
+Because **BT is the integral of the spec**, the RoR is smooth by construction
+rather than being whatever differentiating a hand-drawn curve gives. **The join
+needs no blend window at all**: the dip arrives at its minimum with RoR 0 by
+definition and the spec leaves it at RoR 0, so BT is C1 at the turning point.
+The `(1 - exp(-u/tau_r))` factor is the rise off the TP; the bracket is the
+decline. Three free parameters against three marks, so the marks are *hit*.
+
+#### A linear RoR decline cannot hit the marks, and that is a finding
+
+The operator asked for "generally a linear shape to the RoR decline". Fitted to
+`profile_003`'s own marks — DRY END 3:12 at 149.6, FCs 6:39 at 197.5, DROP 7:05
+at 201.4:
+
+| decline | DRY END / FCs / DROP error | peak RoR | RoR at DROP |
+|---|---|---|---|
+| linear | −0.0 / **+1.9** / **−1.9** degC | 42.0 at 88 s | **0.0** |
+| quadratic | +3.7 / +1.7 / −2.2 degC | 43.4 at 96 s | **0.0** (flat from 360 s) |
+| **exponential** | **−0.0 / +0.0 / −0.0** | 48.1 at 65 s | **8.7** |
+
+A roast's RoR decline is convex — fast early, long slow tail — so a straight line
+through it either runs hot in the middle or runs out of rate before DROP. Asked
+to hit these three marks the linear fit reaches **zero RoR exactly at DROP**,
+which is not a roast, and still misses FCs by 2 degC. `--decline linear` is kept
+in the tool so this stays visible; `exp` is the default.
+
+#### What v3 is, and what it costs
+
+| | v2 (merged) | **v3 (authored)** |
+|---|---|---|
+| worst gap over roast 54's 30 s free window | 2.92 | 3.01 degC |
+| error at the CHARGE+15 s alarm | +2.1 | +2.1 degC |
+| peak RoR asked | 56 | **48.1** degC/min |
+| RoR monotone after its peak | **no** | **yes** |
+| largest sample-to-sample RoR step past 35 s | 4.44 | **2.73** degC/min |
+| marks | inherited | **hit to 0.00 degC** |
+
+The dip is untouched — that is the point of drawing the line at the TP. v3 runs
+cooler than v2 through the recovery (72.2 vs 75.4 at 60 s, 115.5 vs 117.3 at
+120 s), converging by 180 s and identical at the marks. Its peak RoR of 48.1 is
+inside what roast 54 delivered (72) and in line with the 45-48 the bed actually
+ran at 40-60 s, but **it is a lower absolute target than roast 54's bed reached**,
+which is precisely what the lowered SV floor exists to make survivable.
+
+`make_charge_background.py` is superseded but kept: it is the curve v2 came from
+and the record of the merge approach.

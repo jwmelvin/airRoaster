@@ -65,7 +65,7 @@ depth per degC on the operator's scale (`charge_dip.py --scale`).
 
 ### The job: roast 55 — the dip, and the floor that has cost four roasts
 
-**Background: `artisan/profile_400g_m12C_v2.alog` (generated, ready to load).**
+**Background: `artisan/profile_400g_m12C_v3.alog` (generated, ready to load).**
 **Alarm set: `artisan/airRoaster_cascadePID_floor100.aset`** — roast 54's
 `_chargetemp` set with the SV floor lowered and the gains rescaled to match (see
 below). Load the background by hand (the `.aset` carries no `backgroundpath`) and
@@ -74,7 +74,57 @@ confirm `pidOnCHARGE=false`, `svLookahead=0`.
 **Two changes, and they act in disjoint regions**: the background fixes the dip
 (0-50 s), the floor fixes the saturation (45-90 s). The log tells them apart.
 
-It was regenerated **from roast 54's own background**, not from `profile_003`:
+**v3 is authored outright — there is no Designer curve and no blend in it.**
+`tools/make_background.py` integrates a RoR specification instead of merging a
+dip into a hand-drawn ramp:
+
+```
+.venv/bin/python tools/make_background.py --mass 400 --greens-temp -12
+```
+
+    0 .. TP      the dip.  Physics, unchanged (charge_dip, inlet held).
+    TP .. DROP   the design.  RoR rises off the turning point, peaks, and then
+                 declines smoothly and monotonically to DROP.
+
+`BT` is the *integral* of the RoR spec, so the RoR is smooth by construction
+rather than being whatever differentiating a drawn curve gives. The join needs
+no blend window: the dip reaches its minimum with RoR 0 by definition and the
+spec leaves it at RoR 0, so BT is C1 there.
+
+**This replaces v2 because the blend leaves a cliff in RoR.** v2 runs
+`38 -> 43 -> 41 -> 25 degC/min` across 60-150 s — it sits below its source curve,
+has to climb back onto it, and then stops climbing. v3's RoR is **monotone from
+its 48.1 peak at 65 s all the way to DROP** (v2's is not), with the largest
+sample-to-sample step falling 4.44 -> 2.73 degC/min. The dip and the switch-on
+error are unchanged: worst gap over roast 54's free window 2.9 -> 3.0 degC,
+error at the CHARGE+15 s alarm +2.1 either way.
+
+**The marks are inputs now, and are hit exactly** — DRY END 3:12 at 149.6, FCs
+6:39 at 197.5, DROP 7:05 at 201.4, all to 0.00 degC, the same three
+`profile_003` carried. Change them with `--dry-end`, `--fcs`, `--drop`.
+
+**A strictly linear RoR decline cannot hit them, and that is a finding rather
+than a preference.** A roast's decline is convex — fast early, long slow tail —
+so a straight line either runs hot through the middle or runs out of rate before
+DROP. Fitted to these three marks it reaches **RoR 0 exactly at DROP** and still
+misses FCs by 2 degC. `--decline linear` is kept so that is visible; `exp` is
+the default and is what v3 uses.
+
+| decline | DRY END / FCs / DROP error | RoR at DROP |
+|---|---|---|
+| linear | −0.0 / **+1.9** / **−1.9** degC | **0.0** — flat at DROP |
+| quadratic | +3.7 / +1.7 / −2.2 degC | 0.0 — flat from 360 s |
+| **exponential** | **−0.0 / +0.0 / −0.0** | **8.7** |
+
+**What v3 changes besides the RoR shape.** It runs cooler than v2 through the
+recovery — 72.2 vs 75.4 at 60 s, 115.5 vs 117.3 at 120 s — converging by 180 s
+and identical at the marks. It asks a peak RoR of 48.1 degC/min, which is inside
+what roast 54 delivered (72) and in line with the 45-48 the bed actually ran at
+40-60 s. **Watch it**: it is a lower early target than roast 54's bed reached,
+and a lower target is what the floor change exists to make survivable.
+
+The superseded v2, kept for reference, was instead merged **from roast 54's own
+background**:
 
 ```
 .venv/bin/python tools/make_charge_background.py \
@@ -83,18 +133,17 @@ It was regenerated **from roast 54's own background**, not from `profile_003`:
     --out artisan/profile_400g_m12C_v2.alog --check
 ```
 
-so **past 60 s it is byte-identical to what roast 54 ran** (verified, max diff
-0.000 degC; `timeindex` unchanged, so DRY END / FCs / DROP are the same marks).
-The only thing that differs is BT over 0-50 s. Any change in the roast is
-therefore attributable to the dip and to nothing else.
+and past 60 s it is byte-identical to what roast 54 ran. It is superseded by v3
+and is **not** what roast 55 should load; it is here because it is the curve the
+tables below were computed against and the dip numbers carry over unchanged.
 
-| | roast 54's bkg | **v2** |
+| | roast 54's bkg | **v2 / v3** |
 |---|---|---|
 | worst \|bkg − BT\| over roast 54's 30 s free window | 8.6 degC | **2.5** |
 | error handed to the PID at the CHARGE+15 s alarm | +8.0 | **+2.1** |
 | P-term at switch-on | +38 degC of SV | **+10** |
-| peak RoR asked | 43 | 56 degC/min (machine delivers 72) |
-| curve past 60 s | — | **identical** |
+| peak RoR asked | 43 | 56 (v2) / **48** (v3) degC/min — machine delivers 72 |
+| RoR monotone after its peak | no | **v3 yes**, v2 no |
 
 **Enter `greens_temp = -12.0` even though the beans are almost certainly colder
 than that.** It is the number roasts 51/53/54 carry and the number `phi` is
