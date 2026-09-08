@@ -14,6 +14,56 @@
 > referenced as `state-history.md § …`. If a section here reads as a record of
 > what happened rather than a statement of what to do, it is in the wrong file.
 
+## Bean reference — the first-crack temperature each lot cracks at
+
+**A specification in force**, because it is the `--fcs <s>:<BT>` argument
+`tools/make_background.py` is handed and nothing else supplies it. **Artisan
+cannot store this**: the `Coffee` record artisan.plus syncs down
+(`~/src/artisan/src/plus/stock.py:82-94` at v4.2.0) carries `label`, `origin`,
+`varietals`, `grade`, `stock`, `default_unit`, `moisture`, `density`,
+`screen_size`, `processing` and `crop_date` — and **no temperature field of any
+kind**, so there is nothing for it to apply to a future roast. The table is the
+store.
+
+| lot | moisture | FCs BT | RoR at FCs | from | background |
+|---|---|---|---|---|---|
+| Ethiopia, Crown Jewel Sidama Daye Bensa Washed (2023) | 10.9-11.0 | **198.8** (197.3-201.2) | 8.3 | roasts 50-55, `n = 6` | `profile_400g_m12C_v4.alog`, `profile_400g_m5C_v4.alog` |
+| *(the lot after it — the one that ran out was replaced before roast 56)* | 11.0 | **195.5** (195.3 measured) | 8.3 assumed | roast 56, `n = 1` | `profile_400g_m5C_fc195_v5.alog` |
+
+**Roast 56's lot needs a name.** It is a different coffee from roasts 50-55 —
+the previous lot ran out — and roast 56's `.alog` still carries the old
+`beans` string, so the log cannot be trusted to identify it. Fill the row from
+the artisan.plus record before the next roast of it.
+
+**One roast characterises a lot well enough.** The crack temperature is
+repeatable within a lot (the 50-55 spread is 3.9 degC across six roasts, and
+most of that is mark subjectivity, not the coffee); it is *between* lots that it
+moves, by 3.5 degC here. So the first roast of a new bean is the calibration
+roast: run it on whatever background is current, read `BT(FCs)` off the log, and
+regenerate.
+
+**But regenerating for a new FC temperature is not a back-half edit.** The RoR
+spec is a three-parameter exponential fitted globally to `BT(DRY END)`,
+`BT(FCs)` and `RoR(FCs)`, so moving FCs moves the whole curve. Dropping FCs
+from 198.8 to 195.5 at 400 g / −5 degC costs:
+
+| t (s) | 40 | 50 | **61** | 75 | 90 | 120 | 200 | 399 |
+|---|---|---|---|---|---|---|---|---|
+| v5 − v4 (degC) | −1.66 | −3.17 | **−3.66** | −3.21 | −2.28 | −0.66 | −0.12 | −3.30 |
+
+and moves the RoR peak from 52 s to 69 s. **The worst change is at 61 s, inside
+the window all four checks are scored in.** So a background regenerated for a
+new FC temperature is a change to the *first minute* as well, and must not be
+run in the same roast as a control change. `--ror-at-fcs` is the same:
+8.3 → 9.4 moves the peak from 69 s to 74 s and BT at 60 s by another 1.2 degC.
+
+**Cheapest reading of all this**: the FCs mark is a *label*. Nothing in the
+cascade reads it — `calcSV` reads only `BT(t + svLookahead)` and `drop_t`
+(`pid_control.py:1658-1717`) — so a curve whose mark says 198.8 at 399 s but
+which passes 195.4 at 375.8 s will still put this bean's crack at a repeatable
+375 s. Regenerate when you want the crack at a *different time*, not merely to
+make the label true.
+
 ## NEXT — remaining on-roaster validation
 
 The live sessions of 2026-07-02/03/04 (see the archive's v0.12–v0.15 entries)

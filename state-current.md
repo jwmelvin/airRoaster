@@ -79,25 +79,38 @@ integrator for the ramp.** −2.6 degC where the background runs 25-27 degC/min 
 **~6 s of phase** — the residual of a 13.5 s apparent plant lag against 6 s of
 lookahead.
 
-**Recommended change, one only: `LA 12` from ~120 s.** It supplies 6 s of phase
-exactly where it is missing, is confined to a window the first minute never
-sees, and costs little late — by 300 s the background runs 10 degC/min, so 12 s
-of lookahead is worth only 2 degC of target. The alternative, raising `Ki`,
-changes the dip as well and gives up the disjoint-regions property that has made
-the last four roasts readable.
+**The change, and the only one: `LA 12` from 105 s.** It supplies 6 s of phase
+exactly where it is missing, and costs little late — by 300 s the background
+runs 10 degC/min, so 12 s of lookahead is worth only 2 degC of target. The
+alternative, raising `Ki`, changes the dip as well and gives up the
+disjoint-regions property that has made the last four roasts readable.
 
-**This needs new config, so budget for it before the roast.** There is **no
-`LA 12` button**: `extraeventslabels` in `airRoaster_cascadePID_floor100.aset`
-has `LA 0` (button 20) and `LA 6` (button 21) only, with
-`extraeventsactionstrings` `pidLookahead(0)` / `pidLookahead(6)`. Add a button
-with action `pidLookahead(12)` and an **eighth alarm row** at `CHARGE + 120`
-firing it — then check all eight rows in the dialog (see the box below) and
-verify from the log afterwards by the SV step, which at 120 s should be
-`(bkg(132) − bkg(126)) x 4.8 ≈ 15 degC`.
+**105 s, not 120.** The `Fan 60` alarm is already at 120 s; firing both there
+would put two step disturbances on the same tick and make neither attributable.
+105 s also precedes the divergence, which is what anticipation is for — at
+105-120 s the roast-56 error is +0.46 to −0.08, so the loop is calm when the
+step lands.
 
-**Do not try to size this with `replay_pid`.** It is fed measured BT, so a
-sustained lookahead change reads as a permanent P offset the real loop would
-erase as BT caught up — it reports `LA 12` from 120 s commanding SV 278 at
+**The config is already in `artisan/airRoaster_cascadePID_floor100.aset`** —
+a 27th event button `LA 12` (`pidLookahead(12)`, action 20, type 4, invisible
+like `LA 0` and `LA 6`) and an eighth alarm row at `CHARGE + 105` firing it.
+`pidLookahead(<n>)` takes an arbitrary integer (`main.py:10935-10945`). **Still
+check all eight rows in the dialog before the roast** — see the box below — and
+verify from the log afterwards by the SV step, which at 105 s should be
+`(bkg(117) − bkg(111)) x 4.8 ≈ 17 degC`.
+
+**Background: `artisan/profile_400g_m5C_v4.alog`, unchanged.** Roast 56 was a
+**different lot** — the previous coffee ran out — which is why FC came in at
+195.3, and this one's mark belongs at ~195.5. But regenerating for that is
+**not** a back-half edit: the RoR spec is fitted globally, so dropping FCs to
+195.5 moves BT by **−3.66 degC at 61 s** and the RoR peak from 52 s to 69 s,
+inside the window all four checks live in. The new-bean curve is generated and
+parked as `artisan/profile_400g_m5C_fc195_v5.alog` for **roast 58**, alone.
+See state-plan.md § Bean reference.
+
+**Do not try to size the lookahead change with `replay_pid`.** It is fed
+measured BT, so a sustained lookahead change reads as a permanent P offset the
+real loop would erase as BT caught up — it reports `LA 12` commanding SV 278 at
 300 s, which is the artifact, not a prediction. The phase arithmetic above is
 the honest sizing.
 
@@ -110,41 +123,57 @@ from 50 s to DROP. There is no tracking error left for an inlet trim to remove.
 disturbed or the plant moves — and say what would test that, or drop it.**
 state-plan.md § NEXT item 14 should record whichever.
 
-#### 3. Leave the FC mark at 198.8
+#### 3. The FC mark — a different bean, and the mark waits for roast 58
 
-Roast 56's FCs was marked at **195.3 degC / 373 s** — 2.0 degC below the previous
-minimum of six roasts, so 26 s *early* against a correction that predicted ~399.
-**The mark is not what was wrong.** BT was **+0.33 degC** from the background at
-that instant and within 0.5 degC from 250 s to DROP: the loop delivered the
-authored curve and the coffee cracked cooler. Including roast 56 the mean is
-198.3. One sample does not move it; two would.
+Roast 56's FCs was marked at **195.3 degC / 373 s**, 2.0 degC below the previous
+minimum of six roasts. **The cause is known: it was a different lot** — the
+coffee from roasts 50-55 ran out and was replaced. Nothing was wrong with the
+loop: BT was **+0.33 degC** from the background at the crack and within 0.5 degC
+from 250 s to DROP.
 
-DROP came **19 s** after FCs, not the 28 the background specifies, ending the
-roast at 392 s / 197.9 against 427 s / 202.4. That is the operator's call at the
-machine. If 19 s is now the intended development time, regenerate with
-`--development 19` rather than dropping short of the curve.
+The new lot's mark belongs at **195.5**, and the curve for it is generated and
+parked (`artisan/profile_400g_m5C_fc195_v5.alog`). **It does not go in roast
+57**, because it is not a back-half edit — see above. Per-lot FC temperatures
+are recorded in state-plan.md § Bean reference, which also records that
+**artisan.plus cannot store this**: the `Coffee` record it syncs
+(`plus/stock.py:82-94`) has no temperature field at all.
+
+DROP came **19 s** after FCs, not the 28 the background specifies. Left at 28
+for now — the DROP mark only closes the control window (`calcSV` returns `None`
+past `drop_t`) and every roast has dropped well inside it.
 
 ### What to expect
 
 - The 140-200 s lag should close from −2.9 toward ~−1. Watch that `LA 12` does
-  not overshoot at 130-160 s, where the background is steepest after the dip.
-- The four checks should be unchanged: `LA 12` starts at 120 s and all four are
-  scored at or before 120 s.
+  not overshoot at 115-160 s, where the background is steepest after the dip.
+- The four checks should be unchanged: `LA 12` starts at 105 s and all four are
+  scored at or before it (peak SV and the 0-30 s dip are in the first minute;
+  the 30-90 s error window closes 15 s before the switch).
 - 120-DROP rms should come back toward roast 55's 0.79.
-- Nothing before 120 s changes, so **any movement in the first minute means
-  something else moved** — check the alarm table and the charge temperature
-  first.
+- Nothing before 105 s changes, so **any movement in the first 90 s means
+  something else moved** — check the alarm table, the background file and the
+  charge temperature first.
+- FC will land ~25 s before the 399 s mark again. **Expected, and not a
+  finding** — that is the new lot, and the mark is deliberately not being moved
+  this roast.
 
 ### Regenerating the background
 
 ```
 .venv/bin/python tools/make_background.py --mass 400 --greens-temp <measured> \
-    --fcs 399:198.8 --development 28 --out artisan/profile_400g_<T>_v4.alog
+    --fcs 399:<bean FCs BT> --development 28 --out artisan/profile_400g_<T>_<tag>.alog
 ```
 
 `--development` places DROP at `FCs + <seconds>` with whatever temperature
-follows; `--fcs <s>:<BT>` sets the crack mark. Generate at the mass and charge
-temperature actually being roasted — **never scale** (see § The mass term below).
+follows; `--fcs <s>:<BT>` sets the crack mark, and the per-lot value comes from
+state-plan.md § Bean reference. Generate at the mass and charge temperature
+actually being roasted — **never scale** (see § The mass term below).
+
+**A regenerated background is a change to the first minute, not just the back
+half.** The RoR spec is one three-parameter exponential fitted to `BT(DRY END)`,
+`BT(FCs)` and `RoR(FCs)`, so every constraint moves the whole curve: FCs
+198.8 → 195.5 costs −3.66 degC at 61 s and shifts the RoR peak 52 s → 69 s.
+**Never run a regenerated background and a control change in the same roast.**
 
 ### The alarm table can silently disagree with the .aset — CHECK IT EVERY ROAST
 
@@ -176,7 +205,7 @@ time column is `mm:ss`, so 120 s reads `02:00`, not `:20`.
 | 5 | ON | ON | 16:00 | BT | < | 131 | Event Button | 23 = `ARM bak` |
 | 6 | ON | CHARGE | 00:15 | | > | 0 | Event Button | 25 = `PID on` |
 | 7 | ON | CHARGE | 02:00 | | > | 0 | Event Button | 26 = `Fan 60` |
-| **8** | ON | CHARGE | **02:00** | | > | 0 | Event Button | **new = `LA 12`** |
+| **8** | ON | CHARGE | **01:45** | | > | 0 | Event Button | **27 = `LA 12`** |
 
 (Button numbers in `alarmstrings` are 1-based into `extraeventslabels`, which is
 0-based: `alarmstrings` `21` is `extraeventslabels[20]` = `LA 6`.)
