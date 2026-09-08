@@ -628,6 +628,12 @@ RoR has fallen enough that the switch is a ~+3.5 degC target step rather than
 2026-09-06 (state-history.md § Dip strategies), which is where the sweep numbers
 and the discarded alternatives are.*
 
+> **A cheaper relative was proposed 2026-09-08** — commanding `Temp_Drive =
+> Inlet − BT` instead, which is this design with the base supplied by
+> measurement rather than by a schedule. It is weaker on tracking and stronger
+> on nearly everything else; see § Temp_Drive as the effort variable below, and
+> settle the preheat measurement before deciding between them.
+
 > **Status after roast 56 (2026-09-07): the tracking case for this is dead.**
 > The premise below — that `e_ss = (dI/dt)/Ki` is a limiting error and that
 > `svLookahead` exists to hide it — was written when the loop tracked to several
@@ -721,6 +727,112 @@ range must be bounded on the device, not only in the Artisan mapping. And an
 authoring error in the base curve is a whole-roast error rather than a transient,
 so the base must be regenerated from the background whenever the background
 changes.
+
+#### Temp_Drive as the effort variable — a cheaper relative of step 9 (operator, 2026-09-08)
+
+**The idea.** Let the outer loop command `Temp_Drive = Inlet − BT` instead of an
+absolute inlet setpoint. The firmware owns `btTemp`, so the inner loop's target
+becomes `btTemp + drive`. Structurally this is step 9 **with the base supplied by
+measurement instead of by a schedule**:
+
+```
+step 9:      INLET = bg(t+theta) + (dbg/dt(t+theta) - loss(t+theta))/a  +  trim
+Temp_Drive:  INLET = BT(t)       +  drive                    <- the PID's output
+```
+
+Step 9's feedforward carries two terms — the **operating point** `bg` and the
+**rate** `(dbg/dt − loss)/a`. Temp_Drive cancels the first and leaves the second
+to the PID. That is the whole comparison, and it decides everything below.
+
+##### What the logs already say — and it is less than the algebra promises
+
+The drift in the loop's own output is what sets the type-1 ramp error
+(`e_ss = (dU/dt)/Ki`). Measured on the cascade roasts, smoothed 11 s:
+
+| | inlet SV, drift | Temp_Drive, drift | ratio |
+|---|---|---|---|
+| **40 s → DROP** 53 / 54 / 55 / 56 | +0.267 / +0.243 / +0.282 / +0.290 | −0.051 / −0.103 / −0.074 / −0.087 | 5.3 / 2.4 / 3.8 / 3.3× |
+| **120 s → DROP** 53 / 54 / 55 / 56 | +0.181 / +0.141 / +0.138 / +0.201 | −0.080 / −0.133 / −0.140 / −0.094 | **2.3 / 1.1 / 1.0 / 2.1×** |
+
+degC/s. **Over the whole roast Temp_Drive drifts 2.4-5.3× less; over the drying
+ramp — the window the −2.9 degC residual actually lives in — it is 1.0-2.3×, and
+on roasts 54 and 55 it is no better at all.**
+
+The reason is visible in the sign. BT rising pushes the inlet **up**; the
+background's RoR declining (46 → 9 degC/min) pushes the required drive **down**.
+Over the whole roast the BT rise dominates. Over the drying ramp the two are the
+same size, so cancelling only the first leaves a drift of comparable magnitude
+pointing the other way. **Step 9 cancels both terms and Temp_Drive cancels one —
+and in the window that matters, it is the smaller one.**
+
+**So: do not adopt this for tracking.** On that metric it is a weaker step 9, and
+step 9's own tracking case is already dead (roast 56, rms 0.94 over 30-90 s).
+
+##### Where it is genuinely better than step 9, and it is not a small list
+
+All of these are robustness arguments, which is the only ground step 9 still has:
+
+- **No base curve to author.** § The base-curve authoring gap is step 9's open
+  blocker — `make_inlet_background.py` does not emit a file of the right shape.
+  Temp_Drive needs no file.
+- **No open-loop whole-roast failure mode.** Step 9 warns that "an authoring
+  error in the base curve is a whole-roast error rather than a transient". The
+  Temp_Drive base is BT. It cannot be authored wrong.
+- **No plant card, so no circularity.** Step 9's `ff` is built from `1/a` and
+  roast 46's loss cubic, which the section itself calls "partly circular" and
+  gates on the characterisation runs. `INLET = BT + drive` needs neither `a` nor
+  `loss`, because the operating-point term is exact by construction. **It is not
+  blocked on Tests A/B/C.**
+- **Background-independent.** Step 9's base must be regenerated whenever the
+  background changes. Temp_Drive composes with any background — including a
+  regenerated one, which is the whole point of the peak pin.
+- **The floor stops being scale-dependent, and this may be the best argument.**
+  `positiveTargetMin = 100` means `TD ≥ +41` at the turning point (BT 59) and
+  `TD ≥ −100` at DROP (BT 200): the *same config number* is "still heating hard"
+  early and "cool as hard as you can" late. That is why the floor has been
+  retuned four times (120 → 170 → 140 → 100) and why roast 54 sat **40 s
+  saturated at its own floor** — an absolute floor is the wrong shape of
+  constraint. A drive floor means one thing all roast.
+
+##### Three risks, one of them a genuine safety regression
+
+1. **A stale command runs away.** A frozen absolute SV is self-limiting — BT
+   converges to it. A frozen *drive* keeps ramping: at the observed TD ≈ 70 that
+   is ~20 degC/min, indefinitely. **This is worse than today and must be
+   designed for**, not noticed later. v0.19.0's `INLET_TRIM_STALE_MS` pattern is
+   the right shape; here it is load-bearing rather than hygiene, and the safe
+   fallback is to latch the last *absolute* setpoint, not to zero the drive.
+2. **BT enters its own setpoint with gain 1.** Probe noise, drop spikes and RTD
+   faults go straight into the inner loop. Use the filtered `btTemp`, rate-limit
+   the base, and hold the last good value across an RTD fault.
+3. **It must not be engaged through the dip.** `INLET = BT + drive` would chase
+   BT down from 130 to 59 and cut the inlet exactly when the bed needs it. It has
+   to engage with the PID at CHARGE+15 s and hold an absolute setpoint before
+   that — which is what § The charge gate already does, so this costs nothing.
+
+##### What it would take
+
+Small, and mostly config. The slider already sends
+`send({"command":"INLET","value":{}})`; a drive mode is one firmware command
+alongside the existing `inletBase`/`inletTrim` pair, plus
+`positiveTargetMin`/`Max` remapped onto a drive range. Note Artisan asserts
+`slider_min < positiveTargetMin` (pid_control.py:1302), so a drive range
+starting at 0 needs slider 3's minimum moved below it.
+
+##### The unmeasured number is the same one the preheat work needs
+
+`d(TD)/d(BT)` — how much more drive it takes to hold a hotter BT — is the DC gain
+of the drive→BT loop, and it decides whether this is nearly an integrator
+(type-2, no ramp error) or a high-gain type-0. It is bracketed **0.10 to 0.38**
+and has never been measured. **It is also exactly the number § Normalize the
+charge with the PREHEAT needs**, and for a third reason too: the plant card's
+`loss(t)` is a function of *time* only because BT(t) is monotone on a roast, so a
+BT-dependent loss is aliased into it and `plant_roast46.json` cannot separate the
+two. A settled Temp_Drive at two preheats is a **steady-state** measurement with
+no time axis to alias against.
+
+**One preheat step measures all three.** That is the strongest reason to run the
+preheat characterisation before either this or step 9 is decided.
 
 #### The base-curve authoring gap — `make_inlet_background.py` does not emit this file (2026-09-06)
 
