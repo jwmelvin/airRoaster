@@ -100,9 +100,48 @@ Six seconds of lookahead is worth 4.8 degC of target at 60 s against a 4.9 degC
 undershoot. **45 s leaves the 40 s correction intact** (SV 127 either way) and
 only anticipates after it; 30 s would fight the +3.3 overshoot instead.
 
-**The edit**: in `airRoaster_cascadePID_floor100.aset`, the alarm firing the
-`LA 6` button (`pidLookahead(6)`, button 21) has `alarmoffset = 90` from CHARGE.
-**Set it to 45.** Nothing else changes — `LA 0` still fires at CHARGE+1 s.
+**The edit is already in the file** — `airRoaster_cascadePID_floor100.aset` now
+has `alarmoffset = 45` on alarm 4 (the `LA 6` button, `pidLookahead(6)`,
+button 21). **But set it in the dialog too, and read the box below before
+trusting either.**
+
+### The alarm table can silently disagree with the .aset — CHECK IT EVERY ROAST
+
+Found 2026-09-07: after loading `floor100.aset`, Artisan's Alarms dialog showed
+the `LA 6` alarm at **00:30** while the file said **90**. Every other row matched.
+
+**It is not RESET.** `reset()` clears only `alarmstate` and `TPalarmtimeindex` —
+the triggered flags and the TP index — and never touches `alarmoffset`.
+
+**It is `savealarms()`** (alarms.py:730-776), which writes *every* row back into
+`qmc.alarm*` from the dialog's widgets when the dialog closes. Load an `.aset`
+with the Alarms dialog open and the load updates Artisan's state, then closing
+the dialog overwrites it with the stale widgets. Artisan then saves settings on
+quit, so the wrong value persists in the operator's own settings regardless of
+what the repo file says. `selectAlarmSet` (canvas.py:6067+) would replace the
+whole table too, but the `alarmsets` slots in these files are empty.
+
+**Before every roast, open Alarms and check all seven rows against this table.**
+The time column is `mm:ss`, so 90 s reads `01:30`, not `:30`.
+
+| # | On | From | Time | Source | Cond | Value | Action | Button |
+|---|---|---|---|---|---|---|---|---|
+| 1 | off | CHARGE | 00:01 | | > | 0 | Playback ON | |
+| 2 | ON | DRY END | 00:00 | ΔBT | < | −25 | DROP | |
+| 3 | ON | CHARGE | 00:01 | | > | 0 | Event Button | 20 = `LA 0` |
+| 4 | ON | CHARGE | **00:45** | | > | 0 | Event Button | 21 = `LA 6` |
+| 5 | ON | ON | 16:00 | BT | < | 131 | Event Button | 23 = `ARM bak` |
+| 6 | ON | CHARGE | 00:15 | | > | 0 | Event Button | 25 = `PID on` |
+| 7 | ON | CHARGE | 02:00 | | > | 0 | Event Button | 26 = `Fan 60` |
+
+**And verify from the log afterwards, because the `.alog` cannot tell you.** It
+records `svLookahead` at *save* time (roast 55 says 6, which is only the
+post-switch value). The switch instant is visible as a **step in SV**: six
+seconds of lookahead is worth `RoR x 6 x 4.8` degC of SV. Roasts 54 and 55 both
+step **20.2 / 20.3 degC at 91.0 s** against a predicted 20.8 / 20.9 — so both ran
+at 90 s, as the file said, and neither switched at 30 s (the step there is 0.0
+against a predicted 2.8). **That arithmetic is the only reliable check of what
+actually ran.**
 
 **Caveat, stated plainly:** `replay_pid` is fed *measured* BT, so it says what the
 controller would have commanded, not what BT would have resulted. The direction

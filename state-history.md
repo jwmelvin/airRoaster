@@ -4606,3 +4606,54 @@ DROP is placed at `FCs + --development` with whatever temperature follows.
 `artisan/profile_400g_m12C_v4.alog`: FCs 6:39 at **198.8**, RoR at FCs 8.3, DROP
 28 s later at 7:07 / 202.5. All three constraints hit to 0.00, RoR monotone from
 its 46.3 peak, dip identical to v3 (3.94 degC worst against roast 55 either way).
+
+### The alarm table drifts from the .aset, and RESET is not the cause (2026-09-07)
+
+Preparing roast 56, the operator reported that after loading
+`airRoaster_cascadePID_floor100.aset` the `LA 6` alarm showed **00:30** while the
+file carried **90**. Every other row matched the file exactly (16:00 = 960,
+02:00 = 120, 00:15 = 15), so the `mm:ss` decoding was not the issue — and an
+initial reading of it as "01:30 misread as :30" was **wrong**; the screenshot
+showed 00:30.
+
+**Not RESET.** `QMC.reset()` touches only `alarmstate` (the triggered flags) and
+`TPalarmtimeindex`, so a new TP is recognised each roast. It never rewrites
+`alarmoffset`.
+
+**`savealarms()` is the mechanism** (alarms.py:730-776, called from
+`closeEvent`). It writes *every* row back into `qmc.alarm*` from the dialog's
+widgets. Load an `.aset` while the Alarms dialog is open and the load updates
+Artisan's internal state; closing the dialog then overwrites it from the stale
+widgets. Artisan saves settings on quit, so a wrong value persists in the
+operator's own settings independently of the repo file. (`selectAlarmSet`,
+canvas.py:6067+, replaces the whole table wholesale, but the `alarmsets` slots in
+these files are empty, and an empty set would give zero rows rather than seven.)
+
+**What actually ran is recoverable from the log, and the `.alog` cannot tell
+you** — it records `svLookahead` at *save* time, which is only the post-switch
+value (roast 55 says 6). The switch instant shows as a **step in SV**, because
+six seconds of lookahead adds `RoR x 6` degC of target, and `dSV/derror = 4.8`:
+
+| | roast 54 | roast 55 |
+|---|---|---|
+| SV step at 91.0 s | **20.2** | **20.3** degC |
+| predicted (`RoR x 6 x 4.8`) | 20.8 | 20.9 |
+| SV step at 30 s | −0.2 | 0.0 |
+| predicted if it had switched at 30 s | 2.7 | 2.9 |
+
+So both roasts switched at **90 s**, as their `.aset` said, and neither switched
+at 30 s. § Roast 55's deadtime analysis stands.
+
+**Consequences, both now in the roast-56 handoff**: the seven-row alarm table is
+written out in state-current.md and must be checked in the dialog before every
+roast, and the SV-step arithmetic is the only reliable after-the-fact check of
+when the lookahead actually switched.
+
+Two related exposures worth knowing about, both currently inert. The generated
+backgrounds inherit `profile_003`'s embedded `alarm*` **and** PID keys
+(`pidKp` 3.0, `pidKi` 0.07, `svLookahead` 3), and `main.py:14500-14509` will load
+alarms, ramp/soak and PID settings *from a background* if the corresponding flags
+are set. All three are `false` in these `.aset` files
+(`loadAlarmsFromBackground`, `loadRampSoakFromBackground`, `loadpidfrombackground`),
+so nothing is applied today — but turning any of them on would silently restore
+the pre-floor-change gains from a background file.
