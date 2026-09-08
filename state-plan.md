@@ -536,6 +536,21 @@ RoR has fallen enough that the switch is a ~+3.5 degC target step rather than
 2026-09-06 (state-history.md § Dip strategies), which is where the sweep numbers
 and the discarded alternatives are.*
 
+> **Status after roast 56 (2026-09-07): the tracking case for this is dead.**
+> The premise below — that `e_ss = (dI/dt)/Ki` is a limiting error and that
+> `svLookahead` exists to hide it — was written when the loop tracked to several
+> degC. Roast 56 tracks its background at rms **0.94 degC over 30-90 s**, **0.41
+> over 95-120 s** and **1.26 over the whole roast**, with the inner loop at rms
+> **0.91 from 50 s to DROP** (state-history.md § Roast 56). The simulated
+> "steady rms 0.11-0.14 degC" is no longer an improvement worth the two open
+> config problems below. **What survives is the robustness argument** — that a
+> feedforward base degrades more gracefully than an integrator carrying the
+> whole operating point when the plant moves or the inner loop is disturbed —
+> **and that has to be argued on its own terms, with a stated test, or step 9
+> should be dropped.** The residual roast 56 does leave (−2.9 degC at 140-200 s,
+> the integrator's fill rate against the drying ramp) is a *phase* deficit and
+> is being attacked with lookahead first; see state-current.md § HANDOFF.
+
 #### The structural fix: an inlet feedforward schedule with the PID as a trim
 
 **The root defect has been on the table since roast 40 and has never been

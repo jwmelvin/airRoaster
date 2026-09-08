@@ -4657,3 +4657,203 @@ are set. All three are `false` in these `.aset` files
 (`loadAlarmsFromBackground`, `loadRampSoakFromBackground`, `loadpidfrombackground`),
 so nothing is applied today — but turning any of them on would silently restore
 the pre-floor-change gains from a background file.
+
+### Roast 56 (2026-09-07, 22:27) — the lookahead switch works, and the residual moves to the drying ramp
+
+400 g of the same lot, `airRoaster_cascadePID_floor100.aset` (`pidKp` 2.4,
+`pidKi` 0.056, `positiveTargetMin` 100) against
+`artisan/profile_400g_m5C_v4.alog`. **`moisture_greens` is finally entered —
+11.0**, ending four roasts of 0.0, and it matches roasts 50-52's 10.9 for the
+same lot.
+
+**Three things changed from roast 55, not two.** The planned pair were the FC
+mark (197.5 → 198.8) and the lookahead switch (CHARGE+90 → +45). The third was
+not in the plan: the charge was **`greens_temp = -5.0`**, not the freezer's
+−12.0, so the background actually loaded was `profile_400g_m5C_v4.alog`
+(`backgroundpath` confirms it). That is legitimate — the handoff anticipated
+either — and it is confined to the dip: the two v4 backgrounds differ by at most
+**6.96 degC at 57 s** and are within **0.4 degC everywhere after 130 s**. It does
+mean the 0-120 s region carries two changes at once, and § the dip below is
+scored against a charge temperature the dip model has never been calibrated at.
+
+| check | roast 53 | roast 54 | roast 55 | **roast 56** | pass |
+|---|---|---|---|---|---|
+| peak SV, first minute | 238 | 193 | 154 | **165** | under ~200 — **pass** |
+| seconds of heat at 100% | 14.0 | 2.0 | 1.0 | **1.0** | 0 — **near** |
+| seconds **saturated** at own floor | 46.9 | 40.0 | 0.0 | **0.0** | under ~10 — **pass** |
+| worst BT error vs background, 30-90 s | +14.1 | +5.5 | −4.9 | **+2.2** | single digits — **pass** |
+| worst \|bkg − BT\| over 0-30 s | — | 8.6 | 3.9 | **3.7** | — |
+
+Tracking rms by window, each roast against its own background:
+
+| roast | 0-30 | 30-60 | 30-90 | 60-95 | 95-120 | 120-DROP | 0-DROP | peak SV | min SV |
+|---|---|---|---|---|---|---|---|---|---|
+| 54 | — | — | 3.88 | — | — | — | — | 193 | 140 |
+| 55 | 1.52 | 2.49 | **2.70** | 3.29 | 4.10 | **0.79** | 1.71 | 154 | 122 |
+| **56** | **2.00** | **1.21** | **0.94** | **0.58** | **0.41** | **1.28** | **1.26** | **165** | **128** |
+
+**All four checks pass, and 30-90 s is now better than roast 55 by a factor of
+three.** The old `SV <= 141.5` count — kept only for series comparability, since
+the floor is 100 and saturation is `SV <= 101.5` — is **26.1 s**, down from
+roast 55's 45.5; the loop bottomed at **SV 128.2 at 37.0 s** and spent 22.9 s
+below 140 (23.1 to 46.0 s). Seconds at the actual floor: **0.0**. Inner loop
+`Inlet − SV` rms **0.91 degC from 50 s to DROP**.
+
+#### Change 2 fired, and the SV-step check says so unambiguously
+
+The `.aset` carries `alarmoffset` row 4 = 45, and the log confirms it happened:
+
+| | at 30 s | at 46.3 s | at 91 s |
+|---|---|---|---|
+| measured SV step | −3.02 | **+24.25** | **0.00** |
+| predicted if the switch were here (`(bkg(t+6) − bkg(t)) x 4.8`) | +9.3 | **+21.4** | +18.0 |
+
+SV goes **132.0 → 154.7 between 46.03 and 46.55 s** and is flat across 90-94.5 s.
+The alarm is at 45 s and the step lands 1.3-1.5 s later, the same tick latency the
+`PID ON` alarm shows (15 s → 15.5 s). **The alarm table did not drift this
+roast.**
+
+The PID port agrees independently. Replaying measured BT with the integrator
+seeded, the best fit is `iterm0 = 18.63`, **rms 1.97 degC of SV over 30-180 s**,
+and the switch instant is sharply identified:
+
+| assumed switch | 30 s | **46.3 s** | 60 s | 91 s | never |
+|---|---|---|---|---|---|
+| rms vs measured SV, 30-180 s | 8.94 | **1.97** | 9.68 | 23.20 | 42.83 |
+
+`iterm0 = 18.63` against roast 55's 21.3 — the same operating point, and the
+lowered-floor seeding rule holds again (at `iterm0 = 0` the replay is out by
+rms 26.15).
+
+#### The 60-95 s undershoot is gone, and no overshoot replaced it
+
+| window | 30-60 s | 40-60 s | 60-95 s | 95-120 s |
+|---|---|---|---|---|
+| roast 55 worst | +3.25 | +3.25 | **−5.33** | −5.29 |
+| **roast 56 worst** | **+2.17** | **−1.24** | **−1.13** | **+0.91** |
+
+That was the whole point of moving the switch to 45 s: leave the 40 s correction
+intact and only anticipate after it. It did exactly that — the worst error in
+40-60 s is −1.24, so the feared 40-60 s overshoot **did not appear**, and the
+60 s intermediate the handoff held in reserve is not needed.
+
+**The one 100% heat sample is the step, not the authority.** Both 100% samples
+are at 46.5 and 47.1 s, i.e. the inner loop servicing the +22.7 degC SV step: it
+took `Inlet` from 131.9 to 162.9 in two seconds and then tracked. Heat never
+reached 100% again, never reached 0, and `Inlet − SV` rms from 50 s to DROP is
+0.91.
+
+#### Change 1 is neither confirmed nor falsified — because the crack moved
+
+The loop delivered the authored curve almost exactly through the back half:
+|error| **under 0.5 degC from 250 s to DROP**, and **+0.33 degC at the FCs mark
+itself**. So the roast did not stretch: BT is on the background. What moved is
+the coffee.
+
+| roast | 50 | 51 | 52 | 53 | 54 | 55 | **56** | mean 50-55 | v4 mark |
+|---|---|---|---|---|---|---|---|---|---|
+| FCs BT | 201.2 | 198.1 | 200.1 | 197.4 | 197.3 | 198.7 | **195.3** | 198.8 | **198.8** |
+| FCs t | 419 | 400 | 409 | 397 | 395 | 408 | **373** | | 399 |
+| DROP − FCs | 26.0 | 35.5 | 25.0 | 31.5 | 29.0 | 23.0 | **19.0** | 28.3 | 28 |
+
+FCs was marked at **195.3 degC**, **2.0 degC below the previous minimum of the
+six** and 3.5 below the mean the mark was set to, so it landed **26 s early**
+against a correction that predicted ~399 s. The background reaches 195.3 at
+375.1 s and the roast reached it at 372.5 — 2.6 s early, which is the whole of
+the timing difference. **The mark is now doing its job and the residual is bean
+variance (or mark subjectivity), not loop lag.** One sample does not justify
+moving 198.8 again; including roast 56 the mean is 198.3.
+
+DROP followed 19 s after FCs rather than the 28 the background specifies, so the
+roast ended at 392 s / BT 197.9 against the background's 427 s / 202.4. That is
+the operator's call at the machine, not a tracking failure.
+
+#### The new residual: a ramp-following lag at 140-200 s
+
+| t (s) | 120 | 140 | 160 | 165 | 180 | 200 | 220 | 250 |
+|---|---|---|---|---|---|---|---|---|
+| roast 54 err | −1.72 | −1.68 | −0.30 | — | +0.45 | +0.17 | −0.26 | — |
+| roast 55 err | −2.30 | −0.99 | −1.14 | — | −1.48 | −1.20 | −0.77 | −0.05 |
+| **roast 56 err** | **−0.08** | −1.30 | −2.60 | **−2.91** | −2.60 | −2.18 | −1.12 | −0.41 |
+
+Roast 56 enters 120 s dead on the curve and then **diverges to −2.91 degC by
+165 s** before recovering. This is the one place roast 56 is worse than roast 55
+(120-DROP rms 1.28 vs 0.79), and it is not the background: v3 and v4 agree to
+0.35 degC and their RoRs to 1.5 degC/min across 140-220 s.
+
+It is the **integrator's fill rate against the drying ramp**. Backing the terms
+out of the recorded SV — `output = (SV − 100)/2` under the 100/300 mapping,
+`Iterm = output − Kp x (bkg(t + LA) − BT)`:
+
+| t (s) | 90 | 105 | 120 | 140 | 160 | 180 | 200 | 240 |
+|---|---|---|---|---|---|---|---|---|
+| roast 55 `Iterm` | 18.2 | 26.1 | 32.1 | 36.7 | 40.9 | 44.6 | 48.7 | 54.3 |
+| **roast 56 `Iterm`** | 25.8 | 27.9 | 29.8 | 32.6 | 37.7 | 43.7 | 48.1 | 54.5 |
+
+Roast 55 arrived at 140 s carrying **4 more duty** (8 degC of SV) than roast 56,
+because it had spent 90-120 s digging out of a 5 degC undershoot and the large
+error pumped the integrator. Roast 56 never had that error, so its integrator
+climbed only at `Ki x err` — and the background's demand through 130-200 s
+outruns it. **Fixing the 60-95 s undershoot removed the very error that was
+pre-charging the integrator for the drying ramp.**
+
+The size is a phase, not a gain: −2.6 degC where the background runs
+25-27 degC/min is **~6 s of lag** — the residual of a 13.5 s apparent plant lag
+against 6 s of lookahead. Two candidate fixes, neither yet run:
+
+- **more lookahead in that region only** (`LA 12` from ~120 s), which is 6 s of
+  phase exactly where it is missing and worth only 2 degC of target by 300 s
+  where RoR has fallen to 10 degC/min. There is **no `LA 12` button** in the
+  `.aset` today — `extraeventslabels` has `LA 0` (button 20) and `LA 6`
+  (button 21) only, so this needs a new button `pidLookahead(12)` and an eighth
+  alarm row.
+- **more `Ki`**, which fills the integrator faster everywhere, including the dip.
+
+`replay_pid` **cannot size either of these.** It is fed measured BT, so a
+sustained change in lookahead shows up as a permanent P offset that the real
+loop would erase as BT caught up: it reports `LA 12` from 120 s commanding
+SV 278 at 300 s, which is not a prediction, it is the artifact. The phase
+arithmetic above is the honest sizing.
+
+#### The gate, the dip, and the turning point
+
+**The gate held.** `T_inlet` carries the two preheat entries at −16 and −14 s,
+the known duplicate at **+1.0 s**, and then **nothing until 15.5 s**, the `PID
+ON` alarm. Preheat equilibrium was `Inlet` 141.8 / `SV` 141.9 / `Temp_Drive`
+11.6 / heat 45.8%, and CHARGE BT was **130.20**, the background's value to the
+hundredth.
+
+The loop-free window is **30.5 s**, the longest in the series. Free turning
+point **61.1 degC at 27.5 s** against the background's **59.2 at 29.0 s** —
+1.9 degC shallow, 1.5 s early.
+
+**This is the dip model's first −5 degC point, and it is its worst fit.** Scoring
+all six recorded-temperature roasts against the shipped calibration
+(`phi(400 g) = 0.7116`, `tau_mix = 10.84`, `w_c = 2.10`, fitted to 50/51/53/54):
+
+| roast | T_bean | window | drop meas / pred | rms | worst | TP meas / pred |
+|---|---|---|---|---|---|---|
+| 50 | +25.0 | 15.0 s | 44.30 / 44.01 | 1.18 | 3.11 | 83.5@15.0 / 83.5@15.0 |
+| 51 | −12.0 | 16.0 s | 60.30 / 61.95 | 1.41 | 2.68 | 66.7@16.0 / 64.0@16.0 |
+| 53 | −12.0 | 18.5 s | 61.40 / 61.53 | 1.15 | 2.63 | 63.1@18.5 / 60.5@18.5 |
+| 54 | −12.0 | 30.0 s | 63.00 / 61.09 | 1.41 | 2.25 | 55.6@23.0 / 55.3@28.5 |
+| 55 | −12.0 | 30.0 s | 62.20 / 61.56 | 1.36 | 3.47 | 55.6@27.0 / 55.8@28.5 |
+| **56** | **−5.0** | **30.5 s** | **56.60 / 58.13** | **1.92** | **3.61** | **61.1@27.5 / 59.5@28.5** |
+
+The model over-predicts the drop by **1.5 degC** at −5, where the calibration has
+points at +25 and −12 and nothing between. **But the four −12 roasts measure
+60.30, 61.40, 63.00 and 62.20 against one prediction — a 2.7 degC spread on
+nominally identical charges — so a 1.5 degC miss at a new temperature is inside
+the model's own scatter.** Do not refit on `n = 1`. Roast 56 is, however, the
+obvious third temperature for the calibration group when a second −5 roast
+exists: it has an entered greens temperature, a held gate and the longest
+loop-free window in the set.
+
+#### What this settles for step 9, `INLET TRIM`
+
+The tracking case is now **dead**, not merely weakened. Roast 56 tracks its
+background at rms **0.94 degC over 30-90 s**, **0.41 over 95-120 s** and
+**1.26 over the whole roast**, with the inner loop at rms 0.91 from 50 s on.
+There is no tracking error left for an inlet trim to remove. What survives is
+purely the robustness argument — behaviour when the inner loop is disturbed or
+the plant moves — and that has to be argued on its own terms or dropped.
