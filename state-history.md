@@ -4660,11 +4660,16 @@ the pre-floor-change gains from a background file.
 
 ### Roast 56 (2026-09-07, 22:27) — the lookahead switch works, and the residual moves to the drying ramp
 
-400 g of the same lot, `airRoaster_cascadePID_floor100.aset` (`pidKp` 2.4,
-`pidKi` 0.056, `positiveTargetMin` 100) against
-`artisan/profile_400g_m5C_v4.alog`. **`moisture_greens` is finally entered —
-11.0**, ending four roasts of 0.0, and it matches roasts 50-52's 10.9 for the
-same lot.
+400 g, `airRoaster_cascadePID_floor100.aset` (`pidKp` 2.4, `pidKi` 0.056,
+`positiveTargetMin` 100) against `artisan/profile_400g_m5C_v4.alog`.
+**`moisture_greens` is finally entered — 11.0**, ending four roasts of 0.0.
+
+**Not the same lot as roast 55, and not a new coffee either.** The Kenya ran out
+and the operator switched to `C1043`, *Ethiopia, Crown Jewel Sidama Daye Bensa
+Washed* — the coffee roasts 43-49 ran on. Roasts 50-52 were `C1074` (Colombia)
+and 53-55 `C1062` (Kenya). This was read out of the logs on 2026-09-08 and it
+invalidates the FC arithmetic below; see § The FC temperature is a property of
+the lot.
 
 **Three things changed from roast 55, not two.** The planned pair were the FC
 mark (197.5 → 198.8) and the lookahead switch (CHARGE+90 → +45). The third was
@@ -4744,6 +4749,11 @@ reached 100% again, never reached 0, and `Inlet − SV` rms from 50 s to DROP is
 0.91.
 
 #### Change 1 is neither confirmed nor falsified — because the crack moved
+
+> **Superseded 2026-09-08.** The table below pools three different coffees and
+> its 198.8 "mean" describes none of them. The finding that survives is the
+> first sentence — the loop delivered the curve — not the arithmetic. See § The
+> FC temperature is a property of the lot.
 
 The loop delivered the authored curve almost exactly through the back half:
 |error| **under 0.5 degC from 250 s to DROP**, and **+0.33 degC at the FCs mark
@@ -4857,3 +4867,97 @@ background at rms **0.94 degC over 30-90 s**, **0.41 over 95-120 s** and
 There is no tracking error left for an inlet trim to remove. What survives is
 purely the robustness argument — behaviour when the inner loop is disturbed or
 the plant moves — and that has to be argued on its own terms or dropped.
+
+### The FC temperature is a property of the lot, and the 198.8 mean was three coffees (2026-09-08)
+
+The operator, asked about storing first-crack temperatures per bean: *"The saved
+alog has the bean info, doesn't it? And the data itself indicates FC temp."*
+Both true, and reading them settles a question that had been answered wrongly
+twice.
+
+**Every `.alog` carries the artisan.plus coffee id.** `plus_coffee` (the hr_id),
+`plus_coffee_label`, `plus_store`, and a `plus_sync_record_hash`. So the lot is
+identified exactly, and `BT(timeindex[2])` is the crack temperature. Nothing
+needs recording by hand — `tools/analysis/beans.py` derives it.
+
+**The lots, which nobody had checked:**
+
+| roasts | `plus_coffee` | coffee |
+|---|---|---|
+| 50, 51, 52 | `C1074` | Colombia, Crown Jewel Carbonic Honey Peach Co-Ferment |
+| 53, 54, 55 | `C1062` | Kenya, CJ Ichamama Factory Othaya Town |
+| **43, 44, 45, 46, 49, 56** | **`C1043`** | **Ethiopia, Crown Jewel Sidama Daye Bensa Washed** |
+
+**So "the mean over roasts 50-55 is 198.8" — the number the roast-56 background
+was built on — is a mean over two different coffees, and describes neither.**
+Per lot, on this machine, cascade-era (roast ≥ 40, ≥ 380 g):
+
+| `plus_coffee` | roasts | FCs BT | median | spread |
+|---|---|---|---|---|
+| `C1074` | 50, 51, 52 | 201.2 / 198.1 / 200.1 | **200.1** | 3.1 |
+| `C1062` | 53, 54, 55 | 197.4 / 197.3 / 198.7 | **197.4** | 1.6 |
+| `C1043` | 43, 44, 46, 49, 56 | 197.4 / 197.7 / 197.8 / 197.9 / **195.3** | **197.7** | 2.6 |
+
+**Three things follow, and two of them overturn earlier conclusions.**
+
+**1. `profile_003`'s 197.5 was right, and moving it to 198.8 was the error.**
+It is 0.1 degC from the Kenya's median and 0.2 from the Ethiopia's. The
+"correction" of § Roast 55 raised the mark by 1.3 degC on the strength of a
+pooled mean that included a Colombian sitting 2.7 degC above both.
+
+**2. There was never a systematic FC lag.** § Roast 55 concluded *"the lag is
+the mark, not the loop"* from **one** roast — 55's FCs at 408 s against 399.
+Roasts 53 and 54 are the same coffee against the same mark and landed at
+**397.5 and 395.5 s**, i.e. 1.5 and 3.5 s *early*. Roast 55's 198.7 is the
+high outlier of its own three. The premise of roast 56's change 1 was noise.
+
+It did no harm — roast 56 tracked v4 to +0.33 degC at the crack and under
+0.5 degC from 250 s to DROP — but it was not a correction, and the change count
+for roast 56 was really *one* control change plus a background edit that moved
+nothing that mattered.
+
+**3. Roast 56's 195.3 is the outlier of its own lot, not the lot's value.** The
+other four 400 g cascade roasts of `C1043` sit in a 0.5 degC band at
+**197.4-197.9**. 195.3 is 2.4 degC below all of them. Either a new bag under
+the same hr_id — artisan.plus identifies the *coffee*, not the crop or the bag,
+so it cannot distinguish one — or a crack marked early by ear. **`n = 1` against
+`n = 4` in a 0.5 degC band: the lot's number is ~197.7, and 195.5 rests on the
+single lowest reading in the set.**
+
+#### What this does to the tooling
+
+`tools/analysis/beans.py` derives the table rather than duplicating it, and
+encodes four traps that each produced a wrong number here:
+
+- **Group by `plus_coffee`, not the label.** `C1043` appears as both
+  `Ethiopia, Crown Jewel Sidama Daye Bensa Washed` and
+  `Crown Jewel Sidama Daye Bensa Washed`; grouping on the label splits one
+  coffee in two.
+- **`mode` can be `F`.** Roasts 1-15 are Fahrenheit and their `temp2` is degF.
+  Unconverted, they put a 403.7 "degC" first crack in the table.
+- **Filter on `roastertype`.** `~/Documents/artisan` holds ~530 logs from the
+  operator's other roasters. The same `C1043` reads **204.5 degC** across
+  eighteen 250 g roasts on the Behmor and **197.7** here. The filename prefix is
+  not a reliable separator; `roastertype` is.
+- **Do not pool across coffees, masses or eras.** The failure above.
+
+#### And it sharpens the background-authoring warning
+
+Roast 56's regeneration exercise had already shown that moving the FCs mark
+reshapes the first minute, because the RoR spec is one three-parameter
+exponential fitted to `BT(DRY END)`, `BT(FCs)` and `RoR(FCs)`. Sweeping the
+constraint shows the early ramp is not even **monotone** in it — BT at 60 s,
+400 g at −5 degC:
+
+| `--fcs` | 198.8 | 197.7 | 197.4 | 195.5 |
+|---|---|---|---|---|
+| `--ror-at-fcs` | 8.3 | 8.3 | 8.1 | 8.3 |
+| BT at 60 s | 78.1 | **73.3** | 74.1 | 74.5 |
+| RoR peak at | 52 s | 73 s | 70 s | 69 s |
+
+**A 1.1 degC change to a mark 340 s away moves BT at 60 s by 4.8 degC and the
+RoR peak by 21 s**, and 195.5 lands *closer* to the v4 ramp than 197.7 does. The
+first minute is a side effect of the back-half marks. Until the spec pins
+something in the ramp as well, **never run a regenerated background and a
+control change in the same roast**, and always print the 30-120 s column before
+loading one.

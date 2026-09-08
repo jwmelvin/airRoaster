@@ -99,14 +99,13 @@ check all eight rows in the dialog before the roast** — see the box below — 
 verify from the log afterwards by the SV step, which at 105 s should be
 `(bkg(117) − bkg(111)) x 4.8 ≈ 17 degC`.
 
-**Background: `artisan/profile_400g_m5C_v4.alog`, unchanged.** Roast 56 was a
-**different lot** — the previous coffee ran out — which is why FC came in at
-195.3, and this one's mark belongs at ~195.5. But regenerating for that is
-**not** a back-half edit: the RoR spec is fitted globally, so dropping FCs to
-195.5 moves BT by **−3.66 degC at 61 s** and the RoR peak from 52 s to 69 s,
-inside the window all four checks live in. The new-bean curve is generated and
-parked as `artisan/profile_400g_m5C_fc195_v5.alog` for **roast 58**, alone.
-See state-plan.md § Bean reference.
+**Background: `artisan/profile_400g_m5C_v4.alog`, unchanged.** Its FCs mark of
+198.8 is known to be wrong for this coffee (see item 3), but **fixing it is not
+a back-half edit**: the RoR spec is fitted globally, so moving the mark to 197.7
+moves BT by **−4.8 degC at 60 s** and the RoR peak from 52 s to 73 s — inside
+the window all four checks live in, and not even monotone in the mark. The mark
+is a label the cascade never reads; the curve is what the loop follows. **Fix it
+at roast 58, alone.** See state-plan.md § Bean reference.
 
 **Do not try to size the lookahead change with `replay_pid`.** It is fed
 measured BT, so a sustained lookahead change reads as a permanent P offset the
@@ -123,20 +122,37 @@ from 50 s to DROP. There is no tracking error left for an inlet trim to remove.
 disturbed or the plant moves — and say what would test that, or drop it.**
 state-plan.md § NEXT item 14 should record whichever.
 
-#### 3. The FC mark — a different bean, and the mark waits for roast 58
+#### 3. The FC mark — the 198.8 was three coffees, and it should go back to ~197.5
 
-Roast 56's FCs was marked at **195.3 degC / 373 s**, 2.0 degC below the previous
-minimum of six roasts. **The cause is known: it was a different lot** — the
-coffee from roasts 50-55 ran out and was replaced. Nothing was wrong with the
-loop: BT was **+0.33 degC** from the background at the crack and within 0.5 degC
-from 250 s to DROP.
+**Corrected 2026-09-08 from the logs.** Every `.alog` carries `plus_coffee`, the
+artisan.plus hr_id, so the lots are known exactly — and the "measured mean over
+roasts 50-55" of **198.8 that roast 56's background was built on is a mean over
+two different coffees**. Roasts 50-52 are `C1074` (Colombia, median 200.1);
+53-55 are `C1062` (Kenya, median 197.4); **roast 56 is `C1043`, the Ethiopia
+that roasts 43-49 ran on** — not a new bean at all.
 
-The new lot's mark belongs at **195.5**, and the curve for it is generated and
-parked (`artisan/profile_400g_m5C_fc195_v5.alog`). **It does not go in roast
-57**, because it is not a back-half edit — see above. Per-lot FC temperatures
-are recorded in state-plan.md § Bean reference, which also records that
-**artisan.plus cannot store this**: the `Coffee` record it syncs
-(`plus/stock.py:82-94`) has no temperature field at all.
+| `plus_coffee` | roasts (cascade-era) | FCs BT | median |
+|---|---|---|---|
+| `C1043` Ethiopia Daye Bensa | 43, 44, 46, 49, **56** | 197.4 / 197.7 / 197.8 / 197.9 / **195.3** | **197.7** |
+| `C1062` Kenya Ichamama | 53, 54, 55 | 197.4 / 197.3 / 198.7 | 197.4 |
+| `C1074` Colombia Peach | 50, 51, 52 | 201.2 / 198.1 / 200.1 | 200.1 |
+
+Two earlier conclusions fall with it. **`profile_003`'s original 197.5 was
+right** — 0.1 from the Kenya's median, 0.2 from the Ethiopia's. And **there was
+never a systematic FC lag**: § Roast 55 read one roast's 408 s against a 399 s
+mark, but roasts 53 and 54 are the same coffee against the same mark and landed
+at 397.5 and 395.5 s, *early*. Roast 56's change 1 was chasing noise. It did no
+harm — BT was +0.33 degC from the background at the crack — but it was not a
+correction.
+
+**Roast 56's 195.3 is the outlier of its own lot**, 2.4 degC below the other
+four, which sit in a 0.5 degC band. Either a new bag under the same hr_id
+(artisan.plus identifies the coffee, not the crop or the bag) or a crack marked
+early by ear. `artisan/profile_400g_m5C_fc195_v5.alog` is parked at 195.5 and
+**rests on that single reading**; a curve at ~197.7 is the better bet unless the
+next roast of `C1043` also reads low. **Either way it is roast 58's change, not
+roast 57's.** Run `tools/analysis/beans.py --coffee C1043` first; per-lot FC is
+derived, never recorded by hand (state-plan.md § Bean reference).
 
 DROP came **19 s** after FCs, not the 28 the background specifies. Left at 28
 for now — the DROP mark only closes the control window (`calcSV` returns `None`
@@ -153,9 +169,10 @@ past `drop_t`) and every roast has dropped well inside it.
 - Nothing before 105 s changes, so **any movement in the first 90 s means
   something else moved** — check the alarm table, the background file and the
   charge temperature first.
-- FC will land ~25 s before the 399 s mark again. **Expected, and not a
-  finding** — that is the new lot, and the mark is deliberately not being moved
-  this roast.
+- FC will land before the 399 s mark again — v4 passes 197.7 at **391 s** and
+  195.3 at **375 s**, so the crack time itself distinguishes them. **Either way it is expected and not a finding**; the mark is
+  deliberately not being moved this roast. Which of the two it is settles
+  roast 58's background.
 
 ### Regenerating the background
 
