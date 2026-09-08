@@ -176,6 +176,9 @@ past `drop_t`) and every roast has dropped well inside it.
 
 ### Regenerating the background
 
+**`tools/README.md` is the orientation brief for this task** — the four inputs,
+the recipe, the check block to read, and the traps. In short:
+
 ```
 .venv/bin/python tools/make_background.py --mass 400 --greens-temp <measured> \
     --fcs 399:<bean FCs BT> --development 28 --out artisan/profile_400g_<T>_<tag>.alog

@@ -1,5 +1,9 @@
 # Offline analysis of the Artisan cascade
 
+> Authoring a background for the next roast? **`../README.md` is the
+> orientation brief** — four inputs, the recipe, and the traps. This page is
+> the catalogue of the investigation tooling.
+
 Python, numpy + scipy. Nothing here runs on the roaster; it reads roast logs and
 reproduces the outer loop so tuning can be tested before it is roasted.
 
@@ -21,6 +25,7 @@ reproduces the outer loop so tuning can be tested before it is roasted.
 | `charge_thermal.py` | the charge-thermal test's two no-flow charge decays. Primarily an **identifiability report**: what the still-air decay measures (the probe's weighting onto the chamber, the fan-burst bias) and what it cannot (the chamber capacity, the charge temperature). ~14 min |
 | `dekick_tp.py` | how much of a measured turning point is the loop's own kick: backs the inlet excess out of the dip with the plant card, so the dip model is not refitted against the overshoot it caused |
 | `charge_dip.py` | the charge dip from `(mass, greens temp)`: a mixing term (pour ramp + exponential) in front of the plant card, fitted jointly to roasts 50/51/53/54 over their loop-free windows. `--ramp` profiles `w_c`; **`--scale` is the one to read before trusting `phi`** |
+| `beans.py` | **what temperature each coffee cracks at**, derived from the logs' `plus_coffee` ids rather than recorded by hand. Prints the `--fcs` / `--ror-at-fcs` arguments for `make_background.py`. Groups by hr_id (not the label), converts Fahrenheit logs, and filters on `roastertype` — the log directory holds ~530 files from two other roasters |
 | `../make_background.py` | **authors a whole background**: the dip, then a RoR specification integrated to BT — smooth by construction, marks fitted exactly, no Designer curve and no blend. `--decline linear` shows why the decline has to be exponential |
 | `../make_charge_background.py` | the older **merge**: splices that dip into an existing Designer curve and smoothsteps back onto it. Superseded by `make_background.py` — the blend leaves a bulge and then a cliff in RoR that no window removes |
 | `plant_roast46.json` | the plant card `tools/merge_inlet_base.py` reads: `a`, `theta` and the loss cubic, with provenance |

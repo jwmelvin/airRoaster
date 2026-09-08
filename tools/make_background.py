@@ -1,6 +1,19 @@
 #!/usr/bin/env python3
 """Author a whole background: measured dip, then a smooth declining RoR.
 
+USAGE -- the whole recipe is four lines; tools/README.md is the orientation.
+
+    tools/analysis/beans.py --coffee C1043        # the lot's --fcs / --ror-at-fcs
+    make_background.py --mass 400 --greens-temp -5 \\
+        --fcs 399:197.7 --development 28 --ror-at-fcs 9.4 \\
+        --compare artisan/<the background it replaces>.alog --out artisan/<new>.alog
+
+Pass --mass and --greens-temp for the roast you are ACTUALLY about to run --
+never scale.  Read the printed check block before loading it: three marks at
+0.00, RoR monotone both sides of the peak, and the 30-120 s row against
+--compare, because moving a back-half mark moves the first minute too.  The
+rest of this docstring is why the curve is shaped this way.
+
 `make_charge_background.py` **merges** a computed dip into an existing Designer
 curve and smoothsteps back onto it.  That was the right move while the ramp was
 the operator's and only the dip was wrong, and it has one defect that no choice
@@ -74,15 +87,23 @@ TEMPLATE = os.path.join(REPO, 'artisan/profile_003.alog')
 # BT 130.2 / inlet 140.4 / Temp_Drive 10.25).
 INLET_PRECHARGE = 140.4
 # profile_003's marks, which roasts 50-54 were designed and scored against.
-# NOTE the FCs temperature: 197.5 is at the BOTTOM of what this coffee actually
-# cracks at (roasts 50-55: mean 198.8, median 198.4, range 197.3-201.2).  A
-# background whose FC mark is 1.3 degC low arrives there ~9 s early at the
-# ~8.3 degC/min the roasts run through FC, and the whole roast stretches past
-# it -- roast 55's FCs landed at 408 s against the background's 399.  Prefer
-# --development mode below, and set --fcs to the coffee's own FC temperature.
+# The FCs temperature 197.5 is a sane DEFAULT, not this roast's answer: always
+# pass --fcs from `tools/analysis/beans.py --coffee <hr_id>`, which reads the
+# lot's own crack temperature out of the logs.
+#
+# CORRECTED 2026-09-08.  This comment used to say 197.5 was "at the BOTTOM of
+# what this coffee actually cracks at (roasts 50-55: mean 198.8)".  That mean
+# pools THREE different coffees -- C1074 at 200.1, C1062 at 197.4, C1043 at
+# 197.7 -- and describes none of them; the logs carry `plus_coffee` and nobody
+# had looked.  197.5 is within 0.3 degC of both lots it was ever run against,
+# and the "roast 55 landed 9 s late" that justified raising it was one roast:
+# 53 and 54 are the same coffee against the same mark and landed EARLY, at
+# 397.5 and 395.5 s.  See state-history.md § The FC temperature is a property
+# of the lot.
 DEFAULT_MARKS = {'dry_end': (192.0, 149.6), 'fcs': (399.0, 197.5),
                  'drop': (425.0, 201.4)}
-# Measured over roasts 50-55 (slope fitted over FCs +-15 s, and DROP - FCs).
+# Cascade-era medians, per lot: C1043 9.4, C1062 8.1, C1074 8.3 degC/min.  8.3
+# is a default, not a measurement of your coffee -- pass --ror-at-fcs too.
 FC_ROR_DEFAULT = 8.3          # degC/min through first crack
 DEVELOPMENT_DEFAULT = 28.0    # s from FCs to DROP
 
