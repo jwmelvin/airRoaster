@@ -825,6 +825,67 @@ lever as an extra channel in `handleArtisanRequest()` (README § adding a
 channel), then an alarm with Source = that channel, condition above 0.5, action
 DROP. Same alarm mechanism, a measured event instead of an inferred one.
 
+#### The inlet spike beats the RoR collapse, and it is measured (operator proposal, 2026-09-08)
+
+The operator asked for the **inlet spike at the dump** as the trigger. Roasts
+53-57 say it is the better signal on every axis that matters, and the margins
+are not close.
+
+Pulling the lever vents the chamber: flow past the inlet probe collapses, the
+probe rises toward the metal it sits in, and the inner loop — correctly — cuts
+heat to zero. All of it inside two seconds.
+
+| roast | `Inlet − SV` at the dump | max `Inlet − SV`, DRYe→DROP−5 s | `HT` at the spike | min `HT`, same window |
+|---|---|---|---|---|
+| 53 | **+23.4** | 2.3 | 0 | 51 |
+| 54 | **+19.6** | 1.8 | 1 | 51 |
+| 55 | **+20.0** | 1.4 | 0 | 56 |
+| 56 | **+21.9** | 1.2 | 0 | 56 |
+| 57 | **+20.2** | 1.9 | 0 | 53 |
+
+degC and %. A threshold of `Inlet − SV > 10` sits **4-8× above** anything the
+armed window produces and **2× below** every event. The inner loop tracks at
+rms 0.91 degC, so the spike is a 20-sigma excursion.
+
+**And it leads the DROP mark instead of lagging it.** First crossing, seconds
+relative to the DROP mark in each file:
+
+| | 53 | 54 | 55 | 56 | 57 |
+|---|---|---|---|---|---|
+| `Inlet − SV > 10` | **−3.5** | **−2.5** | **−2.0** | **−0.5** | **−3.5** |
+| `HT < 20 %` | −3.5 | −2.0 | −2.0 | −0.5 | −3.0 |
+| `DeltaBT` (10 s span) below −25 | +6.0 | +7.0 | +6.5 | **never** | +6.0 |
+
+The RoR collapse is a *consequence* of the beans leaving and cannot precede it;
+the spike is the vent itself. **The swing is 7-10 s of heater on-time**, and on
+a 10 s span roast 56 misses the collapse threshold outright.
+
+**Arming is the same constraint as the DeltaBT alarm, for the same reason.**
+Measured from CHARGE+30 instead of DRY END, the same window gives max
+`Inlet − SV` of **9.2-11.5** and 2 s inlet rises of **30-35 degC** — the dip
+recovery — which would trip a +10 threshold every roast. **Arm from DRY END.**
+
+**Implementation.** `Inlet` is extra channel 1 and `SV` extra channel 3, so the
+discriminator is a virtual channel of the shape `Temp_Drive` (`Y3-Y2`) already
+uses; or alarm on `HT` below 20 %, which fires at the same instant with a 2.5×
+margin and needs no new channel. Alarm action 13 = DROP, `alarmtime` = DRY END,
+`alarmoffset` **0** (§ above: time and temperature conditions are OR'd, so a
+non-zero offset fires on the clock alone). It replaces neither the DeltaBT alarm
+nor the instrumented lever — the lever is still the measured event, this is the
+best inference available without new hardware — and it can run alongside the
+DeltaBT alarm, since the DROP action is guarded by `timeindex[6] == 0`.
+
+**One anomaly to resolve first, and it is independent of the detector.** In
+roast 56 the DROP mark sits at 392 s, on the spike — but the heat-off chain did
+not run there. `SV` climbed 230.9 → **255.2** and `HT` went 38 → 90 → **100 %**
+over the next 16 s, BT recovering 194.4 → **201.7** in an emptied chamber; heat
+reached 0 only at **+17.5 s**. `pidOffDROP = true` and `buttonactions[6] =
+"19,14,11,12"` are both present in `airRoaster_cascadePID_floor100.aset`, so on
+the file the chain should have fired at the mark. **Find out why it did not
+before changing the detector**: a trigger 3 s earlier into a chain that takes
+17 s to act buys nothing, and this is the failure mode auto-DROP exists to
+prevent.
+
 ### Files for the characterisation runs (2026-09-02, procedure revised 2026-09-06)
 
 Both are ordinary background profiles carrying the test's inlet schedule as
@@ -2569,6 +2630,131 @@ No bundled machine profile in Artisan's own `Machines/` directory does a
 cascade: all 35 with a configured software PID target slider 4 (heat), the
 Giesens included, even though they too put a temperature slider on 3. There is
 no vendor precedent to copy here.
+
+## Plant changes on the table (operator, 2026-09-08)
+
+Four raised together. **None is scheduled and none should precede § TEST PLAN**,
+which is measuring a 2.9 degC feature on the present plant. Each is recorded
+with the measurement that would size it, because in every case the arithmetic
+exists and the number does not.
+
+### Smaller batches — 250 g, and lower
+
+**The bench line already makes batch size a scalar rather than a
+re-characterisation.** `HT = 20.25 + 0.1922·BT` is the *empty* chamber and so is
+mass-independent. What scales with the charge is the excess-duty → RoR slope:
+**2.66** (roast 56) and **2.29** (roast 57) at 400 g. Bean mass is one term of
+that denominator and the chamber metal in the loop is the other, so
+`2.66 × 400/250 = ` **4.26 is a ceiling, not a prediction** — the first 250 g
+roast measures the split, and after that the outer loop's gain scales by mass.
+
+**The binding constraint is the fan, not the gain.** 400 g needs ~64 to start
+circulating and sustains at 60, with a floor at 58-59. A 250 g bed has both a
+lower fluidisation requirement *and* a lower pressure drop, so it also delivers
+more flow per fan unit — both push the working point down toward
+`ilFanFull = 55`, at and above which heat is unrestricted; below it the soft
+interlock caps heat, linearly down to `ilHeatAtMin = 30 %` at `ilFanMin = 48`,
+and zero below that (airRoaster.ino:107-112). **Find the 250 g fan envelope on
+the bench before spending beans**, and if it lands under 55, move `ilFanFull`
+deliberately rather than discovering it as a heat cap mid-roast.
+
+**Authoring the curves is already solved; hitting DE and FC is a calibration.**
+`make_inlet_background.py` takes `--t_dry --T_dry --t_fc --T_fc --t_drop
+--T_drop` in `anchor` mode, so a curve that reaches chosen temperatures at
+chosen times is one command. What that does *not* buy is DE and FC landing
+there: they are bean events and BT is not bean temperature (§ Bean reference —
+`C1043` cracks at **197.40**). Author the *times*, then move the target
+*temperature* per lot until the event lands on them. That is the same discipline
+§ Bean reference already runs, applied to a second milestone.
+
+### Insulating the metal chamber (not the glass extension)
+
+**View: worth doing, and one empty-chamber ladder is the whole re-characterisation
+cost — but after § TEST PLAN, not before.**
+
+What it buys, in this project's own numbers:
+
+- **Headroom the profile work will want.** Post-DRYe RoR is linear in BT and
+  crosses zero at **218.2 / 219.2** (roasts 56 / 57): at the duty the loop
+  settles on and fan 60 the machine asymptotes to ~218 degC and the whole
+  back-half RoR decay is first-order approach to it. That ceiling *is* the loss
+  line. Insulation raises it, and any curve that asks for BT 210+ with RoR still
+  on it needs that.
+- **It shrinks the largest unmeasured roast-to-roast disturbance.** Roasts 56 and
+  57 agree on the excess-duty slope (2.66 / 2.29) and disagree on the intercept
+  (**0.81 vs 6.46**) across 4.6 degC of ambient. Loss to ambient carries that.
+- **It flattens the plant's BT dependence.** `0.1922 %/degC` is the only
+  self-regulating term in the plant; reducing it makes the open loop more nearly
+  an integrator, so one set of gains works across the whole roast. That is the
+  thing four floor retunes (120 → 170 → 140 → 100) and roast 54's 40 s of floor
+  saturation have been fighting.
+- **It should improve the `Inlet − BT` precision problem.** Phase 0's ±1.5 degC
+  is the BT probe blending air with local metal on a many-minute time constant.
+  Insulation raises the wall toward the air temperature, moving the contaminating
+  term toward the thing being measured — which helps § Temp_Drive directly.
+
+What it costs:
+
+- **Every measured constant moves**: the duty line, the `ff` map coefficients
+  (`ffC0/ffF/ffS/ffFS`, airRoaster.ino:360-380), the preheat equilibria, the
+  278 s cooldown behaviour. All of it is re-measured by one ~60 min empty-chamber
+  session — Phase A has now proven that is cheap, and `FF SET` / `FF SLOPE` mean
+  a refit is a command, never a reflash.
+- **Longer settling, slower cooldown.** Lower `UA` at unchanged `C` lengthens the
+  metal's time constant, so preheat soak and between-batch turnaround both grow.
+- **Less loss means a saturated-duty excursion goes further before it
+  asymptotes.** The failsafe still drops heat to 0 and `INLET_OVERTEMP_C` is
+  unchanged, but the margins deserve a look rather than an assumption.
+
+**Sequencing.** Both candidate causes of the 140-200 s residual live in the loss
+term. Insulating mid-investigation would force § TEST PLAN to restart.
+
+### The leak upstream of the chamber
+
+The operator's reading — a bypass that costs efficiency and moves the fan number
+— is right about the steady state, and probably optimistic about two things.
+
+**The offset is already in the firmware's map.**
+`ff = 0.011423·(fan − 44.7)·(sv − 75.0) + 31.6`, fitted to roast 47's empty grid
+at rms 0.68 %. **`fan − 44.7`** is the fan level at which the fit says effective
+flow reaches zero, which is the shape a parallel leak produces. At fan 60 only
+**15.3 of 60 units** are doing work — which is also why the fan gain is as strong
+as it is (0.99 % heat per fan unit, empty and loaded agreeing).
+
+**Fractional flow resolution does not improve by sealing it.** Sensitivity is
+`1/(fan − f0)` per unit — 6.5 % per fan unit at fan 60 — and that depends on the
+*effective* flow, not on where the offset sits. Sealing the leak moves the
+working point down by about as much as it moves `f0`. On that axis the operator
+is right: it is just a different number.
+
+**But the number moves toward the interlock, not away from it.** `ilFanFull = 55`,
+`ilFanMin = 48`. A 400 g floor of 58-59 has ~4 units of margin today; sealing a
+leak worth even ten fan units puts the 400 g working point under the cap and the
+250 g working point well under it. **Sealing the leak and shrinking the batch
+push the same direction.**
+
+**And the leak is probably not constant.** A fixed orifice in parallel with the
+bed splits by relative resistance, so the split moves whenever the bed's
+resistance moves — mass loss, ~15 % expansion, chaff, and the fluidisation
+hysteresis already on record (64 to start circulating, 60 to sustain). That turns
+a static efficiency loss into a **time-varying flow disturbance**, which is the
+shape of the thing § TEST PLAN is chasing at 140-200 s. It does not make the leak
+the cause — Phase B's fan-64 roast is still the test — but "it only changes the
+fan number" is the optimistic case, not the certain one.
+
+**The measurement.** Phase A's `TD = C/(fan − f0)` fit returns `f0` **empty**.
+A loaded `f0` needs one deliberate fan step inside a roast, which `FF SLOPE`
+already exists to consume. The difference between the two is the leak's
+dependence on bed resistance, and it is the number that decides whether sealing
+it is an efficiency job or a control job.
+
+### Auto-DROP from the inlet spike
+
+Measured and written up in § Auto-DROP detection § The inlet spike beats the RoR
+collapse. Short version: `Inlet − SV > 10` armed from DRY END fires **0.5-3.5 s
+before** the DROP mark against the DeltaBT alarm's **6-7 s after**, with 4-8×
+margin over the armed window — but roast 56's heat-off chain took 17.5 s to act
+on a mark it already had, and that is the first thing to fix.
 
 ## Later / not scheduled
 
