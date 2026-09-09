@@ -37,12 +37,12 @@ tool is authoritative.
 `screen_size`, `processing` and `crop_date` — and no temperature field of any
 kind. There is nowhere to put it and nothing that would apply it forward.
 
-Snapshot at roast 56, cascade-era only (roast ≥ 40, ≥ 380 g, `roastertype`
+Snapshot at roast 57, cascade-era only (roast ≥ 40, ≥ 380 g, `roastertype`
 `airRoaster`):
 
 | `plus_coffee` | coffee | roasts | FCs BT median | spread |
 |---|---|---|---|---|
-| `C1043` | Ethiopia, Crown Jewel Sidama Daye Bensa Washed | 43, 44, 46, 49, 56 | **197.7** | 195.3-197.9 |
+| `C1043` | Ethiopia, Crown Jewel Sidama Daye Bensa Washed | 43, 44, 46, 49, 56, **57** | **197.6** | 195.3-197.9 |
 | `C1062` | Kenya, CJ Ichamama Factory Othaya Town | 53, 54, 55 | **197.4** | 197.3-198.7 |
 | `C1074` | Colombia, Crown Jewel Carbonic Honey Peach Co-Ferment | 50, 51, 52 | **200.1** | 198.1-201.2 |
 
@@ -54,11 +54,19 @@ temperature is a property of the lot has the full correction, including that
 `profile_003`'s original **197.5** was right for both coffees it was ever run
 against.
 
-**One roast does not characterise a lot, but four in a 0.5 degC band do.**
-`C1043` reads 197.4 / 197.7 / 197.8 / 197.9 across roasts 43, 44, 46 and 49, and
-**195.3** on roast 56 — the outlier of its own lot. artisan.plus identifies the
+**One roast does not characterise a lot, but four in a 0.5 degC band do — and
+roast 57 closed this one.** `C1043` reads 197.4 / 197.7 / 197.8 / 197.9 across
+roasts 43, 44, 46 and 49, **195.3** on roast 56, and **197.40 on roast 57**. Five
+readings inside 0.5 degC and one 1.2 degC below the rest: **195.3 is a mark made
+early by ear, not a new bag**, and the lot's number is **197.6**. The tool now
+prints `--fcs <s>:197.6 --ror-at-fcs 9.4`, and
+`artisan/profile_400g_m5C_fc195_v5.alog` — which was parked on that single
+reading — **is retired.**
+
+The general caution stands for the next lot: artisan.plus identifies the
 *coffee*, not the crop or the bag, so a new bag under the same hr_id is
-invisible; that is the one thing the tool cannot tell you.
+invisible; that is the one thing the tool cannot tell you. **The way to tell them
+apart is a second roast**, which is what roast 57 was.
 
 **Regenerating for a new FC temperature used to be a change to the first
 minute; since 2026-09-08 it is barely one.** The old behaviour was a defect, not
@@ -824,8 +832,18 @@ starting at 0 needs slider 3's minimum moved below it.
 Gated on the preheat characterisation (state-current.md § HANDOFF § 0 and § 1),
 because stage A's design constants come out of it.
 
-**A. Bench, no beans — the Temp_Drive ladder.** This is § 0 of roast 57 and it is
-already scheduled. It yields `d(TD)/d(BT)`, which is the **DC gain of the
+**A. Bench, no beans — the Temp_Drive ladder. DONE 2026-09-08, and it passes.**
+`artisan/airRoaster_empty_BT-target-steps.alog`, six settled rungs at BT 130 /
+140 / 145 / 152 / 130 / 145. **`d(TD)/d(BT) = +0.025`** — DC gain near 40, so the
+drive→BT loop is very nearly an integrator, and the kill criterion below is
+cleared by **20×**. Even the most adverse pairing in the data gives 0.17.
+**Go to stage B.** Two cautions carried in state-history.md § Phase 0: the slope
+is *bounded*, not measured (Temp_Drive moved 0.6 degC across the ladder while
+same-BT repeats disagreed by −1.51 and +1.02), and **heater duty repeats 6× better
+than `Inlet − BT`** because the BT probe carries a slow local-metal component.
+The original scheduling note follows.
+
+This was § 0 of roast 57. It yields `d(TD)/d(BT)`, which is the **DC gain of the
 drive→BT loop** and therefore decides whether this design is nearly an integrator
 (type-2, no ramp error) or a high-gain type-0. It also gives the settling ceiling
 at fan 60, which bounds the drive range.
@@ -853,8 +871,11 @@ ramp) is then the whole story. **Stop here and reconsider.**
    different scale; § Roast 44 outer-loop analysis and § Roast 53 are the prior
    art.
 4. **The drive range and the slider assumption.** Map
-   `positiveTargetMin`/`Max` onto a drive range — roasts 53-56 ran
+   `positiveTargetMin`/`Max` onto a drive range — roasts 53-57 ran
    Temp_Drive **29-94 degC**, so something like 0-160 covers it with margin.
+   **Every one of those figures carries ±1.5 degC of probe history** (§ Phase 0),
+   which is an argument for the margin, not against the range. **Never tune on a
+   Temp_Drive difference under ~2 degC.**
    Artisan asserts `slider_min < positiveTargetMin < positiveTargetMax <
    slider_max` (`pid_control.py:1302`), so slider 3's minimum has to move below
    the drive floor. **Do not leave the 0-320 slider range and a 0 floor: that
@@ -895,8 +916,10 @@ criterion fires, LA 12 comes straight back as the cheap fix it was.
 
 `d(TD)/d(BT)` — how much more drive it takes to hold a hotter BT — is the DC gain
 of the drive→BT loop, and it decides whether this is nearly an integrator
-(type-2, no ramp error) or a high-gain type-0. It is bracketed **0.10 to 0.38**
-and has never been measured. **It is also exactly the number § Normalize the
+(type-2, no ramp error) or a high-gain type-0. **Measured 2026-09-08: +0.025**,
+an order of magnitude below the 0.10-0.38 bracket this section carried. The
+paragraphs below were written before that and are kept for the reasoning; the
+bracket itself is superseded. **It is also exactly the number § Normalize the
 charge with the PREHEAT needs**, and for a third reason too: the plant card's
 `loss(t)` is a function of *time* only because BT(t) is monotone on a roast, so a
 BT-dependent loss is aliased into it and `plant_roast46.json` cannot separate the
@@ -1112,6 +1135,22 @@ be to enable the predictor, and the channel route achieves that without it. The
 background curve authoring belongs in Artisan's Designer.
 
 #### Normalize the charge with the PREHEAT, not the background (operator, 2026-09-08)
+
+> **WITHDRAWN by roast 57 (2026-09-08). Do not build on this section.** The lever
+> rests on `d(TP)/d(preheat) ≈ 0.415`, and the measurement is **0.100**: roast 57
+> stepped the preheat 130.2 → 145.24, one variable, and the turning point moved
+> **+1.50 degC** where the model said +6.24. The lever the measurement implies is
+> `0.60 / 0.100` = **6.0 degC of preheat per degC of greens**, which the machine
+> does not have. Every table below is model output that assumes the trade it was
+> being asked about; the "two thirds store, one third flow" decomposition is the
+> specific claim that failed. `tools/analysis/preheat_lever.py` is kept — it now
+> reads 6.0 and says so. **The preheat is not inert, it is a slow lever aimed at
+> the wrong window**: it moves 30-120 s by *more* than the model predicts (+9.10
+> at 70 s against +4.58) and the turning point by almost nothing. Full record in
+> state-history.md § Roast 57; the mechanism is in state-history.md § Phase 0 —
+> the BT probe sits on the non-flow side and carries a slow local-metal
+> component, so "preheat BT 145" is not 15 degC of energy the beans can reach.
+
 
 **The idea.** Instead of authoring a different roast for every greens
 temperature, preheat *hotter* for a cold charge and *cooler* for a warm one, so
@@ -1526,11 +1565,24 @@ left, under the 250 g minimum. Roast 47 was the first outing of a new schedule
 and hit an unforeseen trap, so if 800 g of other sacrificial beans can be found,
 prefer the two-batch pair below and keep this as the fallback.
 
-**The 1:30 circulation bump is a free fan step on every real roast.** 64 -> 60 at
-400 g, 5-8 % of heat against 0.4-1.5 % noise, and `HT` is recorded from v0.19.0
-on. It is messier than a flat-inlet step — BT and SV are both moving — but the
-2 s response means a ±10 s window is nearly all fan. Averaged over a few normal
-roasts it is an independent read on the loaded slope for no beans at all.
+**The 1:30 circulation bump is a free fan step on every real roast — and it has
+now been read (2026-09-08).** The step lives at **2:00**, not 1:30. Duty over
+100-118 s against 126-146 s, detrended on the 60-118 s slope, gives **0.9-1.0 %
+of heat per fan unit over 64 → 60** on roasts 56 and 57 — matching the empty
+preheat regression's **0.992** exactly. **The loaded fan gain equals the empty
+one**, and Test C's fan question is answered for this step without spending a
+batch.
+
+**But only two roasts are readable, and the reason is the caution.** Roasts 53-55
+had SV ramping at **1.0-1.6 degC/s** through the window, so there is no flat
+baseline to difference against and the detrend extrapolates nonsense (−14 to
+−19 % of duty). It works on 56 and 57 because the lookahead switch moved to 45 s
+and left the 100-145 s SV flat. **Read this step only where `dSV/dt` is under
+~0.2 degC/s over 60-110 s**, and check that before quoting a number.
+
+**The same step is now the leading suspect for the −2.9 degC residual at 170 s**
+— see state-current.md § HANDOFF § 2. The duty step reads a **6.6-7.4 % flow
+reduction**, which the outer loop must make up as delivered power.
 
 **Step 4/5, the 800 g version — Test B and Test C, merged: two loaded 9-minute
 runs.** Backgrounds

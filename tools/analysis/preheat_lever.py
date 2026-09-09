@@ -1,6 +1,25 @@
 #!/usr/bin/env python3
 """Can the preheat absorb a varying charge temperature?
 
+**MEASURED 2026-09-08, and the answer is no.**  Roast 57 stepped the preheat
+130.2 -> 145.24 with everything else held (400 g `C1043`, greens -5.0, same fan
+schedule, gate and gains as roast 56) and the turning point moved **+1.50 degC**
+against this module's predicted +6.24.
+
+    d(TP)/d(preheat)   predicted 0.415      measured 0.100
+    lever = 0.60/gain  predicted 1.17       measured 6.0 degC preheat per degC greens
+
+Six degC of preheat per degC of greens is off the machine: normalising a 10 degC
+bean-temperature swing would need 60 degC of preheat, and 145 was already the
+hottest charge ever run.  **The rule below is withdrawn.**  Everything this
+module prints is still the model's own arithmetic and is kept because the
+*failure* is informative -- in particular the "two thirds store, one third flow"
+decomposition is the specific claim that broke, and the store is the half that
+did not survive: the extra 15 degC had left the BT reading by 20 s, inside the
+window where the PID is still off.  See state-history.md § Roast 57 and § Phase 0
+(the BT probe sits on the non-flow side of the expansion chamber and carries a
+slow local-metal component, so a preheat *reading* is not chamber energy).
+
 **The operator's idea (2026-09-08):** instead of authoring a different roast for
 every greens temperature, preheat *hotter* for a cold charge and *cooler* for a
 warm one, so that every batch arrives at the same post-dip state and the loop
@@ -177,6 +196,10 @@ def main():
     m = model()
     t = np.arange(0.0, 160.0, 1.0)
     mass, s = args.mass, args.td_slope
+    print("*** WITHDRAWN by roast 57 (2026-09-08): d(TP)/d(preheat) measured")
+    print("*** 0.100, not the 0.415 modelled here, so the lever is 6.0 degC of")
+    print("*** preheat per degC of greens and the machine does not have it.")
+    print("*** Everything below is model output. Do not ship the rule.\n")
     print(f"phi({mass:.0f} g) {cd.phi_of_mass(mass, m['c_b'], m['C_ch']):.4f}   "
           f"C_chamber {m['C_ch']:.0f} = {m['C_ch'] / m['c_b']:.0f} g of coffee, "
           f"against a {mass:.0f} g charge   (dip cal rms {m['rms']:.2f} degC)\n")
@@ -261,10 +284,16 @@ def main():
         print("   --inlet-precharge) so the loop is not asked to fight the step, and")
         print("   read the TP off the log.  A measured gain below ~0.3 or above ~0.55")
         print("   moves the lever enough to matter; inside that band, ship the rule.")
-        print("\n   It also tests the two things the model cannot: whether fan 60 still")
-        print("   settles at the higher preheat at all, and what Temp_Drive does there")
-        print("   (predicted {:.1f} at BT {:.1f} on the 0.10 slope, {:.1f} on 0.383)."
-              .format(TD_REF + 0.10 * 15, BT_REF + 15, TD_REF + 0.383 * 15))
+        print("\n   THIS ROAST RAN.  Roast 57, +15.04 degC of preheat, measured")
+        print("   TP 62.60 at 26.0 s against roast 56's 61.10 at 25.5 s: dTP = +1.50,")
+        print("   gain 0.100, lever 6.0.  Below the ~2 degC 'the mechanism is not")
+        print("   there' threshold this block was written against.")
+        print("\n   It also tested the two things the model cannot.  Fan 60 settles")
+        print("   at 145 and at 152 (phase 0's ladder, six rungs, none aborted), and")
+        print("   Temp_Drive there is 7.8-8.8 -- against {:.1f} predicted on the 0.10"
+              .format(TD_REF + 0.10 * 15))
+        print("   slope and {:.1f} on 0.383.  The measured slope is +0.025."
+              .format(TD_REF + 0.383 * 15))
 
 
 if __name__ == '__main__':
