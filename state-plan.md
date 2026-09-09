@@ -164,7 +164,36 @@ flow-independent.** `c = 24.9 %` is the intercept of phase 0's BT ladder
 extrapolation back to zero air ΔT from a 22 degC ladder**. It needs an
 independent measurement, and a fan ladder is that measurement.
 
-### Phase A — bench, empty chamber, no beans (~60 min, one warm-up)
+### Phase A — bench, empty chamber, no beans (~45 min, unattended)
+
+**The files exist and the run drives itself.**
+
+| | |
+|---|---|
+| background | **`artisan/ladder_fan_BT145_v1.alog`** — 43 min, BT target on `temp2`, fan on five type-0 events |
+| config | **`artisan/airRoaster_cascadePID_ladder.aset`** |
+| generator | `tools/gen_fan_ladder.py` (`--dry-run` prints the schedule and the read windows) |
+
+**How it runs.** The background carries **both** programs at once: `temp2` is the
+outer PID's target (`svMode = 2`, `pidSource = 1`) and the five `Air` events are
+replayed onto slider 1. They do not collide — playback drives the fan slider, the
+PID drives the inlet slider. That is the **per-type** playback flag
+(canvas.py:1848) the cascade could never use when *both* wanted slider 3, and
+`ladder.aset` sets it to `true, false, false, false`.
+
+**`ladder.aset` is `preheat.aset` with exactly four fields changed** — `diff` it
+before trusting it:
+
+| field | preheat | **ladder** | why |
+|---|---|---|---|
+| `specialeventplayback` | all false | **`true, false, false, false`** | replay the fan, nothing else |
+| `alarmflag` | `0,1,1,1,1,1,1,0` | **`0,0,1,0,0,1,0,0`** | keep only row 3 (`LA 0`) and row 6 (`PID on` at +15 s). **Row 7 `Fan 60` must be off** — the background owns the fan now |
+| `autoDrop` | true | **false** | roast 47 lost 88 s to `autoDrop` firing mid-schedule |
+| `autoDry` | true | **false** | the BT ladder crosses the DRY-END threshold at 160 and above |
+
+**Operating it.** Load the `.aset`, load the background, bring BT to ~145 under
+the PID the way the phase-0 session did, **START**, **CHARGE** — and walk away for
+43 minutes. Everything after CHARGE is on the schedule.
 
 **A0. Log the fan.** Set `Air` explicitly from the dashboard at the start of the
 session so the `.alog` records it. Phase 0's ladder contains **no `Air` event at
@@ -178,13 +207,15 @@ flat for 90 s (phase 0: duty settles in ~3 min, Temp_Drive is still moving at 5;
 allow 5 min and record both). Record settled **BT, Inlet, Temp_Drive, HT,
 ambient** and the fan level.
 
-| rung | fan | why |
-|---|---|---|
-| 1 | **60** | the anchor — phase 0 read HT 48.25 / 48.48 and TD 7.81 / 8.84 here |
-| 2 | **64** | the level the roast actually steps from |
-| 3 | **72** | span |
-| 4 | **80** | span — run by roast 47's grid, so it is known reachable |
-| 5 | **60** | the return, and the session's own repeatability check |
+| rung | fan | from | read window | why |
+|---|---|---|---|---|
+| 1 | **60** | 0:00 | **3:00-5:00** | the anchor — phase 0 read HT 48.25 / 48.48 and TD 7.81 / 8.84 here |
+| 2 | **64** | 5:00 | **8:00-10:00** | the level the roast actually steps from |
+| 3 | **72** | 10:00 | **13:00-15:00** | span |
+| 4 | **80** | 15:00 | **18:00-20:00** | span — run by roast 47's grid, so it is known reachable |
+| 5 | **60** | 20:00 | **23:00-25:00** | the return, and the session's own repeatability check |
+
+Read the **last 120 s** of each rung, which is what the read-window column is.
 
 **Holding BT fixed is the design point.** Phase 0's repeat scatter (±1.0-1.5 degC
 of Temp_Drive) was thermal hysteresis in the chamber metal, and it was *driven by
@@ -240,8 +271,12 @@ machine and that is the finding — report it rather than averaging them.
 **No value of `f` cancels the roast.** The bench sizes the fan term; only the
 roast can see the drying term at all.
 
-**A2. Extend the BT ladder — 160 / 175 / 190 at fan 60.** Same protocol, three
-more rungs, ~20 min.
+**A2. Extend the BT ladder — 160 / 175 / 190 at fan 60.** In the same background,
+starting at 25:00: rungs at **25:00 / 31:00 / 37:00**, read windows **29:00-31:00
+/ 35:00-37:00 / 41:00-43:00**, DROP at 43:00. Six minutes each rather than five,
+because a 15 degC step needs ~2 min to settle before the 120 s read. The steps go
+**upward only** — phase 0 showed the metal's hysteresis is signed, so a monotone
+ladder keeps its sign constant.
 
 `HT = 20.25 + 0.1922·BT` is fitted over **130-152** and is currently used out to
 **199** by the excess-duty model (state-history.md § Phase 0). Predicted HT:
