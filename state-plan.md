@@ -699,6 +699,18 @@ What that buys, from the table above:
   leaves steady rms at 0.15-0.16 — still better than anything else in the table.
   A 30% error in the loss term costs about the same.
 
+**The base mechanism is not speculative — roast 20 ran it (2026-07-03).** Three
+special events in the whole log and an inlet that ramped 150 → 265 degC anyway:
+`playbackevent` replayed the background's eight `T_inlet` events, the inner loop
+tracked the commanded polyline at **rms 0.60 degC, worst −1.88, over 20-330 s**,
+and the resulting BT is the smoothest in the archive — post-dip RoR fits its own
+cubic to **0.375 degC/min** against the cascade's 1.6-2.8. **The cost of the
+integrator supplying the operating point is measurable in the input**: the
+cascade's inlet command deviates from a smooth curve by 12-18× what the playback
+schedule did, and jumps up to 36.7 degC in ten seconds. See state-history.md
+§ Roast 20 revisited — including the two things it does *not* show (it has no BT
+target to score against, and the archive has no open-loop repeat pair).
+
 **It needs one small firmware command and no new Artisan machinery.**
 `specialeventplayback` is **per event type** (canvas.py:1848) and
 `pidPositiveTarget` selects **any of sliders 1-4** (pid_control.py:1252), so
@@ -993,6 +1005,14 @@ curvature term the ramp did not have. Pick `N` from the residual of the polyline
 against `ff` — a free offline check once `ff` exists — not from the default.
 The whole-degree quantisation is not the constraint: 1 degC of base against
 `a = 0.0049` is ~0.005 degC/s of BT rate.
+
+**And the mechanism was never the gap.** Roast 20 replayed eight `T_inlet`
+events off `bkgd_inlet_150+30-265@330.alog` with no hand on the slider and no
+outer loop, so `playbackevent` driving the inner loop is demonstrated on this
+machine. What was missing is precisely what this section says: a *file* carrying
+both the BT curve and the events. (Roast 20's background is the `--events` mode
+output — `temp2 = −1.0`, no DRY END, no FCs — which is why it had no outer loop
+to be followed.)
 
 **~~Do not build this yet~~ — the gap is closed (2026-09-06, operator request).**
 `tools/merge_inlet_base.py` is the merge; `make_inlet_background.py` is untouched,
@@ -1476,6 +1496,17 @@ commanded inlet setpoint and `HT` the heat percent — then set **`createEvents`
 back to false**; it is only the fallback, and it is deliberately left `true` for
 the first roast that uses the new channels so the outer loop's output is recorded
 twice. From there every roast is self-contained and no CSV is needed.
+
+> **Why these schedules are square waves and not smooth ramps — measured
+> 2026-09-08.** A smooth input cannot identify this plant, because a low-order
+> `slow(t)` reproduces the output exactly. Roast 20 ran a playback ramp and is
+> the smoothest roast in the archive; fixing `theta = 13.5 s` and profiling the
+> residual over `a` = 0.000…0.016 moves it **7 %, monotone increasing**, so its
+> best fit is `a = 0` — no plant at all. The same profile on roast 46 has a sharp
+> minimum at 0.0049 and swings 5× either side. **The better a roast looks, the
+> less it can tell you about the plant** (state-history.md § Roast 20 revisited),
+> so never read a plant number off a well-behaved roast and never soften these
+> schedules to make them roast nicely.
 
 **Steps 3-5 — the characterisation runs. Three recordings, two sacrificial
 batches, one session.** All of them load

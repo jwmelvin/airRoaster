@@ -181,6 +181,26 @@ The same line reads the ceiling: post-DRY-END RoR is linear in BT in both roasts
 loss term is measured on the bench rather than fitted to one roast — and it is
 the first thing here that is not circular.
 
+**And roast 20 (2026-07-03) is the other half of the argument.** It ran an inlet
+schedule off background playback with no outer loop at all — three special events
+in the whole log — and produced the smoothest BT in the archive: post-dip RoR
+fits its own cubic to **0.375 degC/min** against the cascade's 1.6-2.8, with the
+inner loop holding the commanded polyline at **rms 0.60 degC**. The roughness is
+in the *input*: the cascade's inlet command deviates from a smooth curve by
+12-18× what the schedule did and jumps up to 36.7 degC in ten seconds, because
+the integrator has to supply the whole operating point. **Step 9's base mechanism
+is therefore demonstrated, not speculative** — what was missing was only the file,
+and `tools/merge_inlet_base.py` closed that.
+
+**Two cautions come with it, and the second is general.** Roast 20 has no BT
+target to score against and the archive has no open-loop repeat pair, so
+"smoother" is not "better" — that is what the trim is for. And **roast 20 cannot
+identify the plant**: profiling the fit residual over `a` = 0.000…0.016 moves it
+7 %, monotone, so its best fit is `a = 0`, where roast 46's swings 5× around a
+sharp minimum at 0.0049. **A smooth input carries no information about the
+transfer function.** Never read a plant number off a well-behaved roast — see
+state-history.md § Roast 20 revisited.
+
 ### 6. The bean budget — 2-3 loads of `C1043` left, and none of them are spoken for
 
 **The one question that needed `C1043` is answered.** Roast 57 cracked at

@@ -5390,3 +5390,109 @@ a quarter of the duty is a flow-independent loss then the flow-proportional part
 falls 12 % and the number is **+6.9 degC**. **Bracket +3.7 … +6.9 degC**, and one
 free bench measurement closes it — a *fan* ladder at fixed BT on the empty
 chamber, which the phase-0 session was already set up to run.
+
+### Roast 20 revisited (2026-09-08) — the inlet-schedule era, and what its smoothness is and is not
+
+**The operator's observation:** the early inlet-profile roasts got a very smooth
+response. They did, measurably — and the reason cuts two ways.
+
+`airRoaster_20.alog` (2026-07-03, 250 g, `bkgd_inlet_150+30-265@330.alog`) is the
+cleanest of them. **Three special events in the whole log** — `T_inlet 100` at
+−34 s and `Air 60` twice — and an inlet that ran 150 → 265 degC anyway. There was
+no outer loop and no hand on the slider: Artisan's `playbackevent` replayed the
+background's eight `T_inlet` events and the firmware kept the fractional value
+because *"Artisan's ramped INLET playback"* would otherwise quantise to 1 degC
+steps (airRoaster.ino:1203-1205).
+
+#### It is smooth, and by a factor of five
+
+Post-dip (60 s onward), fitting each roast's own 30 s centred RoR to a cubic in
+`t` and reading the residual:
+
+| roast | config | RoR span | inlet vs its own cubic | worst 10 s inlet move | **RoR vs its own cubic** |
+|---|---|---|---|---|---|
+| **20** | playback schedule, no outer loop | 47.6 → 13.8 | **0.42 degC** | **5.7 degC** | **0.375 degC/min** |
+| 46 | cascade | 40.6 → 9.1 | 8.17 | 36.7 | 1.809 |
+| 56 | cascade | 43.6 → 9.4 | 5.24 | 33.6 | 1.612 |
+| 57 | cascade | 50.4 → 9.0 | 7.75 | 18.7 | 2.769 |
+
+**The roughness is in the input, not the plant.** The cascade's inlet command
+deviates from a smooth curve by 12-18× what the playback schedule does and jumps
+up to 36.7 degC in ten seconds — the lookahead switch alone is a +19 to +24 degC
+step at 46 s. The plant low-passes it, so BT comes out 4-7× rougher rather than
+15× rougher, but the causal direction is not in doubt. High-frequency roughness
+is identical across all four (`|d²RoR|` rms 0.50 / 0.52 / 0.55) — that is probe
+noise, and it is not what separates them.
+
+**And the inner loop was excellent.** Against the commanded polyline, roast 20
+tracks at **rms 0.60 degC, worst −1.88, over 20-330 s**. The schedule itself is
+not a straight line: eight events giving a **decelerating ramp, 28.0 → 12.0
+degC/min** in seven segments. That is a hand-authored `ff(t)`, and it is the
+shape § The structural fix wants to compute.
+
+#### The smoothness *is* the absence of excitation, and that is a hard limit
+
+**Roast 20 cannot identify the plant.** Fix `theta = 13.5 s` and profile the
+residual of `dBT/dt = a·(Inlet(t−θ) − BT) + slow(t)` over a grid of `a`, with
+`slow` a quartic, 60-340 s:
+
+| `a` | 0.000 | 0.002 | 0.004 | 0.006 | 0.008 | 0.010 | 0.012 | 0.016 |
+|---|---|---|---|---|---|---|---|---|
+| **roast 20** resid, degC | 0.0876 | 0.0878 | 0.0882 | 0.0887 | 0.0894 | 0.0902 | 0.0912 | 0.0935 |
+| **roast 46** resid, degC | 0.611 | 0.375 | 0.163 | 0.175 | 0.391 | — | 0.868 | — |
+
+Roast 20's residual moves **7 % across the entire physical range of `a`** and is
+*monotone increasing*, so its best fit is **`a = 0`** — no plant at all, BT is a
+polynomial in time. `fit_integral` left free returns `a = −0.0007` at
+`theta = 0`. Roast 46, over the same kind of window, has a sharp minimum at
+**0.0049** and swings 5× either side.
+
+A smooth input carries no information about the transfer function, because a
+low-order `slow(t)` reproduces the output exactly. **This is the whole reason
+Tests A/B/C author doublets and steps**, and it is a caution against reading
+plant numbers off any well-behaved roast — the better the roast looks, the less
+it can tell you.
+
+#### What roast 20 does prove, and it is the thing step 9 needed
+
+**The playback path works end to end on this machine and always did.** Eight
+events on type 2, replayed into the inner loop, tracked at rms 0.60 degC, with no
+manual intervention for the whole roast. § The base-curve authoring gap was never
+about the *mechanism* — it was about the **file**: `make_inlet_background.py`'s
+`--events` mode emits an inlet-only background with `temp2 = −1.0` and no DRY END
+or FCs, so the outer PID has nothing to follow. `tools/merge_inlet_base.py`
+(2026-09-06) closes exactly that, and roast 20 is the evidence that what comes
+out the other side will be replayed the way the plan assumes.
+
+#### Three things it does not settle
+
+- **Smooth is not on target.** Roast 20 has no BT curve to score against at all.
+  It landed DRY END 169 s / FCs 297 s / DROP 343 s at 250 g, and nothing in the
+  record says whether that was the roast that was wanted. The cascade exists to
+  put those marks where they are asked for; the smoothness comparison above does
+  not touch that.
+- **Open-loop repeatability is unmeasured.** Roast 26 is the only other titled
+  inlet-schedule roast and it ran a *different* schedule by hand (a staircase —
+  its inlet deviates from a cubic by 17.2 degC), so the archive has no repeat pair.
+  One smooth roast says nothing about the next one on a colder morning.
+- **Different everything.** 250 g against 400 g, a different lot, pre-v0.19.0
+  firmware with no `HT` channel, and a much faster roast (FCs 297 s against
+  373-397 s).
+
+**One suggestive detail, offered as suggestive only.** Roast 20 set `Air 60` at
+−26 s and at CHARGE and **never stepped the fan again** — and its RoR shows no
+mid-roast feature at all (worst cubic residual −1.13 degC/min at 61 s, nothing
+across 120-200 s), where roasts 56 and 57 both carry −2.8 to −2.9 degC of BT
+deficit bottoming at 170 s. That is consistent with § Roast 57's fan-step
+hypothesis and is not evidence for it: three other things differ. **The alarm-time
+test remains the one that settles it.**
+
+#### The reading this supports
+
+Step 9's case was never "the cascade tracks badly" — roast 56 tracks its
+background at rms 0.94 degC over 30-90 s. It is that **the outer loop's integrator
+has to supply the entire operating point, and the ramp it produces to do that is
+the roughness in the table above.** Roast 20 is what the inlet looks like when
+something else supplies the operating point. **Keep the smooth schedule and add a
+bounded trim** — which is what § The structural fix says, now with the base
+mechanism demonstrated and the input-roughness cost of not doing it measured.
