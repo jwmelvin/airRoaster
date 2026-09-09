@@ -69,7 +69,7 @@ of −5 degC beans overwrite the probe's local environment in under twenty secon
 more than the model predicts and the turning point by almost nothing. Nothing in
 the plan wants that shape. Do not spend another load on a preheat rung.
 
-### 2. The next roast: move the fan step, and find out what the 140-200 s dip is
+### 2. The next roast: find out what the 140-200 s dip is — state-plan.md § TEST PLAN
 
 **This is the cheapest high-value experiment on the list, it needs no beans of
 `C1043`, and it changes one field in the alarm table.**
@@ -99,27 +99,35 @@ accumulating. Two candidates:
    spec has no latent-heat term, so a real roast must fall behind where drying
    loads the bed hardest and recover once free moisture is gone.
 
-**The test:** fire `Fan 60` (alarm row 7) at **01:00 or 03:00** instead of 02:00.
-If the dip travels with it, it is the fan; if it stays at 170 s, it is the drying
-model. One field, no firmware, no background regeneration, **and it can ride on
-any coffee** — the window closes 200 s before first crack.
+**The test is written up in full — state-plan.md § TEST PLAN.** It is bench
+first, then one roast, in the same shape as roast 57's phase 0. In summary:
 
-**Run it as the only change.** Everything else stays at roast 56/57's
-configuration, and score it on the four checks plus the residual's timing.
+- **Phase A, empty chamber, ~60 min, no beans.** A **fan ladder at fixed BT 145**
+  (rungs 60 / 64 / 72 / 80 / 60) sizes or kills the fan hypothesis before a load
+  is spent. Holding BT fixed is the design point — phase 0's ±1.5 degC scatter
+  was hysteresis driven by *moving* BT. Plus **three more BT rungs at 160 / 175 /
+  190** to test whether `HT = 20.25 + 0.1922·BT` stays linear out to roast
+  temperatures, and **set `Air` explicitly** so the log records the fan this time.
+- **Phase B, one roast, one change: hold fan 64 for the whole roast** (alarm row
+  7 off), everything else exactly roast 56's — same preheat, same background,
+  same `.aset` with row 8 off. Removing the step tests for the *absence* of a
+  known 2.9 degC feature, which beats retiming it and then having to detect a new
+  1.7 degC one.
 
-**Sizing the compensation, for afterwards, if it is the fan.** The inner loop
-holds the inlet on SV, so at fixed inlet the duty is the flow: the measured
-−3.54 / −4.17 % duty step is a **6.6-7.4 % flow reduction**, and holding
-`mdot·(Inlet − BT)` constant needs `ΔSV = TD·f/(1−f)` ≈ **+3.7 degC** at the
-observed `TD ≈ 49`. If instead the ~25 % duty intercept in the bench line is a
-real flow-independent loss, the flow-proportional part falls 12 % and the answer
-is **+6.9 degC**. **Bracket +3.7 … +6.9 degC.** One free bench measurement closes
-it — a *fan* ladder at fixed BT on the empty chamber (see § 4).
+**The arithmetic already says "both", and the plan is built to read a partial
+result.** Delivered power is `mdot·cp·(T_in − T_out)` and the inner loop holds
+`T_in`, so a flow drop `f` costs `RoR · f · T_eff/60` of BT before the outer loop
+erases it — at `RoR = 29.0` (v4 at 145 s) and `T_eff ≈ 45 s`, **`f = 0.066` buys
+1.44 degC and `f = 0.123` buys 2.68** against the 2.93 observed. That is a
+ceiling, since less flow also raises the exchanger's effectiveness. The whole
+spread is one unmeasured quantity — how much of the heater duty is
+flow-independent — and the fan ladder measures it two independent ways.
 
-**LA 12 stays deferred, and its premise is now weaker.** It was sized against the
-lag reading of this same residual and 105 s would have pushed SV up fifteen
-seconds *before* the disturbance — masking it without ever naming it. Decide LA
-12 after this test, not before.
+**`LA 12` stays deferred, and its premise is now weaker.** It was sized against
+the lag reading of this same residual, and 105 s would have pushed SV up fifteen
+seconds *before* the disturbance — masking whichever cause it is without ever
+naming it. **Decide LA 12 after this test, not before**, and note that neither
+candidate cause is a type-1 ramp error.
 
 ### 3. Temp_Drive: stage A passes, but read the number correctly
 
@@ -142,20 +150,13 @@ into stage B item 4: the 29-94 degC drive range is real but every figure in it
 has ±1.5 degC of probe history in it, so **size the range with margin and never
 tune on a Temp_Drive difference under ~2 degC.**
 
-### 4. Free bench work, in priority order — none of it costs beans
+### 4. Free bench work — it is Phase A of the test plan
 
-1. **A fan ladder at fixed BT, empty.** Hold BT 145 under the PID and step the fan
-   60 / 64 / 68 / 60, recording settled `HT` and `Inlet` at each. It closes the
-   +3.7-vs-+6.9 bracket in § 2, gives `d(HT)/d(fan)` and `d(Inlet)/d(fan)` on a
-   flat setpoint, and answers whether the bench line's ~25 % duty intercept is a
-   flow-independent loss or a calibration offset.
-2. **Set the fan explicitly at the start of every bench session.** Phase 0's log
-   contains **no `Air` event at all**, so fan 60 rests on the operator's word
-   rather than the file. (The HT agreement with roast 57's preheat is good
-   independent evidence it was 60 — but that is inference, not record.)
-3. **Extend the BT ladder upward** — 160 / 175 / 190 — to test whether
-   `HT = 20.25 + 0.1922·BT` stays linear across the roast's real range. It is
-   currently fitted over 130-152 and used out to 199.
+All of it now lives in **state-plan.md § TEST PLAN § Phase A**, because it is the
+same session: the fan ladder at fixed BT 145, three more BT rungs at 160 / 175 /
+190 to test the duty line's linearity out to roast temperatures, and setting
+`Air` explicitly so the log carries the fan level. **~60 minutes, one warm-up, no
+beans**, and it gates the roast.
 
 ### 5. What the bench line already bought
 
@@ -281,8 +282,9 @@ time column is `mm:ss`, so 120 s reads `02:00`, not `:20`.
 
 **Roast 57 was clean by this test** — the file said row 8 off and the log shows
 no SV step at 105 s. **For the next roast the eighth row must still read `off`**
-(load `preheat.aset`, not `floor100.aset`) **and row 7's time is the variable** —
-see § 2 above. Change the `Fan 60` time and nothing else.
+(load `preheat.aset`, not `floor100.aset`) **and row 7 must read `off` too** —
+that is the whole change, and the fan stays at 64 for the roast. See § 2 and
+state-plan.md § TEST PLAN § B1.
 
 | # | On | From | Time | Source | Cond | Value | Action | Button |
 |---|---|---|---|---|---|---|---|---|
@@ -292,7 +294,7 @@ see § 2 above. Change the `Fan 60` time and nothing else.
 | 4 | ON | CHARGE | 00:45 | | > | 0 | Event Button | 21 = `LA 6` |
 | 5 | ON | ON | 16:00 | BT | < | 131 | Event Button | 23 = `ARM bak` |
 | 6 | ON | CHARGE | 00:15 | | > | 0 | Event Button | 25 = `PID on` |
-| **7** | ON | CHARGE | **02:00 — the next roast moves this to 01:00 or 03:00** | | > | 0 | Event Button | 26 = `Fan 60` |
+| **7** | ON — **off for the next roast** | CHARGE | 02:00 | | > | 0 | Event Button | 26 = `Fan 60` |
 | **8** | **off** (ON in `floor100.aset`) | CHARGE | **01:45** | | > | 0 | Event Button | **27 = `LA 12`** |
 
 (Button numbers in `alarmstrings` are 1-based into `extraeventslabels`, which is
