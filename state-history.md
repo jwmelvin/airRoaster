@@ -5496,3 +5496,86 @@ the roughness in the table above.** Roast 20 is what the inlet looks like when
 something else supplies the operating point. **Keep the smooth schedule and add a
 bounded trim** — which is what § The structural fix says, now with the base
 mechanism demonstrated and the input-roughness cost of not doing it measured.
+
+### Roasts 37 and 38 revisited (2026-09-09) — the archive already contains a controlled mass experiment
+
+The operator pointed at the early 250 g work (roasts 18-30, 33, 38, 39, plus a
+161 g roast 28 and 450-575 g roasts 5, 6, 8, 37) as evidence for how the machine
+behaves at other charges. **Roasts 37 and 38 are better than evidence — they are
+a paired experiment**, and nothing in this project had read them that way.
+
+Same bean (Panama Elida Estate Natural), same session (2026-08-23), 450 g and
+250 g, and the **same commanded inlet schedule**: eight `T_inlet` events at
+t = 2, 96/97, 192/193, 281/282, 330/331, 365/366, 395/396, 420/421 s carrying
+identical values (160, 197, 226, 248, 257, 263, 267, 270 degC). Within 1 s and
+0 degC on every step. These were open-loop inlet-curve roasts, so the input is
+*authored* rather than closed-loop — which is exactly what makes the pair
+readable.
+
+#### The measurement
+
+Regress `dBT/dt` (centred, ±5 s) on the driving temperature `Inlet − BT`, over
+CHARGE+70 s to FCs−10 s — past the dip, short of the crack:
+
+| | roast 37 | roast 38 |
+|---|---|---|
+| charge | 450 g | 250 g |
+| `k = dBT/dt` per degC of drive | **0.01727** | **0.02095** |
+| r² | 0.92 | 0.95 |
+| n | 364 | 311 |
+| fan | 64 → 53 | 60 → 54 |
+| DRY END | 224 s | 186 s |
+| FCs | 445 s | 392 s |
+
+`k` is `h/(m·c + C)`, so the ratio **1.213** is the capacity ratio. DRY END gives
+**1.204** independently on the same pair; FCs gives 1.135, which is lower because
+the crack is an exotherm and the two roasts do not reach it in the same state —
+DRY END is the cleaner of the two marks.
+
+Solving `(450 + X)/(250 + X) = 1.213`:
+
+> **X ≈ 690 g of bean-equivalent thermal mass that is not the beans.**
+
+Roast 38 ran 3-6 fan units below roast 37, so it had the smaller `h` of the two;
+that biases its `k` down and the ratio down, and therefore **690 g is an upper
+bound** on the parasitic capacity.
+
+#### Why it matters
+
+The plant's gain is dominated by the machine, not the charge. Going 400 → 250 g
+raises `k` by `(400+690)/(250+690) = ` **1.16** — the excess-duty → RoR slope
+moves 2.66 → ~3.1 and the outer loop wants ~0.86× its gain. Even at half the
+parasitic mass it is 1.33. **A batch-size change is a 15-35 % perturbation, not
+the 1.6× the mass ratio implies**, so one roast at 250 g re-points the loop
+rather than re-characterising it.
+
+It also says something about § Step 9 and § Temp_Drive: a plant whose capacity is
+mostly fixed hardware is one whose `a` moves *little* between batch sizes, which
+strengthens any design carrying a plant card and weakens the argument that the
+card has to be re-fitted per charge.
+
+#### Two cautions, and one correction to the record
+
+**161 g is below the useful floor and the data shows it.** Roast 28 fits the same
+regression at r² **0.73** against 0.92-0.99 for every other roast tried, with a
+`k` *below* the 250 g roasts — which a single-capacity model cannot produce. The
+operator's stated reason for choosing 250 g (below it the beans no longer cover
+the probe while circulating) predicts exactly this. One roast, so corroboration
+rather than measurement.
+
+**The other 250 g roasts are not a ladder.** Across roasts 18-33 `k` ranges
+0.0138-0.0210 at the same nominal charge — bean, moisture, fan and era all move.
+Pairs drawn across sessions give `X` of 3600-5100 g, which is not a measurement
+of anything. **Only 37/38 hold the input fixed, and only 37/38 should be quoted.**
+
+**Fan levels in this project were being read 10 units high.** Artisan stores
+special-event values as `level/10 + 1`, so the `Fan FULL` button's 7.4 is fan
+**64**, not 74. Decoded correctly the archive's 250 g roasts ran **fan 60 flat**
+(20, 21, 25, 29, 33) — the same as the 400 g cascade roasts' sustain level — and
+roast 28 at 161 g ran 59-60. **Smaller charges did not run less fan**, which is
+the expected result: minimum fluidisation velocity is a bean property, and a
+smaller charge changes bed depth and pressure drop rather than the velocity
+needed to lift a bean. The declining ramps in 37 and 38 did reach **53 and 54**,
+under `ilFanFull = 55` — so the soft interlock's heat cap has been inside the
+operating envelope before, and it is the *declining-fan practice* rather than the
+batch size that puts it there.

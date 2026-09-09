@@ -110,9 +110,19 @@ first, then one roast, in the same shape as roast 57's phase 0. In summary:
   temperatures, and **set `Air` explicitly** so the log records the fan this time.
 - **Phase B, one roast, one change: hold fan 64 for the whole roast** (alarm row
   7 off), everything else exactly roast 56's — same preheat, same background,
-  same `.aset` with row 8 off. Removing the step tests for the *absence* of a
-  known 2.9 degC feature, which beats retiming it and then having to detect a new
-  1.7 degC one.
+  rows 8 and 7 off. Removing the step tests for the *absence* of a known 2.9 degC
+  feature, which beats retiming it and then having to detect a new 1.7 degC one.
+  **The config is now a file, not a dialog untick**:
+  `artisan/airRoaster_cascadePID_phaseB.aset`, built by
+  `tools/gen_phaseb_aset.py` from the preheat variant.
+- **Phase B also carries the new auto-DROP alarm** (row 9, `HT` below 20 % from
+  DRY END, action DROP). It is instrumentation and cannot move the measurement,
+  which is why it rides along instead of waiting: the roast ends after the read
+  window. Measured on roasts 53-57 it fires **0.5-3.5 s before** the DROP mark
+  where the DeltaBT alarm fires **6-7 s after** — state-plan.md § Auto-DROP
+  detection § The inlet spike beats the RoR collapse. **Score the chain, not just
+  the trigger**: roast 56 held its DROP mark for 17.5 s with `HT` at 90-100 %
+  before heat went off, and that is unexplained.
 
 **The arithmetic already says "both", and the plan is built to read a partial
 result.** Delivered power is `mdot·cp·(T_in − T_out)` and the inner loop holds

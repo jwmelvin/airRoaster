@@ -304,9 +304,10 @@ transfer**. Run it only if the session has time left.
 |---|---|---|
 | preheat BT / precharge inlet | 130.2 / 141.8 | **unchanged** |
 | background | `profile_400g_m5C_v4.alog` | **unchanged** |
-| `.aset` | `…_floor100.aset` | **`…_preheat.aset`** (row 8 off, as roast 57) |
+| `.aset` | `…_floor100.aset` | **`…_phaseB.aset`** (`tools/gen_phaseb_aset.py`) |
 | mass / greens / moisture | 400 g / −5.0 / 11.0 | **unchanged** |
-| alarm row 7, `Fan 60` at 02:00 | ON | **off — the whole change** |
+| alarm row 7, `Fan 60` at 02:00 | ON | **off in the file — the whole change** |
+| alarm row 9, DROP on the inlet spike | — | **new, on** (§ The inlet spike beats the RoR collapse) |
 | fan | 64 → 60 at 120 s | **64, set before CHARGE, held to DROP** |
 
 **Hold fan 64 for the whole roast rather than moving the step, and the reason is
@@ -336,7 +337,11 @@ landing inside the measurement window.
 
 - Open **Alarms** and check every row against the table in state-current.md
   § The alarm table can silently disagree with the .aset. **Row 7 off, row 8
-  off**, rows 1-6 unchanged. The time column is `mm:ss`.
+  off, row 9 ON**, rows 1-6 unchanged. The time column is `mm:ss`. Row 9 should
+  read `From DRY END / 00:00 / HT / below / 20 / DROP` — **the offset must be
+  00:00**, or it fires on the clock alone the moment DRY END is marked.
+- `airRoaster_cascadePID_phaseB.aset` is **generated**, not hand-edited. If it
+  needs changing, edit `tools/gen_phaseb_aset.py` and re-run it.
 - Confirm `Air 64` is set before CHARGE and that the `Fan 60` button is not
   pressed by hand at any point.
 - Enter `greens_temp` and `moisture_greens`; weigh in and out.
@@ -350,6 +355,12 @@ landing inside the measurement window.
   ~46 s.
 - `T_inlet` carries **nothing between +1 s and the `PID ON` alarm at +15.5 s** —
   the gate held.
+- **The new DROP alarm, scored two ways.** (a) Did the DROP mark land on the
+  inlet spike rather than 6-7 s after it — compare the mark to the sample where
+  `Inlet − SV` first exceeds 10. (b) **Did the heat-off chain actually run at the
+  mark**: `SV` and `HT` must both go to 0 within a sample or two, not 17 s later
+  as they did on roast 56. (b) is the one that matters; the detector is only
+  worth having if the chain behind it fires.
 
 **B4. The primary read.** `BT − background` on the 0.5 s grid, reported at 10 s
 marks over **100-320 s**, plus the value at 120 s, the minimum and its time over
@@ -831,9 +842,20 @@ The operator asked for the **inlet spike at the dump** as the trigger. Roasts
 53-57 say it is the better signal on every axis that matters, and the margins
 are not close.
 
-Pulling the lever vents the chamber: flow past the inlet probe collapses, the
-probe rises toward the metal it sits in, and the inner loop — correctly — cuts
-heat to zero. All of it inside two seconds.
+**The mechanism, from the operator (2026-09-09).** The inlet probe is a bare
+thin-wire thermocouple protruding into the airflow **just downstream of the
+heater and upstream of the grate** that holds the bed — nearly no mass, and
+extended away from the entry port so it reads the air rather than the wall.
+Pulling the dump lever *slides the grate*: it opens the dump chute and blocks the
+grate at the same time, so the fan keeps pushing into a highly restricted path.
+Flow past the probe collapses while the heater is still delivering, and the probe
+— having almost no thermal mass — spikes immediately. The inner loop then cuts
+heat to zero, which is the correction, not the event. All of it inside two
+seconds.
+
+**That is why this signal is fast and why it is not a temperature threshold.**
+The spike is a *flow* event read by a near-massless sensor, so its size is set by
+the restriction and the duty at that moment, not by how hot the roast was.
 
 | roast | `Inlet − SV` at the dump | max `Inlet − SV`, DRYe→DROP−5 s | `HT` at the spike | min `HT`, same window |
 |---|---|---|---|---|
@@ -2640,23 +2662,56 @@ exists and the number does not.
 
 ### Smaller batches — 250 g, and lower
 
-**The bench line already makes batch size a scalar rather than a
-re-characterisation.** `HT = 20.25 + 0.1922·BT` is the *empty* chamber and so is
-mass-independent. What scales with the charge is the excess-duty → RoR slope:
-**2.66** (roast 56) and **2.29** (roast 57) at 400 g. Bean mass is one term of
-that denominator and the chamber metal in the loop is the other, so
-`2.66 × 400/250 = ` **4.26 is a ceiling, not a prediction** — the first 250 g
-roast measures the split, and after that the outer loop's gain scales by mass.
+**It is already measured, and batch size is a much smaller perturbation than the
+mass ratio suggests.** Roasts **37 and 38** (2026-08-23, Panama Elida, 450 g and
+250 g) replayed the **identical inlet schedule** — the same eight `T_inlet`
+events at the same times to within 1 s, same values — which makes them a
+controlled mass pair. Regressing `dBT/dt` on the driving temperature
+`Inlet − BT` over CHARGE+70 s to FCs−10 s gives the plant's gain
+`k = h/(m·c + C)`:
 
-**The binding constraint is the fan, not the gain.** 400 g needs ~64 to start
-circulating and sustains at 60, with a floor at 58-59. A 250 g bed has both a
-lower fluidisation requirement *and* a lower pressure drop, so it also delivers
-more flow per fan unit — both push the working point down toward
-`ilFanFull = 55`, at and above which heat is unrestricted; below it the soft
-interlock caps heat, linearly down to `ilHeatAtMin = 30 %` at `ilFanMin = 48`,
-and zero below that (airRoaster.ino:107-112). **Find the 250 g fan envelope on
-the bench before spending beans**, and if it lands under 55, move `ilFanFull`
-deliberately rather than discovering it as a heat cap mid-roast.
+| | roast 37 | roast 38 |
+|---|---|---|
+| charge | 450 g | 250 g |
+| `k` (degC/s per degC of drive) | **0.01727** | **0.02095** |
+| r² | 0.92 | 0.95 |
+| ratio | — | **1.213** |
+
+DRY END lands at 224 s and 186 s, an independent ratio of **1.204** on the same
+pair. Solving `(450 + X)/(250 + X) = 1.213` gives **X ≈ 690 g of bean-equivalent
+thermal mass that is not the beans** — the chamber, grate and drum riding in the
+loop. Roast 38 also ran 3-6 fan units *lower* than roast 37, so it had less `h`,
+which biases the ratio down: **690 g is an upper bound.**
+
+**Consequence for 400 → 250 g:** `k` rises by `(400+690)/(250+690) = ` **1.16**,
+so the excess-duty → RoR slope goes 2.66 → ~3.1 and the outer loop's gain wants
+scaling by ~0.86. Even at half the parasitic mass it is only 1.33. **Batch size
+is a 15-35 % gain change, not the 1.6× the mass ratio implies** — which is why
+one roast at 250 g is enough to re-point the loop rather than a fresh
+characterisation.
+
+**161 g is below the floor, and the archive says so.** Roast 28 (161 g) fits the
+same regression at r² **0.73** against 0.92-0.99 everywhere else, with a `k`
+*below* the 250 g roasts — which a single-capacity model cannot produce. That is
+consistent with the operator's reason for choosing 250 g as the minimum: below
+it the bed no longer covers the probe while circulating and BT stops being a bed
+temperature. One roast, so corroboration, not a measurement.
+
+**The fan requirement does not fall with batch size — corrected 2026-09-09.**
+Artisan stores event values as `level/10 + 1`; decoded correctly, the archive's
+250 g roasts ran **fan 60 flat** (roasts 20, 21, 25, 29, 33), the same as the
+400 g cascade roasts' sustain level, and the 161 g roast ran 59-60. That is the
+expected result: the velocity needed to fluidise is a property of the *bean*, not
+of how much of it is in the chamber — a smaller charge changes bed depth and so
+pressure drop, not minimum fluidisation velocity. **So 250 g does not by itself
+push the working point toward the interlock.**
+
+What does is the declining-fan practice: roast 38 ramped to **54** and roast 37
+to **53**, both under `ilFanFull = 55`, at and above which heat is unrestricted;
+below it the soft interlock caps heat linearly down to `ilHeatAtMin = 30 %` at
+`ilFanMin = 48`, and to zero below that (airRoaster.ino:107-112). **If a target
+curve wants a declining fan, that cap is in the path** — move `ilFanFull`
+deliberately rather than discovering it as a heat ceiling mid-roast.
 
 **Authoring the curves is already solved; hitting DE and FC is a calibration.**
 `make_inlet_background.py` takes `--t_dry --T_dry --t_fc --T_fc --t_drop
