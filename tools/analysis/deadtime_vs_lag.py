@@ -49,7 +49,7 @@ The shape of the answer
    delay is small.
 5. **What the two-lag structure fixes is `theta`, and what it makes worse is
    `a`.**  Across roast 48's sub-windows `theta` goes from 7.8-14.5 s to a flat
-   0-1 s -- the non-stationarity state-history.md § Roast 48 recorded is a
+   0-1 s -- the non-stationarity state-history-cascade.md § Roast 48 recorded is a
    *structural artefact* -- but `a` spreads 0.0074-0.0142 under two lags against
    0.0062-0.0085 under one, because a late window can now buy a slow response
    with a long lag and a large gain.  Better structure, not a finished plant.
@@ -114,7 +114,7 @@ CARD46 = os.path.join(REPO, 'tools/analysis/plant_roast46.json')
 # Grids.  The single-lag scan matches roast46_refit.py and roast48_plant.py
 # exactly.  The two-lag grid is finer than roast48_plant.py's (tau2 step 5), so
 # its residuals come out slightly *below* the figures quoted in
-# state-history.md § Roast 48; the structure of the answer is unchanged.
+# state-history-cascade.md § Roast 48; the structure of the answer is unchanged.
 THETAS = np.arange(0.0, 36.01, 0.25)
 THETAS2 = np.arange(0.0, 31.01, 0.5)
 TAU2S = np.arange(0.0, 61.01, 0.5)
@@ -324,7 +324,7 @@ def section_stationarity(profiles, bootstrap=True):
     print('\n   Roast 48: theta goes from spreading 7.8-14.5 s over its excited')
     print('   sub-windows to sitting at 0.0-1.0 s on every one of them -- that IS')
     print('   stationary, and it is the strongest thing the two-lag structure has')
-    print('   going for it: the non-stationarity state-history.md § Roast 48')
+    print('   going for it: the non-stationarity state-history-cascade.md § Roast 48')
     print('   recorded was a structural artefact, not a moving roaster.  (45-300')
     print('   holds one inlet step, at its very end, and returns tau2 = 0 with the')
     print('   same degenerate a = 0.0025 the single-lag fit gives it; it is the')
@@ -387,7 +387,7 @@ def section_margins(profiles):
         cells = [f'{mg.margins(a, th, 3.0, Ki, tau2=tau2)[1]:9.1f}'
                  for Ki in (0.05, 0.07, 0.10, 0.15)]
         print(f'   {name:<14} {a:8.5f} {th:5.1f} {tau2:5.1f}  ' + ' '.join(cells))
-    print('\n   Roast 45 rang at a measured **177 s** at Ki 0.10 (state-history.md')
+    print('\n   Roast 45 rang at a measured **177 s** at Ki 0.10 (state-history-cascade.md')
     print('   § Correction: extrema 2:12 / 3:26 / 5:10 / 6:22, so two full cycles at')
     print('   178 and 176 s).  That is the only closed-loop behaviour on record and')
     print('   it is the tie-breaker.  Compare it against the least-damped closed-loop')
@@ -402,7 +402,7 @@ def section_margins(profiles):
     print('   Roast 46\'s two-lag card lands on 173 s against the measured 177 --')
     print('   the closest any card on record has come.  Its single-lag card gives')
     print('   194 s and roast 48\'s two cards give 143-152 s.  So the ranking that')
-    print('   state-history.md § Roast 48 drew (roast 46 predicts the real roast,')
+    print('   state-history-cascade.md § Roast 48 drew (roast 46 predicts the real roast,')
     print('   roast 48 does not) survives the structure change, and improves under')
     print('   it.  Kp 3.0 / Ki 0.07 has 33-45 deg of margin on all four cards.')
 

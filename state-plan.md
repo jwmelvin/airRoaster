@@ -1,18 +1,20 @@
 # state-plan — planned work and specifications in force
 
-> Companion to [state-current.md](state-current.md) (what is active now),
-> [state-history.md](state-history.md) (the roast-by-roast reasoning that
-> produced the decisions below) and [state-archive.md](state-archive.md) (what
-> is done, and the review findings these phases answer). Findings are
-> referenced as F-numbers from the archive.
->
 > **What belongs here: work not yet done, and the specifications currently in
-> force.** Every configuration key, file, alarm and firmware command described
-> below is either something to build or something to load. The evidence for
-> *why* each value is what it is — the roasts, refits, sweeps and the
-> conclusions that were later overturned — lives in state-history.md and is
-> referenced as `state-history.md § …`. If a section here reads as a record of
-> what happened rather than a statement of what to do, it is in the wrong file.
+> force.** Every configuration key, file, alarm and firmware command below is
+> either something to build or something to load. If a section reads as a record
+> of what happened rather than a statement of what to do, it is in the wrong file
+> — move it to the history for that effort rather than marking it superseded.
+>
+> - [state-current.md](state-current.md) — the active effort and where it stands.
+> - [state-history.md](state-history.md) — index of the three investigation
+>   records: [cascade](state-history-cascade.md) (roasts 40-49),
+>   [charge](state-history-charge.md) (50-56),
+>   [residual](state-history-residual.md) (57-59). The evidence for *why* each
+>   value below is what it is lives there, referenced as
+>   `state-history-<effort>.md § …`.
+> - [state-archive.md](state-archive.md) — completed firmware work and the
+>   F-numbered review findings, referenced as F-numbers.
 
 ## Bean reference — the first-crack temperature each lot cracks at
 
@@ -49,7 +51,7 @@ Snapshot at roast 57, cascade-era only (roast ≥ 40, ≥ 380 g, `roastertype`
 **Never pool across coffees.** This is the error the roast-56 background was
 built on: a "mean over roasts 50-55" of 198.8 degC is a mean over `C1074` and
 `C1062` and describes neither. Within a lot the spread is 1.6-3.1 degC and most
-of that is mark subjectivity; between lots it is real. state-history.md § The FC
+of that is mark subjectivity; between lots it is real. state-history-residual.md § The FC
 temperature is a property of the lot has the full correction, including that
 `profile_003`'s original **197.5** was right for both coffees it was ever run
 against.
@@ -128,7 +130,7 @@ the label true.
 120 s, recovering half of it by 212 / 215 s. Two roasts, different preheat,
 different background, errors of opposite sign going in, **the same number at the
 same second coming out**. It is a disturbance the loop is rejecting, not a lag it
-is accumulating (state-history.md § Roast 57).
+is accumulating (state-history-residual.md § Roast 57).
 
 Two candidates:
 
@@ -146,64 +148,41 @@ wanted anyway. It did all four, and the operator's loaded ladder added a fifth.
 
 ### Phase A — DONE 2026-09-10, roasts 58 and 59. `f = 0.18`
 
-**The full record is state-history.md § Phase A**; the tool is
-`tools/analysis/fan_ladder.py`. Roast 58 ran the planned ladder empty; roast 59
-is the operator's addition — the same ladder with **345 g of already-roasted
-beans** in the chamber, which is the configuration the roast actually runs in and
-the more useful of the two.
+**The record is state-history-residual.md § Phase A and the headline numbers are
+state-current.md § 2-4**; the tool is `tools/analysis/fan_ladder.py`.
 
 ```
 HT = A*(fan - f0)*(Inlet - amb) + c
 
-empty  fan 53-64   f0 = 39.2   rms 0.182 %   (10 rungs, 3 params, 7 dof)
-loaded fan 56-64   f0 = 42.9   rms 0.202 %   (11 rungs, 3 params, 8 dof)
-joint, shared A,c  f0 = 40.0 / 41.9          c = 22.7 %  (21, 4, 17)
-
-f(64 -> 60) = 0.162 empty, 0.189 loaded, 0.181 joint      threshold was 0.12
-ceiling deficit = RoR*f*T_eff/60 = 3.5 - 4.1 degC         observed 2.93
+empty  fan 53-64   f0 = 39.2   rms 0.182 %      loaded  fan 56-64   f0 = 42.9   rms 0.202 %
+f(64 -> 60) = 0.162 empty, 0.189 loaded, 0.181 joint        threshold was 0.12
+ceiling deficit = RoR*f*T_eff/60 = 3.5 - 4.1 degC           observed 2.93
 ```
 
 **The fan over-covers the residual by about a third**, which is the room the
-ceiling arithmetic asked for. `c = 22.7 %` is the flow-independent duty, measured
-rather than extrapolated, and the 24.9 % this plan carried was close.
+ceiling arithmetic asked for. Four results carry into Phase B and beyond:
 
-Four more results, all in § Phase A of the history:
-
+- **the direct step response** — roast 59, BT held at 145 with the bed in,
+  `64 → 56` moved BT **−0.67 degC, bottoming at 54 s, recovered by ~130 s**,
+  where the roast residual bottoms 45-50 s after the 120 s step and recovers by
+  230 s. Same loop, same shape. **Timing transfers, magnitude does not**:
+  `Inlet − BT` is ~2 degC at the settled bench against 49-60 in the roast;
 - **the blower saturates above fan 64** — fan 72 delivers the flow of a nominal
-  70.4, fan 80 of a nominal 75.0. `mdot ∝ (fan − 40)` holds across the range the
-  roast uses and bends over above it, so the 60-80 span this plan chose for
-  contrast is *not* what sized `f`; the descending 60 / 56 / 53 rungs the
-  operator added did;
-- **345 g of beans is a 9.3 % flow restriction** (shared `A` and `c`, separate
-  `f0`; pooling onto one `f0` costs 5.5× in residual);
-- **route 1 is unavailable, not disagreeing.** `Temp_Drive` at BT 145 / fan 60
-  read 12.84 / 8.47 / 6.51 / 7.49 across one session while duty repeated to
-  ±0.09 %, and at fan 72 and 80 the settled `Inlet` sits *below* BT, which
-  `1/mdot` cannot produce;
-- **A2: the duty line is linear to BT 190** — `HT = 15.16 + 0.2165·BT` empty and
-  `17.75 + 0.1788·BT` loaded, residuals ≤ 0.11 % over 45 degC. No superlinearity,
-  no ceiling, `HT` only 60.2 % at fan 80. But phase 0's `20.25 + 0.1922·BT` sits
-  1.6 % high at BT 145 and the loaded line sits 4.5 % low, and **neither
-  re-basing fixes the excess-duty model's intercept disagreement** — that
-  disagreement is 2.1 % of duty and the baseline candidates span 4.5 %.
-
-**The direct step response is the result to carry into Phase B.** Roast 59, BT
-held at 145 with the bed in: `64 → 56` moved BT **−0.67 degC, bottoming at 54 s,
-recovered by ~130 s**. The roast residual bottoms 45-50 s after the 120 s step
-and recovers by 230 s. Same loop, same shape. The *magnitude* does not transfer —
-`Inlet − BT` is ~2 degC at the settled bench against 49-60 in the roast — so read
-the timing from the step and the size from the duty model.
+  70.4 and fan 80 of a nominal 75.0. `mdot ∝ (fan − 40)` holds over the range the
+  roast uses and bends above it, so the 60-80 span this plan chose for contrast
+  is *not* what sized `f`; the descending rungs the operator added did;
+- **345 g of beans is a 9.3 % flow restriction**;
+- **the duty line is linear to BT 190** (A2 answered, no superlinearity, no
+  ceiling) — but the three candidate baselines span **4.5 %** of duty against a
+  disagreement worth 2.1 %, so **no re-basing settles the excess-duty model's
+  intercept**. Do not quietly pick the baseline that flatters the fit.
 
 **One process note for every future bench session: soak the machine for 20
 minutes before the first rung, or run the session second.** Roast 58's rung 1
 failed this plan's ±0.5 % repeatability criterion by reading 1.22 % high, and the
 cause is the cold start — its duty was still falling at 0.4 %/min at seven
 minutes and did not settle until 23. Roast 59, an hour later on the soaked
-machine, settled in three. The duty model absorbs the soak (it is written in
-`Inlet`, and the soak raises `Inlet` and `HT` together); the `HT(BT)` line does
-not, and that is the best candidate for why phase 0's line disagrees with this
-one.
-
+machine, settled in three.
 ### Phase B — one roast, one change
 
 **Phase A sized `f` at 0.18 and put Phase B in the top row of the decision
@@ -354,51 +333,41 @@ step fifteen seconds before the event.
 
 ## NEXT — remaining on-roaster validation
 
-The live sessions of 2026-07-02/03/04 (see the archive's v0.12–v0.15 entries)
-validated much of the original checklist; items are marked accordingly.
-Remaining drills, roughly in commissioning order:
+**Only what is still unchecked.** The live sessions of 2026-07-02/03/04
+validated the rest of the original checklist — boot sync, power linearization,
+the DimmerLink reset rework and the commissioning sequence are all done and are
+recorded in the archive's v0.12–v0.15 entries. Roughly in commissioning order:
 
-1. ~~**Boot sync sanity**~~ — **done/superseded.** Heat-zero at boot stands;
-   fan-level adoption via `getLevel()` was replaced by the RTC no-init shadow
-   (v0.15.0, reads lie while firing). Fan-through-reboot validated 2026-07-04
-   via a live OTA update with the fan running.
-2. **Sensor path**: BT read sane in live sessions, but the specific checks are
+1. **Sensor path**: BT read sane in live sessions, but the specific checks are
    unrecorded — `STAT` after a few minutes (`loopMaxUs` should be dominated by
    the ~30 ms display push, not sensor reads); compare RTD fault frequency in
    the log against pre-v0.8.0 roasts (emi.md addendum says what to expect).
-3. **Failsafe drills** (roaster cold, heat low): engage `INLET`, unplug the
+2. **Failsafe drills** (roaster cold, heat low): engage `INLET`, unplug the
    inlet TC → expect `inlet failsafe: inlet PV stale` within ~3 s, heat 0,
    mode manual. Confirm a TUNE aborts the same way.
-4. **Telemetry + dashboard** — **mostly done**: the commissioning sequence
+3. **Telemetry + dashboard** — **mostly done**: the commissioning sequence
    (TUNE → APPLY → FF cal → INLET) ran end-to-end in the 2026-07-03 session.
    Still unchecked: kill/restore WiFi to see auto-reconnect on both sides.
-5. **WDT confidence**: none of the normal paths (tune, big display repaints,
+4. **WDT confidence**: none of the normal paths (tune, big display repaints,
    WS bursts) should approach 8 s — `loopMaxUs` gives the margin number.
-6. ~~**DimmerLink reset escalation**~~ — **superseded.** v0.13.0 removed
-   autonomous resets entirely (soft reset drives the output full-on for
-   ~3–4 s); resets are operator-only via `DLRESET`. The fw-version line at
-   boot is still worth a glance.
-7. **Interlock config (v0.10.0)**: from the dashboard panel set soft mode and
+5. **Interlock config (v0.10.0)**: from the dashboard panel set soft mode and
    custom limits, confirm the heat cap follows the fan slider accordingly, then
    power-cycle and confirm the values and mode survive (NVS). Try an invalid
    set (`IL 0 55 30`) and confirm it is rejected.
-8. ~~**Power linearization (v0.11.0)**~~ — **done.** TUNE and FF calibration
-   were re-run post-map; closed loop settles on SV and FF compensates fan
-   steps (validated 2026-07-03, v0.14.1).
-9. **OTA idle gate (v0.12.0)**: an OTA push with heat > 0 should time out on
+6. **OTA idle gate (v0.12.0)**: an OTA push with heat > 0 should time out on
    the host, then succeed again at heat 0. The happy path (idle OTA push,
    reboot, fan preserved) is validated.
-10. **Curve experiments** (`CURVE FAN 0|2`, optional): compare fan response per
+7. **Curve experiments** (`CURVE FAN 0|2`, optional): compare fan response per
     level step on the dashboard chart; expectation is RMS (1) remains best.
     Reboot restores RMS automatically.
-11. **Cooldown guard (v0.16.0)** — *mostly validated 2026-07-05*: deferral,
+8. **Cooldown guard (v0.16.0)** — *mostly validated 2026-07-05*: deferral,
     hold, auto-release, and soak-back re-enforcement all observed working on
     the roaster. The 30 s dwell released early into soak-back (two re-enforce
     cycles), so the dwell is now adjustable (`COOL DWELL <s>`, NVS): find the
     dwell that makes one release stick (start ~90–120 s) and set it. Still
     unchecked: `COOL MIN`/`COOL DWELL` surviving a power cycle (NVS), and
     `COOL OFF` releasing a held fan immediately.
-12. **Ambient reporting (v0.17.0)** — on a cold roaster, power up and check the
+9. **Ambient reporting (v0.17.0)** — on a cold roaster, power up and check the
     serial log for `ambient: cold-start capture` with a sane room temp (BT vs
     CJ within 8 °C); dashboard Ambient panel should show it. Then run the
     roaster hot, power-cycle, and confirm the log says `warm boot … keeping`
@@ -407,7 +376,7 @@ Remaining drills, roughly in commissioning order:
     channel, select it on Config › Device › Ambient, and confirm Roast
     Properties picks up the ambient temperature at CHARGE (README § Ambient
     temperature has the click-path).
-13. **Command auth (v0.18.0)** — with `AUTH_KEY` in secrets.h: dashboard
+10. **Command auth (v0.18.0)** — with `AUTH_KEY` in secrets.h: dashboard
     authenticates automatically (key field) and `AUTH` reports authed; set
     `AUTH MODE CONFIG` and confirm an *unkeyed* browser gets "AUTH required"
     for `PID`/`IL`/`COOL MIN` but can still run `OT1 60`, `OT1 0`, `INLET
@@ -417,7 +386,7 @@ Remaining drills, roughly in commissioning order:
     wrong-key proxy → refused; mode survives a power cycle (NVS); serial
     stays fully trusted. Also confirm a keyless build (empty AUTH_KEY)
     behaves exactly as v0.17.
-14. **`INLET TRIM` (v0.19.0, second item)** — bench drill, heater cold, fan at
+11. **`INLET TRIM` (v0.19.0, second item)** — bench drill, heater cold, fan at
     a level that clears the interlock; watch the dashboard Setpoint panel and
     the serial log. (a) `INLET 200`, then `INLET TRIM 20` → readout `base 200.0
     + trim +20.0 = SV 220.0`, OLED `Inlet SV:220`, and the PID `I` term must
@@ -501,38 +470,39 @@ at BT 201.2 — a gentler middle ramp than `profile_001` to the same endpoint,
 reached sooner). Both backgrounds carry zero special events, so neither can
 conflict with the PID over slider 3.
 
-*Superseded:* `artisan/airRoaster_cascadePID.aset`, derived from
-**`artisan/airRoaster_inletPoints.aset`** (the operator's live config as saved
-2026-09-02, which supersedes the older `airRoaster.aset` in the repo). Both
-originals are left untouched so the playback setup stays loadable.
+**The base it was derived from** is
+`artisan/airRoaster_inletPoints.aset`, the operator's live config as saved
+2026-09-02 (itself superseding the older `airRoaster.aset`; their `[ArduinoPID]`
+and `[Sliders]` sections are byte-identical, so the delta applies to either).
+Both originals are left untouched so the inner-loop playback setup stays
+loadable.
 
-`airRoaster.aset` and `airRoaster_inletPoints.aset` differ in batch counters,
-`RoRlimit`, `autotimex`, three new playback event buttons (17-19), and a new
-alarm — but their **`[ArduinoPID]` and `[Sliders]` sections are byte-identical**,
-so the PID delta below applies to either base. `inletPoints` is the right base
-because it carries the operator's refined playback/event wiring.
-
-| Key (`[ArduinoPID]`) | From | To |
+| Key (`[ArduinoPID]`) | playback config | **cascade, in force** |
 |---|---|---|
-| `pidSource` | 3 (Inlet) | 1 (BT) |
-| `pidPositiveTarget` | 4 (OT1 heat) | 3 (INLET) |
-| `positiveTargetRangeLimit` | false | true |
-| `positiveTargetMin` / `positiveTargetMax` | 0 / 4 | 140 / 300 |
-| `pidKp` / `pidKi` / `pidKd` | 0.18 / 0.054 / 0.09 | 3.0 / 0.04 / 0 |
-| `pidKp1,2` / `pidKi1,2` / `pidKd1,2` | 27 / 0.018 / 36 | 3.0 / 0.04 / 0 |
-| `svLookahead` | 0 | 20 s |
-| `pidDsetpointWeight` | 1 | 0 (derivative on measurement) |
-| `pidOnCHARGE` / `pidOffDROP` | false / false | true / true |
+| `pidSource` | 3 (Inlet) | **1 (BT)** |
+| `pidPositiveTarget` | 4 (OT1 heat) | **3 (INLET)** |
+| `positiveTargetRangeLimit` | false | **true** |
+| `positiveTargetMin` / `positiveTargetMax` | 0 / 4 | **100 / 300** |
+| `pidKp` / `pidKi` / `pidKd` | 0.18 / 0.054 / 0.09 | **3.0 / 0.07 / 0** |
+| `pidKp1,2` / `pidKi1,2` / `pidKd1,2` | 27 / 0.018 / 36 | match the single set |
+| `svLookahead` | 0 | **0, switched to 6 at 45 s by alarm** |
+| `pidDsetpointWeight` | 1 | **0** (derivative on measurement) |
+| `pidOnCHARGE` / `pidOffDROP` | false / false | **true / true** |
+| `dropSpikes` | true | **false** (it rewrites `SV`/`HT` steps) |
+| `Delay` | 1000 | **500** (the tuning is rate-independent) |
 
 `dutyMin`/`dutyMax` stay **0 / 100** and `[Sliders]` is **unchanged** — both
-deliberate, see below.
+deliberate, see below. `pidGainScheduling` stays false.
+
+**The floor reached 100 over roasts 42-55**, from 120 → 170 → 140 → 100; the
+argument for each move is § The floor, and roast 55 is where 100 was validated.
 
 ### Verified against source
 
-Read from `artisanlib/{pid,pid_control,main,canvas}.py` at
-github.com/artisan-roaster-scope/artisan (the shipped .app is compiled, so the
-bundle cannot answer these). This settles all four items previously listed as
-open, and corrects two earlier assumptions.
+Read from `~/src/artisan/src/artisanlib/{pid,pid_control,main,canvas}.py` at
+**v4.2.0**, the installed build (the shipped `.app` is compiled, so the bundle
+cannot answer these). Cite line numbers only from that clone — see
+state-current.md § Referencing the Artisan source.
 
 1. **`pidSource` numbering is 1=BT, 2=ET, >2=extra curves** with
    `n = pidSource-3`, `c = n//2`, even `n` = channel A / odd = channel B
@@ -621,16 +591,15 @@ canvas.py:15542 — so the PID is already stopped when `INLET 0` is sent and
 cannot re-command a setpoint afterwards. (CHARGE mirrors this: `pidOn()` at
 canvas.py:14656 precedes `eventactionx(buttonactions[0])`.)
 
-**An earlier draft of this plan was wrong twice here** and both errors are
-retracted: first that `PID_OFF_action` could carry `INLET 0` (it fires only for
-external MODBUS/S7 PID control, `pid_control.py:1538-1545`; this is a WebSocket
-device so `externalPIDControl()` returns 0), and then that an Artisan **alarm**
-should send the WebSocket command instead — alarm actions have their own
-numbering that tops out at 25 (`canvas.py:6153-6335`: 0=popup, 2=event button,
-3-6=sliders, 13=DROP, 22=Playback ON, 23=Playback OFF, 24/25=canvas colour) and
-include **no** WebSocket or Artisan Command action at all. An alarm could only
-have reached the firmware indirectly via action 2 (press an event button). None
-of that is needed, because the DROP button action already does it directly.
+**Two mechanisms that look like they could do this cannot, so do not reach for
+them.** `PID_OFF_action` fires only for external MODBUS/S7 PID control
+(`pid_control.py:1538-1545`); this is a WebSocket device, so
+`externalPIDControl()` returns 0. And an Artisan **alarm** cannot send a
+WebSocket command at all — alarm actions have their own numbering topping out at
+25 (`canvas.py:6153-6335`: 0=popup, 2=event button, 3-6=sliders, 13=DROP,
+22=Playback ON, 23=Playback OFF, 24/25=canvas colour), with no Artisan Command
+among them; an alarm can only reach the firmware indirectly by pressing an event
+button. None of it is needed — the DROP button action already does it directly.
 
 ### Background event playback must be off
 
@@ -825,84 +794,74 @@ before changing the detector**: a trigger 3 s earlier into a chain that takes
 17 s to act buys nothing, and this is the failure mode auto-DROP exists to
 prevent.
 
-### Files for the characterisation runs (2026-09-02, procedure revised 2026-09-06)
+### The characterisation-run config — `airRoaster_cascadePID_char.aset`
 
-Both are ordinary background profiles carrying the test's inlet schedule as
-**T_inlet events**.
+*The runs themselves are done (roasts 47 and 48, state-history-cascade.md). The
+config is kept because it is the open-loop replay harness, and step 9 depends on
+the same machinery.*
 
-| file | test | schedule |
-|---|---|---|
-| `artisan/charstep_empty_fan.alog` | **A** - empty roaster, no beans, 17 min | the original inlet steps crossed with a **fan sweep 58-80** on an offset grid (`tools/gen_char_empty.py`) |
-| `artisan/chardoublet_fan60.alog` | **B/C** - loaded, sacrificial, 9 min | fan 64 to 1:30, ramp at **60**, inlet doublet 3:00-5:00, plateau, fan 70/60/70 over 6:00-9:00 |
-| `artisan/chardoublet_fan68.alog` | **B/C** - loaded, sacrificial, 9 min | the same with the ramp at **68** and the square wave phase-reversed (60/70/60) |
-| `artisan/charstep_empty.alog`, `artisan/chardoublet_loaded.alog` | superseded | the 12- and 7-minute originals the three above are generated from |
-
-**They are replayed, not hand-driven** (revised 2026-09-06; the original
-procedure was to follow the curve on slider 3 by hand). `specialeventplayback`
-is a **per-event-type** 4-element list (canvas.py:1848) and the master switch
+**It replays, it is not hand-driven.** `specialeventplayback` is a
+**per-event-type** 4-element list (canvas.py:1848) and the master switch
 `backgroundPlaybackEvents` is separate, so enabling types 0 (`Air`, slider 1) and
-2 (`T_inlet`, slider 3) replays the inlet *and* fan schedules and touches nothing
-else. The collision that
-forced playback off for the cascade (§ Background event playback must be off) is
-*specifically* that playback and the PID both want slider 3 — which cannot arise
-here, because these runs are open-loop by construction. Replaying instead of
-hand-driving makes the excitation identical between runs (which is what turns
-the fan comparison into a difference of one variable rather than of two) and
-**rehearses the exact machinery step 9 depends on** at zero extra cost.
+2 (`T_inlet`, slider 3) replays a test's fan *and* inlet schedules and touches
+nothing else. The collision that forces playback off for the cascade
+(§ Background event playback must be off) is specifically that playback and the
+PID both want slider 3, which cannot arise on a run that is open-loop by
+construction. Replaying makes the excitation identical between runs and rehearses
+exactly the machinery step 9 needs.
 
-**File: `artisan/airRoaster_cascadePID_char.aset`**, generated by
-`tools/gen_pid_alarm_asets.py` as a key-override variant of the canonical config
-— no buttons, no alarms, four keys:
+Generated by `tools/gen_pid_alarm_asets.py` as a key-override variant of the
+canonical config — no buttons, no alarms, five keys:
 
 ```
-pidOnCHARGE = false                        # the PID must never arm
-backgroundPlaybackEvents = true            # master playback switch
-replayType = 0                             # replay by time
+pidOnCHARGE = false                                # the PID must never arm
+backgroundPlaybackEvents = true                    # master playback switch
+replayType = 0                                     # replay by time
 specialeventplayback = true, false, true, false    # Air + T_inlet
-alarmflag = 0, 0                           # the DeltaBT auto-DROP alarm
-autoDrop = false                           # *and* Artisan's built-in detector
+alarmflag = 0, 0                                   # the DeltaBT auto-DROP alarm
+autoDrop = false                                   # *and* Artisan's built-in detector
 ```
 
-**`autoDrop` is the one roast 47 was missing, and it is not an alarm.** Artisan's
-built-in DROP detector (canvas.py:5151) is gated on `autoDropFlag`, BT > 160 degC
-and **more than 7 minutes since CHARGE**, and `alarmflag` does not touch it. That
-7-minute gate is why it has never been seen here — these roasts drop at 6:20-6:31,
-which is the whole reason the DeltaBT alarm exists (§ Auto-DROP detection) — but
-**every characterisation run is longer than 7 minutes and above 160 degC**. On
-roast 47 it fired on the 10:01 inlet step-down and cost 88 s and one steady
-window; it would have taken the last third of the fan measurement out of both
-loaded doublets.
+**`autoDrop` is not an alarm, and it cost roast 47 eighty-eight seconds.**
+Artisan's built-in DROP detector (canvas.py:5151) is gated on `autoDropFlag`,
+BT > 160 degC and **more than 7 minutes since CHARGE**, and `alarmflag` does not
+touch it. That 7-minute gate is why it never appears on a real roast here — these
+drop at 6:20-6:31, which is the whole reason the DeltaBT alarm exists — but
+**every characterisation run is longer than 7 minutes and above 160 degC.**
 
-**Procedure, all three tests: press ON, load the file as background, press START,
-then press CHARGE.** CHARGE is now required rather than forbidden — `playbackevent()`
-runs only once the foreground CHARGE is marked (canvas.py:5381) — and it is safe
-because `pidOnCHARGE` is forced off in the file rather than avoided by not
-pressing the button. Everything after that is automatic; the operator's job is
-the fan level and DROP.
+**The DeltaBT alarm is disabled too**, because `autoDRY` can mark DRY END on an
+*empty* roaster (the empty-run background takes BT past the 149 degC Phases
+threshold), which would arm the auto-DROP mid-test and end the run through the
+`INLET 0` chain. **Press DROP by hand on these runs.**
 
-**Why the DeltaBT alarm is disabled too.** `autoDRY` can mark DRY END on an
-*empty* roaster — the empty-run background takes BT to 168 degC, past the 149 degC
-Phases threshold — which would arm the DeltaBT auto-DROP in the middle of a step
-test and end the run through the `INLET 0` chain. Press DROP by hand on these
-runs.
+**Procedure: press ON, load the file as background, press START, then press
+CHARGE.** CHARGE is required rather than forbidden — `playbackevent()` runs only
+once the foreground CHARGE is marked (canvas.py:5381) — and it is safe because
+`pidOnCHARGE` is forced off *in the file* rather than avoided by not pressing the
+button. Everything after that is automatic; the operator's job is the fan level
+and DROP.
 
-**Why a doublet rather than a step for Test B**: its net energy is ~zero, so the
-batch lands near where it would have; and a 60 s half-period places the peak
-excitation near a 240 s period, inside the loop's 250-330 s crossover band.
+**The schedule files**, all generated, all ordinary background profiles carrying
+the test schedule as `T_inlet` and `Air` events:
 
-**Test B is subsumed into Test C (2026-09-06).** Test C was specified as Test B
-repeated at fan 58 and fan 65, i.e. three sacrificial batches in total. Two
-batches at fan 58 and fan 65 deliver both purposes — each is an independent
-deliberate doublet (test B's remaining job, since roast 46 already gave theta and
-tau) and the pair is the fan contrast (test C's job). **The residual weakness is
-that a two-batch fan contrast confounds fan with batch**, which roast 46 showed
-is not a small effect; closing that needs fan excitation *within* a batch, and
-therefore a new background file, not a fourth run.
+| file | generator | what it is |
+|---|---|---|
+| `artisan/charstep_empty_fan.alog` | `tools/gen_char_empty.py` | empty, 17 min — inlet steps 145/185 crossed with a fan sweep **58-80** on an offset grid (no fan step within 30 s of an inlet step). Run as roast 47 |
+| `artisan/charsingle_400g.alog` | `tools/gen_char_single.py` | loaded, 12:15 — three flat setpoints (190/215/245) each carrying a fan step, valleys between to pull BT back. Run as roast 48 |
+| `artisan/chardoublet_fan60.alog`, `..._fan68.alog` | `tools/gen_char_doublet.py` | the two-batch alternative, never run — kept for the 800 g case |
+| `artisan/charstep_empty.alog`, `artisan/chardoublet_loaded.alog` | — | superseded originals; do not use |
 
+**Three constraints any future schedule must respect.** A charge does not
+circulate at fan 60 — it takes ~64 to loft the bed, so every file opens at 64
+until 1:30. The fan floor is **55** (`IL_FAN_FULL_DFLT`, airRoaster.ino:111,
+below which the interlock clips the heat and the inner loop stops holding the
+inlet) and 58-59 in practice, so the tools refuse under 57. And the plateau stays
+**below first crack** — ~185 degC — so the bean exotherm does not sit on top of
+the signal being measured.
 ### The lookahead-switching config (2026-09-02)
 
 `artisan/airRoaster_cascadePID_lookahead.aset` — the canonical config plus the
-runtime lookahead switch from state-history.md § Scheduling. **A separate file
+runtime lookahead switch from state-history-cascade.md § Scheduling. **A separate file
 deliberately**: it is an experiment and should not ride along with the `pidKi`
 and profile_003 changes on the next roast.
 
@@ -935,7 +894,7 @@ alarm 4: From CHARGE, offset 90 s, source -3 -> button 21 -> pidLookahead(6)
 ```
 
 So the dip runs at lookahead 0 — no manufactured error, no SV floor at turning
-point (state-history.md § profile_003) — and the ramp gets 6 s of feedforward,
+point (state-history-cascade.md § profile_003) — and the ramp gets 6 s of feedforward,
 which costs no phase margin. 90 s is past turning point and where the background
 RoR has fallen enough that the switch is a ~+3.5 degC target step rather than
 +4.6.
@@ -943,7 +902,7 @@ RoR has fallen enough that the switch is a ~+3.5 degC target step rather than
 ### Step 9 — the inlet feedforward schedule with the PID as a trim (design)
 
 *The design that runbook step 9 executes. It came out of the strategy search of
-2026-09-06 (state-history.md § Dip strategies), which is where the sweep numbers
+2026-09-06 (state-history-cascade.md § Dip strategies), which is where the sweep numbers
 and the discarded alternatives are.*
 
 > **A cheaper relative was proposed 2026-09-08** — commanding `Temp_Drive =
@@ -957,7 +916,7 @@ and the discarded alternatives are.*
 > `svLookahead` exists to hide it — was written when the loop tracked to several
 > degC. Roast 56 tracks its background at rms **0.94 degC over 30-90 s**, **0.41
 > over 95-120 s** and **1.26 over the whole roast**, with the inner loop at rms
-> **0.91 from 50 s to DROP** (state-history.md § Roast 56). The simulated
+> **0.91 from 50 s to DROP** (state-history-charge.md § Roast 56). The simulated
 > "steady rms 0.11-0.14 degC" is no longer an improvement worth the two open
 > config problems below. **What survives is the robustness argument** — that a
 > feedforward base degrades more gracefully than an integrator carrying the
@@ -996,7 +955,7 @@ What that buys, from the table above:
   trim sits mid-range instead of ramping, so the type-1 error is **structurally**
   gone rather than cancelled. Steady rms **0.11-0.14 degC** against 0.26-0.38.
 - **`svLookahead` becomes unnecessary** — every FF row runs `L = 0`. The whole
-  lookahead-versus-dip tension (state-history.md § Roast 44 outer-loop analysis:
+  lookahead-versus-dip tension (state-history-cascade.md § Roast 44 outer-loop analysis:
   `L > 4` winds the integrator through the dip) disappears with it.
 - **the handover value stops mattering**: with the gate, `I@1:30` is 49.9 at every
   charge state and `dt150` is +1.6 s at every charge state — spreads of **0.0 and
@@ -1017,7 +976,7 @@ and the resulting BT is the smoothest in the archive — post-dip RoR fits its o
 cubic to **0.375 degC/min** against the cascade's 1.6-2.8. **The cost of the
 integrator supplying the operating point is measurable in the input**: the
 cascade's inlet command deviates from a smooth curve by 12-18× what the playback
-schedule did, and jumps up to 36.7 degC in ten seconds. See state-history.md
+schedule did, and jumps up to 36.7 degC in ten seconds. See state-history-residual.md
 § Roast 20 revisited — including the two things it does *not* show (it has no BT
 target to score against, and the archive has no open-loop repeat pair).
 
@@ -1159,21 +1118,16 @@ because stage A's design constants come out of it.
 140 / 145 / 152 / 130 / 145. **`d(TD)/d(BT) = +0.025`** — DC gain near 40, so the
 drive→BT loop is very nearly an integrator, and the kill criterion below is
 cleared by **20×**. Even the most adverse pairing in the data gives 0.17.
-**Go to stage B.** Two cautions carried in state-history.md § Phase 0: the slope
-is *bounded*, not measured (Temp_Drive moved 0.6 degC across the ladder while
-same-BT repeats disagreed by −1.51 and +1.02), and **heater duty repeats 6× better
-than `Inlet − BT`** because the BT probe carries a slow local-metal component.
-The original scheduling note follows.
+The kill criterion was `d(TD)/d(BT)` **above ~0.5**, which would have left the
+drive→BT loop a high-gain type-0 with the structural benefit mostly gone. It came
+back 20× clear. **Go to stage B.**
 
-This was § 0 of roast 57. It yields `d(TD)/d(BT)`, which is the **DC gain of the
-drive→BT loop** and therefore decides whether this design is nearly an integrator
-(type-2, no ramp error) or a high-gain type-0. It also gives the settling ceiling
-at fan 60, which bounds the drive range.
-
-*Kill criterion:* if `d(TD)/d(BT)` comes back **above ~0.5**, the drive→BT loop
-has a DC gain under 2 and a time constant near today's — the structural benefit
-is mostly gone, and the measured drift table above (1.0-2.3× over the drying
-ramp) is then the whole story. **Stop here and reconsider.**
+Two cautions carry forward (state-history-residual.md § Phase 0, reproduced at 8×
+the sample count by Phase A): the slope is *bounded*, not measured — Temp_Drive
+moved 0.6 degC across the whole ladder while same-BT repeats disagreed by −1.51
+and +1.02 — and **heater duty repeats 6× better than `Inlet − BT`**, because the
+BT probe carries a slow local-metal component. **Never tune on a Temp_Drive
+difference under ~2 degC.**
 
 **B. Desk — settle the four design questions.** None need hardware.
 
@@ -1206,10 +1160,10 @@ ramp) is then the whole story. **Stop here and reconsider.**
 **C. Firmware — `INLET DRIVE <degC>`, and a bench drill.** One command beside the
 existing `inletBase`/`inletTrim` pair (`inletEffectiveSV()`, airRoaster.ino:2543
 is the single place that assigns `inletSV`, so this is a small change in a place
-already designed for it). Drill it exactly like § NEXT 14: bounds, `INLET DRIVE
+already designed for it). Drill it exactly like § NEXT 11: bounds, `INLET DRIVE
 0`, bare `INLET DRIVE` reporting, the staleness ramp, clearing on `INLET OFF` /
 `INLET 0` / `TUNE` / failsafe, auth under `AUTH MODE FULL`, and a regression run
-that never sends the command. **Add one drill § NEXT 14 has no analogue for: with
+that never sends the command. **Add one drill § NEXT 11 has no analogue for: with
 the drive engaged, spoof an RTD fault and confirm the setpoint holds rather than
 following BT to zero.**
 
@@ -1229,27 +1183,19 @@ as roast 56 with 2-3× less effort drift over the drying ramp, and **no floor
 saturation at any BT**, which is the claim that is most worth checking because it
 is the one the measured drift table does not already answer.
 
-**Where LA 12 sits.** Deferred (state-history.md § The LA 12 plan, deferred).
+**Where LA 12 sits.** Deferred (state-history-residual.md § The LA 12 plan, deferred).
 If stage E lands, a lookahead patch on a type-1 ramp error is treating a symptom
 the loop no longer has — so **decide LA 12 after E, not before.** If A's kill
 criterion fires, LA 12 comes straight back as the cheap fix it was.
 
-##### The unmeasured number is the same one the preheat work needs
+##### It also disambiguates the plant card's `loss(t)`
 
-`d(TD)/d(BT)` — how much more drive it takes to hold a hotter BT — is the DC gain
-of the drive→BT loop, and it decides whether this is nearly an integrator
-(type-2, no ramp error) or a high-gain type-0. **Measured 2026-09-08: +0.025**,
-an order of magnitude below the 0.10-0.38 bracket this section carried. The
-paragraphs below were written before that and are kept for the reasoning; the
-bracket itself is superseded. **It is also exactly the number § Normalize the
-charge with the PREHEAT needs**, and for a third reason too: the plant card's
-`loss(t)` is a function of *time* only because BT(t) is monotone on a roast, so a
-BT-dependent loss is aliased into it and `plant_roast46.json` cannot separate the
-two. A settled Temp_Drive at two preheats is a **steady-state** measurement with
-no time axis to alias against.
-
-**One preheat step measures all three.** That is the strongest reason to run the
-preheat characterisation before either this or step 9 is decided.
+The plant card's `loss(t)` is a function of *time* only because BT(t) is monotone
+on a roast, so a **BT-dependent** loss is aliased into it and
+`plant_roast46.json` cannot separate the two. A settled Temp_Drive at two
+preheats is a steady-state measurement with no time axis to alias against — so
+the same ladder that gates this design also tells step 9 whether its loss term is
+what it claims to be.
 
 #### The base-curve authoring gap — `make_inlet_background.py` does not emit this file (2026-09-06)
 
@@ -1324,7 +1270,7 @@ both the BT curve and the events. (Roast 20's background is the `--events` mode
 output — `temp2 = −1.0`, no DRY END, no FCs — which is why it had no outer loop
 to be followed.)
 
-**~~Do not build this yet~~ — the gap is closed (2026-09-06, operator request).**
+**The gap is closed (2026-09-06).**
 `tools/merge_inlet_base.py` is the merge; `make_inlet_background.py` is untouched,
 as its 2026-09-02 scope boundary requires. It is standard-library only, like the
 other tools in `tools/`, and it reads the plant from a **card** —
@@ -1418,13 +1364,13 @@ settle item 4 above.
 | `PIDoff` at CHARGE / `PIDon` at 1:30 (freeze at the preheat operating point) | `pidOn` does not reset `Iterm` (pid_control.py:1521-1527), so it is mechanically sound and gives `I@1:30` spread 0.8 — but the SV is frozen for 90 s, and `dt150` swings **14.6 s** across the charge sweep. Open-loop where the disturbance is |
 | `pidIRoC` (integral reset on large setpoint change) | inert here: the threshold is compared against the *per-sample* target change, which never exceeds ~5.5 degC even through the dip |
 | `pidIlimitFactor` < 1 to bound windup instead of freezing it | fatal on its own — the ramp needs `I` ≈ 63 and the cap is global. Becomes usable only under the FF trim, where `I` stays near 50 |
-| lower `Kp` through the dip | already ruled out in state-history.md § The dip is a different control problem (handover spread 91.5); `beta < 1` via `pidWeights()` is the same move on the target path and no better |
+| lower `Kp` through the dip | already ruled out in state-history-cascade.md § The dip is a different control problem (handover spread 91.5); `beta < 1` via `pidWeights()` is the same move on the target path and no better |
 | the fan as a second actuator in the dip | not needed, and the operator now holds it constant deliberately; the ~0.99 %heat/fan-unit sensitivity is a loss-term effect, which the FF schedule and the trim both absorb |
 
 #### The one adaptive idea that is still open, and costs nothing to keep
 
 `(CHARGE_BT - BT at CHARGE+13 s) / mass` is a **free, control-independent proxy
-for the charge state** (state-history.md § Charge temperature) and it is
+for the charge state** (state-history-cascade.md § Charge temperature) and it is
 available at 13 s — well before any handover. Artisan can act on it without a
 new process step: an alarm *from CHARGE, offset 13 s, source BT, below/above a
 threshold* can fire `loadBackground(<path>)` (main.py:10879),
@@ -1437,7 +1383,7 @@ present numbers it would be chasing 1.6 s.
 ### Open firmware ideas
 
 *Neither is scheduled. The v0.19.0 items that came out of the same discussion
-are built and are recorded in state-history.md § Firmware now in scope.*
+are built and are recorded in state-history-cascade.md § Firmware now in scope.*
 
 #### The one big idea, gated on the characterisation runs
 
@@ -1453,7 +1399,7 @@ deadtime and Ki could rise several-fold at the same margin.
 Two conditions before attempting it:
 
 1. **Trustworthy theta, tau and gain.** The current values come from a flat
-   ridge (state-history.md § Scheduling) and are not good enough to predict
+   ridge (state-history-cascade.md § Scheduling) and are not good enough to predict
    with. Run Tests A and B first.
 2. **A bound on the correction.** Clamp `|BTP - BT|` to something like 10 degC so
    a diverging model degrades to plain BT rather than running the roaster open
@@ -1464,127 +1410,13 @@ be to enable the predictor, and the channel route achieves that without it. The
 1 Hz WebSocket link is not a limitation — 1 s against 17 s of deadtime — and the
 background curve authoring belongs in Artisan's Designer.
 
-#### Normalize the charge with the PREHEAT, not the background (operator, 2026-09-08)
+#### Normalize the charge with the PREHEAT — WITHDRAWN, and moved
 
-> **WITHDRAWN by roast 57 (2026-09-08). Do not build on this section.** The lever
-> rests on `d(TP)/d(preheat) ≈ 0.415`, and the measurement is **0.100**: roast 57
-> stepped the preheat 130.2 → 145.24, one variable, and the turning point moved
-> **+1.50 degC** where the model said +6.24. The lever the measurement implies is
-> `0.60 / 0.100` = **6.0 degC of preheat per degC of greens**, which the machine
-> does not have. Every table below is model output that assumes the trade it was
-> being asked about; the "two thirds store, one third flow" decomposition is the
-> specific claim that failed. `tools/analysis/preheat_lever.py` is kept — it now
-> reads 6.0 and says so. **The preheat is not inert, it is a slow lever aimed at
-> the wrong window**: it moves 30-120 s by *more* than the model predicts (+9.10
-> at 70 s against +4.58) and the turning point by almost nothing. Full record in
-> state-history.md § Roast 57; the mechanism is in state-history.md § Phase 0 —
-> the BT probe sits on the non-flow side and carries a slow local-metal
-> component, so "preheat BT 145" is not 15 degC of energy the beans can reach.
-
-
-**The idea.** Instead of authoring a different roast for every greens
-temperature, preheat *hotter* for a cold charge and *cooler* for a warm one, so
-every batch arrives at the same post-dip state and the loop sees the same job.
-Modelled in `tools/analysis/preheat_lever.py`; run it rather than trusting the
-summary here.
-
-**It works in the model, and the lever is small enough to be practical.**
-
-```
-preheat BT = 124.4 − 1.17 × greens_temp        (400 g, operator's thermometer scale)
-```
-
-| spread over greens −24…+25 degC, 400 g | TP | BT@60 | BT@90 | rms 30-90 s |
-|---|---|---|---|---|
-| preheat fixed at 130.2 (today) | 29.2 | 27.5 | 23.8 | 1.11-16.71 |
-| compensated | **5.3** | **0.9** | **7.6** | **0.18-2.71** |
-
-Roast 56 tracked its own background at rms 0.94 degC over 30-90 s, so the
-compensated residual is at the noise floor of what the machine achieves.
-
-**The prize is not the tracking number, it is what the loop is asked for.**
-Regenerating the background at each charge temperature with the RoR peak pinned
-at 53 s, the *demanded* peak RoR spans **33.5-55.4 degC/min** today and
-**42.8-49.0** compensated — spread 21.9 falling to 6.2, against a machine
-ceiling of 72. Nearly a third of the demonstrated rate range is currently spent
-on charge temperature alone.
-
-**Why it works is not the phrase "retained energy".** `phi = 0.712` at 400 g
-implies `C_chamber = 276` against `m·c_b = 680` — **the chamber is worth about
-162 g of coffee**, 41% of the charge. It is not a flywheel, so raising the
-preheat by 1 degC hands the bed only `(1 − phi) = 0.29`. The lever reaches
-0.40-0.47 because a *settled* preheat is two things: a hotter store and a hotter
-inlet. The deficit is spent once; the inlet keeps delivering. **Two thirds
-store, one third flow.**
-
-Consequences worth keeping:
-
-- **Match the loop's window, not the turning point.** TP-matching is the obvious
-  target and it is wrong — it lands the TP exactly and then over-drives the
-  recovery (BT@90 spread 14.4 against 7.6). Fit the preheat over 30-90 s.
-- **The lever is mass-dependent** — 0.85 at 250 g to 1.33 at 500 g, because
-  `phi` saturates. **Never scale it**, same rule as the background itself.
-- **The inlet floor binds at the WARM end, and 100 clears it.** Greens +25 needs
-  preheat 95.2 / inlet 102.0; the old 140 floor would have blocked everything
-  above about greens −5. `floor100.aset` is what makes this possible at all.
-- **The region compensation changes is the region the loop is gated out of.**
-  PID is OFF from CHARGE and its first correction lands ~28.5 s, just past the
-  TP (§ The charge gate). Compensation reshapes 0..TP and normalizes TP onward.
-- **Keep regenerating the dip.** A compensated roast starts at its own preheat,
-  so BT at CHARGE is up to ±27 degC from a fixed file — the 0-30 s check would
-  blow up. `make_background.py` already redraws the dip for free; what becomes
-  invariant is the *design* half, which is the half that matters.
-
-##### THE HALF THAT IS NOT MEASURED — this gates the whole idea
-
-`charge_dip`'s calibration roasts 50/51/53/54 charged at BT **129.7, 131.0,
-130.5, 129.8**. A spread of **1.3 degC**. Nobody has ever preheated this machine
-anywhere but 130.
-
-- `d(TP)/d(greens)` = **0.60** is a measurement — roast 50 at room temperature
-  against 51/53/54 out of the freezer.
-- `d(TP)/d(preheat)` = **0.40** is **structure, not data.** It follows from
-  `dT_mix = phi·(BT_c − T_bean)` putting the two temperatures in one bracket.
-
-**So the model cannot falsify the idea; it assumes the trade it is being asked
-about.** Do not ship the rule on the model alone.
-
-**The experiment is one roast** (`preheat_lever.py --experiment`). Hold the mass
-and the greens temperature, step the **preheat** by 10-15 degC, regenerate the
-background at the new preheat (`--charge-bt`, `--inlet-precharge`) so the loop is
-not asked to fight the step, and read the TP off the log. The 130.2 baseline is
-already four roasts deep, so one point gives the gain.
-
-| preheat | inlet | predicted TP | predicted BT@60 |
-|---|---|---|---|
-| 130.2 (baseline) | 140.4 | 59.25 | 73.21 |
-| 140.2 | 151.4 | 63.40 (+4.15) | 77.86 (+4.65) |
-| 145.2 | 156.9 | 65.48 (+6.23) | 80.19 (+6.98) |
-
-A 10 degC step clears the dip model's 1.31 degC calibration rms and the −12
-group's 2.7 degC scatter. **A measured gain below ~0.3 or above ~0.55 moves the
-lever enough to matter; inside that band, ship the rule.** The same roast also
-tests the two things the model has nothing to say about: whether **fan 60 still
-settles** at the higher preheat, and what **Temp_Drive** does there (predicted
-11.8 at BT 145 on a linear-loss slope, 16.0 on roast 47's empty-chamber slope —
-that spread is itself the measurement).
-
-**Three ways it could fail on the machine, none of them in the model:**
-
-1. **`phi` may not be constant in preheat.** The BT probe is not the chamber
-   wall. If a hotter preheat stores energy the probe reads differently, `phi`
-   moves and the lever with it.
-2. **Losses look super-linear.** Roast 47's grid implies ~0.38 degC of
-   Temp_Drive per degC of BT against 0.10 for a loss linear in (BT − ambient).
-   A 152 degC preheat may not settle at fan 60, and the walls may give more back
-   during the pour.
-3. **Scorching.** Tipping into 152 degC is not tipping into 130 degC. Operator
-   judgement, and it caps the cold end of the range independently of the model.
-
-**Ordering.** This is *not* roast 57's or 58's — 57 is `LA 12` and 58 is the FC
-mark, both already single-variable. It slots after them, and the preheat step is
-itself a clean single variable.
-
+Proposed 2026-09-08, withdrawn the same day by roast 57: the lever rests on
+`d(TP)/d(preheat) ≈ 0.415` and the measurement is **0.100**, so a 10 degC bean
+swing would need 60 degC of preheat. The full design and — more usefully — the
+reason it failed are in state-history-residual.md § Normalize the charge with the
+PREHEAT. **Do not rebuild it from that section**; see state-current.md § 6.
 #### Measure the charge temperature instead of inferring it (operator, 2026-09-06)
 
 **Charge with the fan off, read the incoming bean temperature off the BT probe's
@@ -1596,7 +1428,7 @@ for equilibrium. Once enough of the curve has been observed, the fan starts and
 the roast begins.
 
 **Why this is worth more than it looks.** `greens_temp` is `0.0` on every roast on
-record, and the charge state has had to be inferred (state-history.md § Charge
+record, and the charge state has had to be inferred (state-history-cascade.md § Charge
 temperature) — from the fall over 0-13 s per 100 g, which is only a *proxy*, and
 one that has to assume the plant delay to be interpretable. Charge state is the
 single largest source of run-to-run variation the strategy search found: it is
@@ -1643,738 +1475,48 @@ into a measured event. The RoR margin is currently ample but roast-dependent
 (-10.4 to +5.4 across the armed windows seen so far), and DROP drives the whole
 heat-off chain.
 
-### Runbook — the agreed order of work (2026-09-02, re-pointed 2026-09-05)
+### Runbook — what is left
 
-One variable per roast. Order after roast 46, the refit, the charge-temperature
-finding and the strategy search: **step 6, then steps 3-5 (the characterisation
-runs), then step 9.** Steps 2 and 7-8 are independent. **Steps 1b and 1c are
-demoted** — state-history.md § Dip strategies finds that over the *reachable*
-(warm-side only) charge range the `Ki` gate makes every metric worse than step 6
-alone, and that both of them are rearranging a burden that step 9 removes. **The
-characterisation runs have recovered their priority**, because step 9's
-feedforward schedule is built from `1/a` and the loss curve, and the loss curve
-is where the fan enters.
+**One variable per roast.** Steps 1-8 are done; what they closed is in
+state-history-cascade.md (roasts 46-49) and state-archive.md § Firmware v0.19.0
+and v0.20.0. Two items remain.
 
-**The schedule that runs the rest of this list in the fewest sessions
-(2026-09-06).** Five recordings, of which two are real coffee, two are
-sacrificial and one uses no beans at all.
-
-| # | what | runs | file |
+| # | what | costs | files |
 |---|---|---|---|
-| bench | flash v0.19.0, confirm the `SV`/`HT` curves, `INLET TRIM` drill (§ NEXT 14) | — | any cascade `.aset` |
-| **1** | ~~**step 6** — the lookahead switch, *and step 7 for free*~~ **DONE, roast 49** — tracking error +0.40 degC / 1.84 s, and step 7 came with it: fan held at **64** for the whole recording | 1 real batch | `airRoaster_cascadePID_lookahead.aset` + `profile_003` |
-| **2** | ~~**step 3** — Test A empty~~ **DONE, roast 47** — it measured the FF coefficients step 8 needs | free | `airRoaster_cascadePID_char.aset` + `charstep_empty_fan` |
-| bench | ~~**step 8** — `feedforward()`~~ **DONE, v0.20.0** — measured coefficients, enabled; flash before the loaded runs | — | firmware |
-| **3** | ~~**steps 4-5** — one 400 g loaded run~~ **DONE, roast 48** — the empty FF map transfers; the plant refit is still owed | 1 sacrificial | `airRoaster_cascadePID_char.aset` + `charsingle_400g` |
-| bench | ~~untick **Drop Spikes**, set **Sampling** to 0.5 s~~ **DONE in the files** — load the `.aset` before the next run, the live session is still on the old values | — | `gen_pid_alarm_asets.py` |
-| desk | ~~refit roast 48 for `a`/`theta`~~ **DONE** — `kf = 0`, but `a`/`theta` are not stationary, so `plant_roast46.json` stays the source. Left: `merge_inlet_base.py`, the `.aset` half, settle `--dip` | — | — |
-| **5** | **step 9** — the FF schedule with the PID as a trim | 1 real batch | new |
-
-**Roast 49 added an item that is not in this table yet** — a deliberate
-ambient-vs-freezer charge pair, of which roast 49 is already the warm arm.
-It is a proposal awaiting the operator's decision, not scheduled work; the
-case for it and where it would sit is § The charge-temperature experiment.
-
-**Two orderings in that table are load-bearing, and roast 47 sharpened the
-second.** Step 6 comes **before** step 8: its whole value is a one-variable
-comparison against roast 46, and step 8 changes the inner loop underneath it.
-Step 8 comes **before the loaded doublets** — the fan is their subject and
-`feedforward()` is the fan compensation that is currently dead — but **after**
-Test A, which is what measures the coefficients step 8 installs. Test A being
-empty and PID-off is exactly why it can sit on the wrong side of a firmware
-change without costing anything. **Flashing
-v0.19.0 first confounds nothing**: both of its items are inert on the present
-cascade path (`INLET TRIM` is never sent, the `SV`/`HT` nodes are additive), and
-it is what makes roast 1 self-contained for analysis.
-
-**Steps 1b and 1c are not in the table and should not be run**, for the reason
-in the paragraph above; the sections below keep their detail for the record.
-
-**Do this on every roast from now on, it costs nothing: fill in `greens_temp`**
-(Artisan Roast Properties). It is `0.0` on every roast on record — roast 48
-included, so this is still not being done — which is why the charge state of the
-existing set had to be inferred rather than read (state-history.md § Charge
-temperature).
-
-**Two Artisan settings changes are now queued ahead of the desk work, both from
-roast 48** (state-history.md § Roast 48, § Two Artisan settings). **Untick "Drop
-Spikes"** (Config › Curves › Filters): with it on — and it is on in every cascade
-`.aset` — Artisan destructively rewrites the two samples before every step in a
-constant-valued channel, which `SV` and `HT` are by construction. And **set
-Sampling to 0.5 s** (Config › Sampling; `min_delay` is 100 ms, and the outer
-loop's `Kp`/`Ki`/`svLookahead` are all rate-independent, so nothing is retuned).
-Both live in the `.aset`, as `dropSpikes` and `Delay`, and **both are now applied
-to all five files** — `dropSpikes=false`, `Delay=500`, propagated by
-`tools/gen_pid_alarm_asets.py`. `curvefilter` stays at 3 on purpose: it is the
-one setting whose *time* constant moves with the sampling rate (the PID's own PV
-filter, 0.67 s of lag -> 0.33 s), and changing it in the same step would put two
-variables in one roast. RoR is unaffected — `deltaBTsamples` is derived from the
-stored `deltaBTspan` (20 s) and the interval (canvas.py:2796). **The live Artisan
-session is still on the old values; load the file before the next run.**
-
-**~~Step 1 — validate `pidKi` 0.07 + profile_003.~~ DONE — roast 46,
-2026-09-05.** Five of the six checks pass, item 5 (floor time) fails on batch
-size rather than on the loop, and the mid-roast ring is gone. Full reading in
-state-history.md § Roast 46. Two things came out of it that set the order below:
-
-- The residual above DRY END is **pure type-1 ramp error, ~1.0 degC / 4-5 s**,
-  and the **measured optimum `svLookahead` is 6.3 s** — the value the step-6 file
-  already carries. That makes **step 6 the next roast**, not an afterthought.
-- profile_003's dip is matched to a **345 g** batch and roast 46 was **400 g**,
-  which cost 30 degC of manufactured error, a rail-to-rail SV excursion and 11 s
-  on the floor in the first minute. That is **new step 1b, profile_004**.
-
-**Step 1b — profile_004, a 400 g dip. Run it *after* step 6 and step 1c, and
-only with the lookahead-switching config.** Its value drops sharply once `Ki` is
-gated (step 1c does the same job without an authoring step, and does it for
-every charge state rather than one) — and note that roast 46 was a **frozen**
-charge, so profile_004 would encode a frozen dip and would be wrong in the
-*dangerous* direction (floor plus windup) for a warm one. Keep it on the list,
-but as a refinement rather than a fix. Take 0:00-1:30 from roast 46's own
-measured BT, keep profile_003's ramp and finish unchanged (the same operation
-that produced profile_003 from profile_002 — state-history.md § profile_003,
-state-history.md § Roast 46). Simulated in state-history.md § Roast 46 refit:
-paired with the step-6 file it is the best configuration found — **0 s at the
-floor**, dip error -2.6 degC against -8.8, handover `Iterm` 30, steady error
-+0.18 degC — but at the present constant `svLookahead = 3` the same background
-is *worse* than profile_003 (`Iterm` 41 at 1:30, a 9.1 degC undershoot over
-1:30-3:00), because three seconds of lead against a steeper, earlier dip
-manufactures a bigger negative error. The two changes are not independent.
-
-**Step 1c — gate `Ki` off through the charge dip.** Two more hidden
-Artisan-Command buttons and two more time-from-CHARGE alarms, regenerated the
-same way as the lookahead pair: `p-i-d(3,0,0)` at CHARGE+1 s and
-`p-i-d(3,0.07,0)` at CHARGE+90 s. `Ki = 0` closes both windup paths at once —
-the integral term and, because `_back_calculate_integral` is gated on `getKi(PV)
-!= 0` (pid.py:314-333), back-calculation as well — so `Iterm` is frozen through
-the dip and handed to the ramp at a known value. Simulated over a 62 degC swing
-in charge temperature the handover integrator goes from a spread of **36.5 to
-0.3**, and time-to-BT-150 from 9.2 s of range to 1.8 s (state-history.md § The
-dip is a different control problem). Expect the SV to sit on the 140 floor
-longer and not lift off it before 1:30 — that is the mechanism working, not
-failing. Watch the two traps: `p-i-d()` is sticky, so a Save Settings before
-1:30 writes `pidKi = 0` into the `.aset`; and if the 1:30 alarm misses, the loop
-is P-only for the rest of the roast (roast 40's failure mode, CONTROL button to
-escape).
-
-File: **`artisan/airRoaster_cascadePID_kigate.aset`**, or
-`..._lookahead_kigate.aset` to run it together with step 6 — both generated by
-`tools/gen_pid_alarm_asets.py`. Predicted outturn and the five things to check
-are in state-history.md § The dip is a different control problem. Note that at
-the usual charge state this is close to a **null experiment** on roast quality:
-check the mechanism (`I@1:30` near 8, SV parked on the floor until 1:30), not
-the outcome.
-
-**Demoted 2026-09-06 — do not run this with step 6.** state-history.md § Dip
-strategies reconstructs the charge sweep as a reproducible tool
-(`tools/analysis/dip_strategies.py`), restricted to the warm side that a frozen
-roast 46 leaves reachable, and finds the gate costs more than it buys there:
-worst error over 1:30-3:20 +5.79 against step 6's -4.01, steady rms 0.38 against
-0.26, and `dt150` spread 4.2 s against 0.4. The mechanism is real, its magnitude
-is not settled, and the earlier sweep's code no longer exists to reconcile. **If
-the gate is run at all, run it as gain scheduling rather than alarms** — `Ki` 0
-→ 0.07 across BT 70 → 95, which is the same gate with no missed-alarm failure
-mode, no sticky-`p-i-d()` trap, and a worst error of +2.95.
-
-**Step 2 — flash v0.19.0 and wire up the new channels.** After step 1, so that
-roast stays clean. **v0.19.0 now carries two items**: the `SV`/`HT` `getData`
-nodes (done, below) and the `INLET TRIM` command that step 9 needs
-(state-history.md § Firmware now in scope). `INLET TRIM` is inert until Artisan
-is reconfigured, so flashing it changes nothing about the present cascade — but
-it means step 9 needs no second flash. `./verify.sh upload`, then bench-drill
-`INLET TRIM` (§ NEXT item 14) before any roast.
-
-**The extra device is now in the `.aset` files and no longer a click-path
-(2026-09-06).** The device id was previously left unresolved — *"not guessed here
-because a wrong one silently mis-maps a curve"* — and it is **113 = `WS_56`**
-(comm.py:491; 112 = `WS_34`, already in use for `IN`/`AT`). It is appended as a
-**third** extra device rather than replacing the existing virtual `Temp_Drive`
-(`Y3-Y2`), which survives: the ws channel index comes from the *device function*,
-not from the device's position in the table, so `WS_56` reads
-`channel_nodes[4..5]` = `SV`, `HT` wherever it sits. It also costs no extra
-traffic — `WSread(0)` on the main device fills every channel from the single
-`getData` reply and the extra devices return the cached readings (comm.py:1922-1951).
-
-```
-extradevices = 112, 25, 113      extraname1 = Inlet, Temp_Drive, SV
-                                 extraname2 = amb, Extra 2, HT
-```
-
-All five `.aset` files carry it (the four variants are regenerated from the
-canonical). Confirm the two curves appear and track — `SV` should read the
-commanded inlet setpoint and `HT` the heat percent — then set **`createEvents`
-back to false**; it is only the fallback, and it is deliberately left `true` for
-the first roast that uses the new channels so the outer loop's output is recorded
-twice. From there every roast is self-contained and no CSV is needed.
-
-> **Why these schedules are square waves and not smooth ramps — measured
-> 2026-09-08.** A smooth input cannot identify this plant, because a low-order
-> `slow(t)` reproduces the output exactly. Roast 20 ran a playback ramp and is
-> the smoothest roast in the archive; fixing `theta = 13.5 s` and profiling the
-> residual over `a` = 0.000…0.016 moves it **7 %, monotone increasing**, so its
-> best fit is `a = 0` — no plant at all. The same profile on roast 46 has a sharp
-> minimum at 0.0049 and swings 5× either side. **The better a roast looks, the
-> less it can tell you about the plant** (state-history.md § Roast 20 revisited),
-> so never read a plant number off a well-behaved roast and never soften these
-> schedules to make them roast nicely.
-
-**Steps 3-5 — the characterisation runs. Three recordings, two sacrificial
-batches, one session.** All of them load
-**`artisan/airRoaster_cascadePID_char.aset`**, which forces the PID off at CHARGE
-and replays the test schedule onto slider 3 from the background — press ON, load
-the background, START, CHARGE, and the run drives itself (§ Files for the
-characterisation runs). Run them back to back off one warm-up.
-
-**~~Step 3 — Test A, empty roaster.~~ DONE — roast 47, 2026-09-06.** The
-schedule replayed correctly (all 13 events on time), the inner loop held rms
-1.12 degC, the `SV`/`HT` channels are live, and `feedforward()` is refitted —
-**the coefficients step 8 was going to use are wrong, the `SV` term by 26x**
-(state-history.md § Roast 47, and step 8 below). One failure: Artisan's built-in
-`autoDrop` fired at 10:05 and cost 88 s and one steady window; the char config
-now disables it. Re-running Test A would recover the fan 80 / SV 145 corner, but
-the fit does not need it.
-
-*The specification, for the re-run if it is ever wanted.* Background
-`artisan/charstep_empty_fan.alog`
-(`tools/gen_char_empty.py`): the original inlet sequence 145 -> **185 at 2:00** ->
-**145 at 5:00** -> **185 at 7:00** -> **145 at 10:00**, extended with **185 at
-12:00** and **145 at 15:00**, crossed against a fan sweep **64 -> 72 at 2:30 ->
-58 at 5:50 -> 80 at 9:10 -> 64 at 12:30 -> 72 at 15:50**. The two grids are
-offset so no fan step lands within 30 s of an inlet step and the regression can
-separate them. Set fan 64 before CHARGE; the schedule replays both sliders. DROP
-by hand at 17:00.
-
-With no beans there is no circulation floor and no ceiling, so this is the only
-run in the set that can sweep the fan widely — which is what **step 8** needs:
-the affine `feedforward()` currently rests on five preheat fan steps spanning
-0.81-1.11 %heat/unit, and this is the same regression with a real lever arm. It
-does **not** replace Test C; an empty chamber measures the machine's heat demand
-against airflow, not the bean-bed loss term that step 9's schedule is built
-from.
-
-**Step 4/5, the 617 g variant — one 400 g batch instead of two
-(operator, 2026-09-06).** The sacrificial stock is 617 g, which is one 400 g
-batch or two 308 g ones. **Two 308 g batches are the wrong answer**: charge mass
-sets both quantities these runs measure — the bed's pressure drop, hence the flow
-a fan level delivers (what `FF SLOPE` corrects), and the thermal mass in the
-plant fit — so a 308 g pair would characterise a roaster the operator does not
-run, with a single mass and nothing to extrapolate from.
-
-Background **`artisan/charsingle_400g.alog`** (`tools/gen_char_single.py`), 12:15,
-DROP by hand, same `airRoaster_cascadePID_char.aset`:
-
-```
-0:00  fan 64 (circulation), roast 45's ramp replayed
-1:30  fan 60
-2:45  SV 245 flat   3:15 fan 66   4:00 fan 60     slope @ 245, BT 145 -> 182
-4:30  SV 150        valley -- pulls BT back down
-5:30  SV 215 flat   6:00 fan 66   6:45 fan 60     slope @ 215
-7:15  SV 150        valley
-8:15  SV 190 flat   8:45/9:45/10:45/11:45 fan 70/60/70/60
-                                                  slope @ 190 + the outer fan gain
-```
-
-**It measures strictly more than the two-batch plan could.** Roast 47 showed
-heat reaches 95 % of its final value **within 2 s** of a fan step, so a slope
-costs ~45 s rather than a plateau, and can be taken at several setpoints. The
-model's fan sensitivity is a line in the setpoint,
-`slope(sv) = cfan + cfansv*sv/100`; one setpoint only supports `FF SLOPE`
-(rescaling both terms together, since their split is not identifiable from a
-single point), while **three flat setpoints — 190, 215, 245 — identify `cfan`
-and `cfansv` separately, loaded.** The two-batch plan had one, at SV 200.
-
-Three things shape the schedule and the tool enforces them:
-
-- **Every fan step sits at a dead-flat inlet**, ≥20 s from any inlet change.
-  Heat depends on fan and setpoint and essentially *not* on BT — the inlet
-  thermocouple is upstream of the bed — so BT climbing through a block does not
-  contaminate the slope. What BT constrains is only how long a block can last.
-- **The valleys are not filler.** A steady inlet drags BT to within ~`loss/a`
-  (~15 degC) of itself, so SV 245 cannot simply be held — the plateau would be
-  BT ~230, deep into second crack. Dropping to 150 pulls BT back at ~0.2 degC/s,
-  and those up-and-down inlet steps *are* the plant-identification excitation,
-  which is why this file needs no separate 3:00-5:00 doublet. Simulated BT peaks
-  at **185.7 degC**; the tool refuses to write a schedule that reaches 196.
-- **Block C steps ±10, not ±6.** The small pulses are sized for the heat signal
-  (resolved to 0.4-1.5 %); the outer plant's fan gain is read from *BT* and needs
-  a much larger push, so block C doubles as slope point and BT excitation.
-
-What is given up: the between-batch fan-level contrast, and with it the
-moisture-loss question — a roast-quality question, not a characterisation one,
-and answerable later with two real roasts. And there is **no retry**: 217 g is
-left, under the 250 g minimum. Roast 47 was the first outing of a new schedule
-and hit an unforeseen trap, so if 800 g of other sacrificial beans can be found,
-prefer the two-batch pair below and keep this as the fallback.
-
-**The 1:30 circulation bump is a free fan step on every real roast — and it has
-now been read (2026-09-08).** The step lives at **2:00**, not 1:30. Duty over
-100-118 s against 126-146 s, detrended on the 60-118 s slope, gives **0.9-1.0 %
-of heat per fan unit over 64 → 60** on roasts 56 and 57 — matching the empty
-preheat regression's **0.992** exactly. **The loaded fan gain equals the empty
-one**, and Test C's fan question is answered for this step without spending a
-batch.
-
-**But only two roasts are readable, and the reason is the caution.** Roasts 53-55
-had SV ramping at **1.0-1.6 degC/s** through the window, so there is no flat
-baseline to difference against and the detrend extrapolates nonsense (−14 to
-−19 % of duty). It works on 56 and 57 because the lookahead switch moved to 45 s
-and left the 100-145 s SV flat. **Read this step only where `dSV/dt` is under
-~0.2 degC/s over 60-110 s**, and check that before quoting a number.
-
-**The same step is now the leading suspect for the −2.9 degC residual at 170 s**
-— see state-current.md § HANDOFF § 2. The duty step reads a **6.6-7.4 % flow
-reduction**, which the outer loop must make up as delivered power.
-
-**Step 4/5, the 800 g version — Test B and Test C, merged: two loaded 9-minute
-runs.** Backgrounds
-`artisan/chardoublet_fan60.alog` then `artisan/chardoublet_fan68.alog`
-(`tools/gen_char_doublet.py`). Each opens at **fan 64 for circulation**, drops to
-its ramp base at 1:30, carries the inlet doublet over 3:00-5:00, holds the inlet
-from 5:20 so BT levels off near 185 degC, and runs a **fan square wave 60/70**
-over 6:00-9:00, phase-reversed between the two files. Set **fan 64** before
-CHARGE; the schedule replays every change from there. **DROP by hand at 9:00**
-(both alarms are off in the char config). **Fill in `greens_temp`, weigh both
-batches the same, and record both out-weights.**
-
-**The fan excitation is inside each batch, not only between them** (operator
-decision 2026-09-06). A between-batch comparison at n=2 confounds the fan with
-everything else that differs between two batches, and roast 46 is the standing
-proof that batch differences are not small (55 g manufactured a 30 degC error
-swing). `tools/gen_char_doublet.py` therefore extends the original doublet to
-nine minutes: **fan 64 to 1:30** for circulation, then the ramp at this batch's
-**base**, **0:00-5:00 of inlet unchanged**, the inlet then stepped down to a
-**200 degC hold** so BT levels off near 185 degC, and a **fan square wave 60/70
-over 6:00-9:00**, phase-reversed between the two files. The ramp bases are **60
-and 68**. So the level contrast lives in the ramp and the modulation lives in the
-plateau, six transitions across the pair in both directions, and slow drift
-common to the two runs cancels in the difference.
-
-Four constraints shaped it, and each is a way the run could have been wasted
-rather than merely noisy:
-
-- **A charge does not circulate at 60.** It takes ~64 to loft the bed, after
-  which 60 sustains (operator, 2026-09-06) — and roast 46's own events are that
-  pattern, not the constant 60 state-current.md had summarised: 60 at CHARGE+2 s,
-  **64 at +7 s**, 63 at +11 s, 60 at +85 s. **A constant fan from CHARGE is not a
-  schedule this roaster can run**, so both files open at 64 until 1:30. Identical
-  in both, so it differences out, and a step rather than a level, which is
-  excitation rather than a confound.
-- **Fan floor 55, and 58-59 in practice.** Below `IL_FAN_FULL_DFLT`
-  (airRoaster.ino:111) the interlock stops giving the heater full authority, the
-  heat clips, and the inner loop stops holding the inlet — the one thing that
-  invalidates an open-loop identification run. The operator's own floor is higher
-  (58-59 is the lowest reachable at all), so the schedule never goes below **60**
-  and the tool refuses under 57.
-- **There is no blow-out ceiling** (operator, 2026-09-06). The concerns above the
-  usual band are *moisture loss at higher Reynolds number* and *bed uniformity* —
-  chuffing drives local circulations that short-cut the asymmetric expansion
-  funnel — neither of which rules out **70** for 60 s at a time on a sacrificial
-  batch.
-- **Stay below first crack.** Replaying roast 45's SV to 9:00 would run BT into
-  second crack. The plateau at ~185 degC keeps the fan modulation clear of the
-  bean exotherm, which would otherwise sit on top of exactly the signal being
-  measured. The batches come out underdeveloped rather than burnt.
-
-**The 60-vs-68 ramp bases also answer a question the operator has open
-independently**: the standing preference is the *minimum* airflow that sustains
-circulation, for efficiency, and it has never been compared against a higher one.
-**Weigh in and out on both batches.** The comparison is indicative rather than
-definitive, since the two runs share the plateau and the charge segment.
-
-The background's BT column is replaced from 3:00 by a forward simulation of the
-plant card, so it is an honest prediction rather than roast 45's closed-loop BT
-(which stopped being a prediction the moment the doublet was spliced in). It
-predicts **the same BT for both files**, because the card has no fan term — which
-is the whole point of the runs: the measured difference between the pair is the
-coefficient the card is missing.
-
-~~After 3-5 the theta/tau ridge (state-history.md § Scheduling) collapses to
-real numbers~~ — **superseded**: roast 46's involuntary rail-to-rail SV
-excursion in the charge recovery did that job already (theta 13 +5/-1 s, tau 205
-s, state-history.md § Roast 46 refit), and the Ki retune it was to enable has
-been done — 0.07 is optimal, not a compromise. What 3-5 are still for is the
-**fan** (Test C) and an independent check of the plant under a deliberate rather
-than an accidental doublet. The **predicted-BT channel** (state-history.md §
-Firmware now in scope) is a separate decision.
-
-**~~Step 6 — the lookahead switch.~~ DONE — roast 49, 2026-09-06.** Rows 1-3
-of the table below pass: steady tracking error **+0.40 degC / 1.84 s** against
-roast 46's +1.06 / 4.73, time-to-BT **-0.9 / +2.2 / +2.0 s**, and the 1:30 switch
-delivering +21.2 degC of commanded SV inside two samples with 95% of the
-excursion in 12 s and no ring afterwards. Rows 4-5 miss — 29.2 s on the floor
-against 16, a 7.7 degC SV reversal against 3.2 — and **both are the charge state,
-not the loop**: roast 49's charge was 33-35 degC warmer than roast 46's, so the
-dip ran 12 degC *above* the background rather than 9.8 below. Those two rows are
-not a one-variable comparison and must not be read as one. Full reading in
-state-history.md § Roast 49.
-
-*The specification, for the record.* Load
-`artisan/airRoaster_cascadePID_lookahead.aset` **unmodified** with background
-profile_003 and roast normally. Roast 46 is the clean baseline it needed and
-measures the required lead at 6.3 s against the file's 6; the validated
-simulator in state-history.md § Roast 46 refit then predicts, against roast 46's
-own numbers in brackets:
-
-| | predicted | roast 46 as run |
-|---|---|---|
-| steady tracking error, 3:00-7:00 | **+0.05 degC / 0.44 s** | +0.75 degC / 3.4 s |
-| time to BT 150 / 180 / 196.5 vs profile | -1.9 / +3.2 / +0.9 s | +3.5 / +5.0 / +4.4 |
-| at 1:30: target step -> commanded SV | +4.0 degC -> **+24.7 degC**, settled in ~15 s | — |
-| floor time in the charge dip | 16 s | 4 s simulated, 11 s measured |
-| SV max / worst reversal after 1:00 | 296 / 3.2 degC | 289 / 0.3 |
-
-So the answer to *"does the 1.0 degC / 4-5 s lag go to ~0?"* is yes, by
-construction of the feedforward. Two expectations to correct: the SV kick at
-1:30 is a quarter larger than state-history.md § Roast 46 estimated, and the
-`pidLookahead(0)` leg makes the dip **worse** against profile_003 (16 s on the
-floor, not better than L=3's 4) — leave it in anyway, because it is what makes
-step 1b work. **Do not take the two-stage alternative**: swept against three-
-and four-stage schedules it gains under 0.1 degC of rms and costs two buttons
-and an alarm.
-
-**~~Step 7 — a fixed fan, independent.~~ DONE — roast 49, and more cleanly than
-specified.** The fan sat at **64 for the entire recording** — two `Air` events,
-both 64, one at -1:48 and one at CHARGE — so preheat, the charge circulation bump
-and the roast body all ran at one level and there is no air schedule anywhere in
-the trace. The tracking result is therefore attributable to the loop with nothing
-to subtract. Taken with roast 48's `kf = 0`, the air schedule has now failed to
-earn its disturbance twice. The level was 64 rather than the specified 60, which
-costs nothing here: `kf = 0` says the BT plant has no fan term, and
-`feedforward()` covers the extra heat demand.
-
-*The original statement.* state-history.md § Fan vs batch size says
-the level does not depend on charge mass and the loop barely notices the level,
-only the step. One roast at a flat **fan 60** with no changes tests whether the
-ramp is earning its disturbance. Roast 46 already went most of the way: the fan
-was held at 60 through the roast body — bar the mandatory 63-64 charge
-circulation bump over 0:09-1:26, which is not optional and cannot be designed
-out — and the trace shows no air-schedule signature at all (state-history.md § Roast 46), which is the cleanest evidence
-yet that the ramp is not earning it. What is left is a roast that keeps 60
-through preheat too.
-
-**~~Step 8 — the feedforward term.~~ DONE — v0.20.0, 2026-09-06.** The map
-becomes `heat_ff = c0 + cfan*fan + csv*sv + cfansv*fan*sv/100`, replacing the
-single-product `ffK*fan*(sv-ambient)` that was clamped at 100 for 430 of 430
-samples of roast 46 — inert rather than merely miscalibrated, with
-`d(FF)/d(fan) = 0`, and collapsing the anti-windup bound to `[-100, 0]`.
-Coefficients are roast 47's measured fit (69.8685 / -0.8570 / -0.5101 / 1.1423,
-rms 0.68 % over nine steady windows), enabled by default, compile-verified.
-README § Feedforward and the v0.20.0 version-history entry carry the detail.
-
-**The affine model this step was going to install is retracted**
-(`-30.62 + 0.99*fan + 0.0096*sv`): it under-predicts the measured grid by
-11-26 % with its `sv` coefficient 26x too small, because the five preheat fan
-steps behind it held the setpoint nearly constant. Recorded because it is the
-generalisable lesson — a coefficient is only as good as the range its input
-moved over — and `tools/analysis/roast47_ff.py` now cards the fitted box next to
-the coefficients so an extrapolation is visible as one.
-
-**What is NOT done, and it is deliberate: the map is empty-chamber.** A bean bed
-changes the pressure drop and so the flow a fan level delivers, so the fan terms
-are expected to move once loaded (operator, 2026-09-06). Every coefficient is
-therefore runtime-settable and NVS-persisted, and **a loaded refit is a command,
-not a reflash**. Two routes, in increasing cost:
-
-1. **Free, from the runs already scheduled.** Each loaded doublet holds SV 200
-   through a 60/70 fan square wave over 6:00-9:00, which is `d(heat)/d(fan)`
-   loaded at the roast setpoint — the single number the bean load moves most.
-   Feed it to `FF SLOPE <m>`: the firmware rescales *both* fan terms by
-   `m / current_slope` while holding `heat_ff` at the present `(fan, sv)` fixed,
-   which is exactly "the flow this fan level delivers changed by a factor". The
-   split between `cfan` and `cfansv` is not identifiable from one setpoint, so
-   they scale together.
-2. **A loaded FF grid — only if 1 disagrees materially.** Test A's schedule with
-   beans in would give a full loaded refit, but it costs a batch and carries its
-   own confound: the bed's flow resistance drifts as the beans dry, so a 17-minute
-   loaded grid is not measuring one plant. Justify it with evidence from route 1,
-   not speculatively.
-
-The dashboard's **FF step cal** panel is route 1 made one-click, and it got
-simpler in the process: with the map carrying its own intercept it reports the
-raw slope `dheat/dfan` and no longer needs an ambient at all.
-
-**Step 9 — the inlet feedforward schedule with the PID as a trim.** The
-structural fix, and the reason steps 1b/1c are demoted rather than deleted:
-today the outer integrator has to supply the entire operating point, so it ramps
-at 0.09 duty/s all roast, `e_ss = (dI/dt)/Ki` exists, `svLookahead` is needed to
-hide it, and the value handed over at 1:30 matters. Give the firmware a base
-inlet schedule (`ff(t) = bg(t+theta) + (dbg/dt - loss)/a`, merged into the
-background as replayable events and replayed through Artisan's per-event-type
-background playback on its own slider — **the authoring step now exists**:
-`tools/merge_inlet_base.py --into artisan/profile_003.alog`, reading
-`tools/analysis/plant_roast46.json`; § The base-curve authoring gap) and make
-the PID's output a bounded trim on it via a new `INLET TRIM <degC>` firmware
-command. Simulated: `dI/dt` 0.09 -> 0.01, `I@DROP` 63 -> 50, steady rms
-**0.11-0.14 degC**, `svLookahead` 0, and with the `Ki` gate the handover
-integrator and `dt150` are **identical at every charge state**. Survives +-20%
-of error in the assumed plant gain. **Run steps 3-5 first** — the schedule is
-exactly `1/a` and the loss curve, which is what those runs measure; then
-`roast46_refit.py --emit-plant` to refresh the plant card and re-run the merge.
-Two things are still open before this is roastable: the `.aset` half (the trim
-slider, `pidPositiveTarget`, per-event-type playback), and the `--dip` question
-— the merge tool's default back-extrapolated base is **not** the clipped,
-dipping base that state-history.md § Dip strategies simulated (§ The base-curve
-authoring gap, item 4). Full design, the source citations for the
-playback/slider arrangement, and the risks to close are in § Step 9 above; the
-strategy sweep that produced it is state-history.md § Dip strategies.
-
-### What roasts 47-49 jointly say, and what to do next (proposal, 2026-09-06)
-
-**Not decided. This section is a recommendation for the operator to accept,
-reorder or reject**; nothing above it has been re-pointed at it.
-
-**The through-line.** Three runs in one day closed three different things and
-they point the same way. Roast 47 measured `feedforward()` over a real fan x SV
-box; roast 48 showed that map transfers to a loaded chamber (bias +1.07%, rms
-1.61%) and that the BT plant has **no fan term at all** (`kf = 0.0000`); roast 49
-showed the outer loop tracking `profile_003` to **+0.40 degC / 1.84 s** with the
-error inside -1.94 .. +0.93 degC for the whole ramp. Inner loop rms is 0.40-0.52
-degC. **The controller is no longer the limiting error.**
-
-What is left is almost entirely in the *reference*. Roast 49's worst excursion of
-the whole roast was **-16 degC in the first minute**, and it was not the loop
-failing — it was `profile_003`'s dip being authored for a 345 g frozen charge
-while the batch was 400 g and ~33 degC warmer. Roast 46 had the same defect with
-the opposite sign. Neither is fixable by tuning: at a warm charge the output
-floor is a *lower* bound on inlet, so the loop physically cannot pull BT back
-down, and it spends the minute saturated at an error it cannot act on.
-
-That reframes the remaining work. **More control effort has low marginal value;
-generating the reference for the batch in hand has high marginal value; and the
-one measurement that unlocks it is the charge state** — which is what the
-operator proposed independently.
-
-#### The charge-temperature experiment
-
-**The charge-thermal test (2026-09-06) took a run at this from a different direction and it
-changes the design rather than closing it** — state-history.md § The charge-thermal test. It
-measured the charge decay with **no flow**, and the result is that a still-air BT
-decay **cannot** read bean temperature: the probe's expansion zone is narrow and
-the preheated chamber holds a lot of heat, so BT weights 0.34 onto the walls with
-a 36 s time constant, and the charge temperature trades against that freely
-enough that the best-fitting solution puts a room-temperature charge at −2 degC.
-It did **not** deliver the `C_chamber` calibration it was run for.
-
-**Three things it did settle, and they all feed this run:**
-
-- **Add a nine-second fan burst to any charge-state measurement.** It removes
-  3.9 degC of still-air bias and takes BT below the temperature of the air being
-  drawn in, which no reading of walls or air can do. It is the only
-  charge-temperature instrument this project has that works.
-- **The still-air arms are not interchangeable with a roast.** Under flow the
-  mixing fraction is fitted from the roasts themselves
-  (`tools/analysis/charge_dip.py`, `phi` 0.712 at 400 g, on the operator's
-  temperature scale), not from the charge-thermal test.
-- **The cheapest outstanding measurement is a repeat of the charge-thermal test's *warm* arm
-  with a burst.** Only the frozen arm got one, so there is one bed reading and
-  not two, which is most of why its joint fit is under-determined. One preheat,
-  no beans consumed, no roast.
-
-#### The preheat protocol, and why a throwaway roast is not one
-
-**A roast is not a reset** (operator, 2026-09-07). The between-batch protocol —
-cooldown duration, fan level, how long before the next preheat starts — is not
-defined, so "run a batch first" leaves the machine in a state of unknown
-magnitude. A **defined temperature held for a defined time** is an actual
-boundary condition; that is what the runs use.
-
-**And the state cannot be detected, only imposed.** The charge-thermal test's two preheats
-converged to the *same* shallow state from opposite histories — cold-start
-5.6 min ended at inlet 140.43 / heat 44.66%, warm-start 2.5 min at inlet
-141.20 / 44.57% — and yet their plenums differed by **4.5 degC** through the
-whole soak afterwards. The loop holds BT, so it absorbs the deep-mass difference
-into a heat demand no operator can read. Fitting cycle 1's inlet approach gives a
-**shallow time constant of ~46 s**, converged in ~4 minutes and informative about
-nothing that matters. Worth roughly **2-4 degC of apparent bean temperature**
-(`d(T_bean)/d(drop) = -1/4k = -2.45`), or 5-10% of the ~47 degC the pair creates.
-
-**The protocol is therefore an elevated pre-preheat, then a fixed settle.**
-Saturation at the elevated drive is a *fixed point* — once there, more time
-changes nothing — so it erases whether the machine started cold or off a previous
-batch, and it stops the result depending on how accurately the phase is timed.
-The settle is then a fixed decay from a fixed start: same start plus same
-duration gives the same end, by construction.
-
-| phase | what | duration |
-|---|---|---|
-| elevated | `INLET 200`, fan 64, **PID off** | 10 min |
-| settle | cascade on, BT 130 | 10 min from BT first within 1 degC |
-
-**Superseded on the bench, 2026-09-07 -- see the next section.** The elevated
-phase is dropped and the preheat runs at **fan 60** with a Temp_Drive criterion
-instead of a stopwatch: at fan 64 the settle cannot reach BT 130 at all.
-
-Sizing: the chamber mass that takes part in the charge mix is `C ~ 353 J/K`
-against `UA >= 3.3 W/K` (the plant's own `a` on a 680 J/K bed), so **tau <= ~2
-min** for that one; the deeper reservoir is the charge-thermal test's 510-557 s *no-flow* decay
-and its driven constant is unmeasured. Ten and ten is ~5 constants of the fast
-one and ~2 of the pessimistic one, and identical on both runs. **Lengthen the
-elevated phase rather than the settle** if hedging — that is the one where extra
-time is free.
-
-**Accept that repeatable is not the same as comparable to roasts 43-49.** Those
-were charged from uncontrolled machine states; roast 49 was not even settled (its
-recording starts 71 s before CHARGE with BT still climbing 115.8 -> 128.1 and the
-inlet falling 225.7 -> 175.8, which is why its `inlet_pre` reads 168.6 against the
-group's 140-152 — an unsettled machine, not a hotter one). Let the pair define
-its own baseline and adopt the protocol going forward.
-
-**A free retrospective check exists.** With no flow the plenum never sees the bed
-(state-history.md § The charge-thermal test), so the **post-DROP inlet decay is a
-bean-independent readout of stored heat**. Record through the cooldown on both
-runs and overlay the two curves: if they sit on top of each other the protocol
-worked, and if they are offset the difference is correctable — and it yields the
-driven time constant.
-
-#### The preheat runs at fan 60, because BT 130 is unreachable at 64
-
-**Found on the bench, 2026-09-07, and it corrects two things in these notes.**
-The first attempt at the protocol above ran the elevated phase at `INLET 200`
-with fan 64 and then could not settle: with the PID clamped at
-`positiveTargetMin = 140` the inlet pinned to its floor and **BT stalled at
-137**, Temp_Drive (`Inlet - BT`, the `Y3-Y2` virtual channel) reading ~3.
-
-**It is the fan, not the walls.** Roast 47's empty-chamber grid at a constant
-SV 185 gives Temp_Drive **25.4 / 15.4 / 14.5 / 13.3** at fan **58 / 64 / 72 /
-80** -- steep through 58-64 at about **-1.7 degC per fan unit**, then flat.
-(Those windows are ~25 s against a ~45 s empty-chamber time constant, so the
-trend is the result and the absolute values are not.) That matches the two
-settled points on record: the charge-thermal test at fan 60 sat at Temp_Drive **10.6**, the
-bench at fan 64 at **~3** -- -1.9 per unit over the same span.
-
-So at fan 64 holding BT 130 needs **inlet ~133**, below the 140 floor. It is an
-equilibrium, not a transient, and no amount of waiting reaches it.
-
-**This explains roast 49's preheat, which § Roast 49 records as an oddity.** It
-was not impatience: roast 49 held fan 64 throughout, so there *was* no settled
-BT 130 to charge from, and it was charged mid-ramp because that is the only way
-to cross 130 at that fan. Every roast that settled -- 43, 44, 45, 46 and both
-the charge-thermal test cycles -- preheated at **fan 60**, where the required inlet is
-140.4-140.8, just above the floor.
-
-**And it corrects the paragraph above**: the machine state *is* observable, but
-Temp_Drive reads it only at a **fixed fan**. The 23.2 / 17.2 / 15.0 / 11.4 spread
-across roasts 43/44/45/46 is settling state at a common fan 60; the bench's 0.9
-was an over-charged wall on top of a fan-64 offset, and the persistent part was
-the fan.
-
-**The protocol is therefore:** preheat at **fan 60** under the PID; hold until
-**Temp_Drive settles into 10-12** with BT flat at 130 and the inlet **off** the
-140 floor; press fan **64** immediately before tipping and leave it there. That
-is roasts 43-46's own schedule, so the pair lands on the historical state rather
-than only on each other, and a 400 g charge needs ~64 to loft in any case. **The
-elevated pre-preheat is dropped** -- the settling criterion handles machine
-history from either side without it.
-
-**None of this reaches the measurement.** The proxy is read over `0..theta` and
-nothing the heater does arrives before ~13.5 s, so the floor, the lookahead
-switch and the fan step at CHARGE are all control, not signal, as long as both
-runs are identical.
-
-#### The charge gate — the outer loop must not act through the dip
-
-**Roast 52 found the mechanism, and it is in Artisan's source, not in the
-tuning.** `pid_control.py:1687`: *before CHARGE, the CHARGE temp of the
-background profile is returned* — until `timeindex[0]` is set, Follow Background
-targets **one constant**, the background's BT at its own CHARGE, and not the
-curve. autoCHARGE needs about five samples of BT-break evidence, so for **~3.5 s
-after the beans go in** the target is pinned at 130.2 while BT is already through
-116.
-
-That **inverts the sign of the error**: live tracking wants `bg - BT =
-105.8 - 116.0 = -10.2` and would cut the heat, while the frozen target says
-`130.2 - 116.0 = +14.2`. Roast 52 answered it by stepping `T_inlet` **140 -> 224
-in a single 0.5 s sample** at +3.5 s, then on to 275, with heat at **100% for
-22.5 s**. The energy arrives 13.5 s later — at 17-30 s, **the turning point** —
-so the loop's hardest push lands exactly when the bed is already recovering. BT
-then overshot to **+20.1 degC at 58 s** and the loop sat **37.5 s on the 140
-floor** undoing it.
-
-**Roast 53 corrected this: the frozen target is real but it is not the dominant
-term.** Its own frozen window was ~1 s and it still commanded SV 238. Replaying
-the port against roast 53 — `rms 2.1 degC over 0-30 s`, peak 238 against a
-measured 238 — puts the kick on the **lookahead** instead:
-
-1. `calcSV` **ignores `svLookahead` before CHARGE** (pid_control.py:1690 returns
-   the background's CHARGE BT, one constant), so `svLookahead = 3` first takes
-   effect *on the sample CHARGE is marked*.
-2. The bed is falling ~6 degC/s there, so a target 3 s ahead sits **15-20 degC
-   below** BT. The output floors.
-3. `_back_calculate_integral` (pid.py:314-333) turns the clamped excess into
-   stored integral — **`Iterm` 1.2 → 37.8 in two samples** — and `Ki = 0.07`
-   cannot unwind it. It is the *integral*, not the P term, that holds `T_inlet`
-   at 200-238 for the next 30 s.
-4. The `LA 0` alarm closes the window ~2.5 s after CHARGE, about 2.5 s too late.
-
-Both readings point at the same window and the same fix, and the port says the
-correctly-targeted loop wants **174-181** there. Detail in
-state-history.md § Roast 53.
-
-**The fix costs nothing, because the loop has no authority there.** Nothing the
-heater does reaches BT before ~13.5 s, so the outer loop cannot affect `0..theta`
-at all and its actions there land where they do harm. `airRoaster_cascadePID_chargetemp.aset`
-now carries:
-
-- a visible **`CHARGE`** button, Multiple Event → **Fan FULL (64) + PID OFF**, so
-  the gate cannot be forgotten or mistimed;
-- an alarm at **CHARGE+15 s → PID ON** (its first correction then lands ~28.5 s,
-  just past the turning point);
-- **`pidOnCHARGE = false`**;
-- **`svLookahead = 0`** as the file default.
-
-`PID OFF` *cannot* be an alarm: alarms fire from CHARGE, which is the mark that
-arrives too late. It has to be the same press that tips the beans.
-
-**The last two are what roast 53 cost, and neither is optional.**
-
-`pidOnCHARGE = true` makes the gate a no-op: `markCharge` calls `pidOn()` whenever
-it is set and the PID is not already active (**canvas.py:14656**), so the button's
-`PID OFF` is undone by the CHARGE mark, ~1 s later and still before the beans
-reach the sensor. It had never mattered before because the preheat runs with the
-PID already active; adding a deliberate `PID OFF` is what exposed it.
-
-`svLookahead = 0` removes the window at (2) above rather than racing it, and costs
-nothing — the `LA 0` alarm sets the same 0 at CHARGE+1 s either way, and the value
-is unused before CHARGE. It is also what makes the gate **robust to the operator**:
-if the `CHARGE` button is missed, the lookahead window no longer bites. On the
-replay, either fix alone drops the peak from 238 to 174-179.
-
-**And it makes both halves agree.** `make_charge_background.py` builds the dip
-with the inlet **held at its pre-charge value**; the gate is what makes the plant
-actually do that. The same assumption on both sides, which is why this should
-close rather than trade one error for another.
-
-**Verified by roast 54 (2026-09-07).** `T_inlet` carried nothing between CHARGE+1 s
-and the `PID ON` alarm at +15.5 s, inlet sat at 143-145 through the dip, peak SV
-fell to **193**, 100% heat to **3.0 s**, worst BT error 30-90 s to **+5.5 degC**,
-and peak `Iterm` to **17.3** against roast 53's 44.1. The port reproduces the
-roast to rms 0.74 degC over 120-240 s. **The loop is closed; what remains is the
-dip model** — see state-current.md § HANDOFF.
-
-**One diagnostic in the roast-53 write-up above is wrong.** The duplicate
-`T_inlet` event at CHARGE+1 s is not `pidOn()`'s signature: `markCharge`
-re-records every visible non-zero slider at CHARGE (canvas.py:14694-14709) and
-`EventRecordAction`'s guard (canvas.py:15854-15856) compares only against the
-single most recent event *of any type*, which the CHARGE button's own `Air -> 64`
-has already displaced. It appears on every roast including the gated one. The
-`pidOnCHARGE` conclusion is unaffected — that rests on the flag's value in the
-file and on canvas.py:14656.
-
-#### The dip model's joint refit — DONE 2026-09-07
-
-Superseded by state-history.md § The dip model's joint refit. The ramp is in
-(`charge_dip.mix_kernel`, `w_c = 2.10 s`), the calibration group moved to the
-roasts with an *entered* greens temperature (`phi400` 0.7116, `tau_mix` 10.84),
-and the generated background's worst error against roast 54's free dip fell from
-22.6 to 2.6 degC. Two things it left behind, both live:
-
-- **The turning point is still ~6 s late** and that is residual model error, not
-  the expected offset this file used to claim. It costs under 2.6 degC because
-  the minimum is flat. Do not fit it away.
-- **`phi` is depth per degC on the operator's temperature scale, not physics.**
-  Anything fitted or evaluated against a charge temperature must stay on one
-  scale; settling it needs a measured *core* temperature.
-
+| **B** | **§ TEST PLAN § Phase B** — hold fan 64 for the whole roast and find out what the 170 s residual is | 1 real batch | `..._phaseB.aset` + `profile_400g_m5C_v4.alog` |
+| **9** | **step 9** — the FF base schedule with the PID as a trim (§ Step 9). Gated on the `.aset` half and the `--dip` question, not on more roasts | 1 real batch | new |
+
+**Phase B comes first**, and nothing else should be changed underneath it: it is
+scored as a one-variable comparison against roast 56.
+
+**Steps 1b (profile_004) and 1c (the `Ki` gate) are not scheduled and should not
+be run.** Over the *reachable* — warm-side — charge range the gate makes every
+metric worse than the lookahead alone (worst error +5.79 against −4.01, steady
+rms 0.38 against 0.26, `dt150` spread 4.2 s against 0.4), and both are
+rearranging a burden step 9 removes. If the gate is ever wanted, build it from
+Artisan's **native gain scheduling** (`Ki` 0 → 0.07 across BT 70 → 95,
+pid.py:370-386, persisted in the `.aset`) rather than two timed alarms — same
+gate, no missed-alarm P-only failure mode, no sticky-`p-i-d()` trap, worst error
++2.95. Detail: state-history-cascade.md § Dip strategies.
+
+**Do this on every roast, it costs nothing: enter `greens_temp` and
+`moisture_greens`, and weigh in and out.** Four roasts ran at `0.0` and their
+charge state had to be inferred rather than read.
+
+**Why every characterisation schedule is square waves and not smooth ramps.** A
+smooth input cannot identify this plant, because a low-order `slow(t)` reproduces
+the output exactly. Roast 20 ran a playback ramp and is the smoothest roast in
+the archive; profiling its residual over `a` = 0.000…0.016 moves it **7 %,
+monotone increasing**, so its best fit is `a = 0` — no plant at all. The same
+profile on roast 46 has a sharp minimum at 0.0049 and swings 5× either side.
+**Never read a plant number off a well-behaved roast, and never soften these
+schedules to make them roast nicely** (state-history-residual.md § Roast 20
+revisited).
+### Specifications that came out of roasts 47-49
+
+*The proposal these were written into — § What roasts 47-49 jointly say, 2026-09-06
+— has been executed over roasts 50-56 and lives in state-history-cascade.md. What
+follows is the part still in force.*
 #### The fan step is timed, not hand-pressed
 
 Also in the file: an alarm at **CHARGE+120 s** firing a hidden `Fan 60` button
@@ -2455,67 +1597,6 @@ the same DROP BT. If that difference survives a controlled pair it is a real
 outturn consequence of charge state, not a tracking artefact, and it is the
 argument for doing anything about the dip at all.
 
-#### What it unblocks, and the revised ranking
-
-1. **The charge-temperature pair** (above). Cheap, no firmware, no Artisan
-   reconfiguration, no new failure mode, and useful under every path below.
-2. ~~**Backgrounds generated from (mass, greens temp)**~~ **— tool written
-   2026-09-07, `tools/make_charge_background.py`, awaiting its first roast.**
-   It *merges* rather than generates: the dip is physics and is computed, the ramp
-   is the roast design and stays the operator's, and only `temp2` from CHARGE to
-   the join is rewritten so `timeindex`, DRY END, FCs and DROP survive exactly.
-   The inlet is **held at its pre-charge value** through the dip rather than taken
-   from a measured roast — that trace is the loop reacting to the very background
-   being replaced, so using it would bake the overshoot in. Acceptance is scored on
-   `0..18 s` alone, the window in which nothing the heater does has arrived yet:
-   worst error against roast 50 goes 4.9 -> 4.3 degC and against roast 51
-   **18.2 -> 6.7**, the turning point moves from `profile_003`'s 37 s to 27-29 s,
-   and the curve asks for 32-43 degC/min where the machine delivered 60-120.
-   **The turning point lands 5-8 s later than roasts 50 and 51 measured, and that
-   is correct**: those turned early *because* the loop kicked, and a background the
-   loop does not fight leaves the inlet where the preheat put it. Generated on
-   demand and not committed, like the merged inlet backgrounds. Step 1b generalised
-   from one authored `profile_004` to a computed dip. This is what removes the
-   -16/+9 degC first-90 s error at its root, for every charge state, rather than
-   for the one that was authored. It needs (1) and nothing else.
-3. **Step 9, after (1) and (2), and reframed.** Its headline claim — steady rms
-   0.11-0.14 degC against 0.26-0.38 — is now a marginal gain over a measured
-   +0.40 degC, so *tracking* is no longer the case for it. Two arguments survive
-   and both are about robustness: it stops the integrator being a ramp-follower
-   (`dI/dt` 0.09 -> 0.01), and it decouples the loop from the profile's shape, so
-   a differently-shaped profile does not need `svLookahead` re-derived. It also
-   has a live cost that roast 48 raised: the base schedule is `bg(t+theta) +
-   (dbg/dt - loss)/a`, and roast 48 found `a` and `theta` **not stationary within
-   one roast** (`a` 0.0062-0.0085, `theta` 7.8-14.5). The trim absorbs that — the
-   simulation survives +-20% of gain error — but it caps how good the base can
-   be. **Half of that is now retracted** (item 4 below): `theta`'s spread was a
-   structural artefact and goes to 0.0-1.0 s under the two-lag fit, and the lead
-   term is sound as written. `a`'s spread is real and, under two lags, slightly
-   wider. (1) and (2) also settle its open `--dip` question outright: with a charge
-   model the dip can be *computed* into the base rather than back-extrapolated
-   around.
-4. ~~**Desk: settle the deadtime-versus-lag question.**~~ **Done, 2026-09-06**
-   (`tools/analysis/deadtime_vs_lag.py`; state-history.md § Deadtime versus lag).
-   The answer changes a claim rather than a number, so nothing below it moves.
-   Roast 49 was checked and **cannot support the fit** — closed-loop, one 1:30
-   step, and its two-lag fit runs away to a negative gain on the tau2 grid
-   `roast48_plant.py` uses. Roast 48's steps identify the split as **all lag**
-   (`theta` 0-2 s, pure deadtime costs 42-131% more residual); roast 46 is a
-   ridge in which only **`theta + tau2` is determined**, at 12-14 s — and that
-   sum *is* the single-lag `theta` both cards report. So the 13.5 s is total
-   apparent lag, not transport. Consequences: the phase margin at Kp 3.0 /
-   Ki 0.07 moves 32.8 -> 37.7 deg across the **entire** ridge, so **`pidKi` 0.07
-   stands**; and the `bg(t+theta)` lead is a valid first-order stand-in for the
-   lag inversion `X + tau2*dX/dt`, differing by rms 0.83 degC on profile_003, so
-   **`plant_roast46.json` and `merge_inlet_base.py` need no change** and (3)
-   loses the "live cost roast 48 raised" caveat below. What is *not* settled is
-   `a`, which is non-stationary under both structures and slightly worse under
-   two lags; that is a separate question and no run is proposed for it.
-5. **Drop the remaining characterisation runs.** Test C's two loaded doublets
-   existed to measure the fan; roast 48 measured it (`kf = 0` in the plant, and
-   the loaded FF check needs no correction, so `FF SLOPE` has nothing to do). A
-   loaded FF grid stays unjustified. Step 1c stays demoted.
-
 #### The dump-lever switch
 
 **Yes — ground against a pin with `INPUT_PULLUP` is exactly right.** The ESP32-S3
@@ -2546,9 +1627,9 @@ open and LOW when the lever closes it to GND. Specifics for this board:
 0. **Every roast: press ON (zeroes the integrator), turn the PID on, preheat
    under PID control, then CHARGE — one PID on/off cycle per monitor ON/OFF
    cycle.** ON is the only thing that clears Iterm; **RESET does not**, so cycle
-   OFF -> ON between roasts rather than reusing a session (state-history.md §
+   OFF -> ON between roasts rather than reusing a session (state-history-cascade.md §
    Roast 41). Preheating under the PID hands the roast an integrator already at
-   the empty-roaster operating point (state-history.md § PID-driven preheat).
+   the empty-roaster operating point (state-history-cascade.md § PID-driven preheat).
 1. **Bench, heater cold.** Load `airRoaster_cascadePID.aset`. PID on -> confirm
    `INLET` traffic on the dashboard, that the commanded value floors at 140 and
    never reaches 0, that it carries a fraction, and that firmware `mode` reads

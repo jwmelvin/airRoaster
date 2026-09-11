@@ -132,7 +132,7 @@ INLET_PRECHARGE = 140.4
 # had looked.  197.5 is within 0.3 degC of both lots it was ever run against,
 # and the "roast 55 landed 9 s late" that justified raising it was one roast:
 # 53 and 54 are the same coffee against the same mark and landed EARLY, at
-# 397.5 and 395.5 s.  See state-history.md § The FC temperature is a property
+# 397.5 and 395.5 s.  See state-history-residual.md § The FC temperature is a property
 # of the lot.
 DEFAULT_MARKS = {'dry_end': (192.0, 149.6), 'fcs': (399.0, 197.5),
                  'drop': (425.0, 201.4)}

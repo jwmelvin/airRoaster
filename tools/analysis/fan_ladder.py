@@ -22,7 +22,7 @@ Route 1 of the plan -- `Temp_Drive ∝ 1/mdot` at fixed BT -- **cannot be run on
 this machine.**  Empty at BT 145 / fan 60, `Temp_Drive` read 12.84, 8.47, 6.51
 and 7.49 on four visits in one session while heater duty over the same four
 repeated to +-0.09 %, and at fan 72 and 80 the settled `Inlet` sits *below* BT,
-which `1/mdot` cannot produce at all.  This is state-history.md § Phase 0's
+which `1/mdot` cannot produce at all.  This is state-history-residual.md § Phase 0's
 "duty is a state variable at this precision; `Inlet - BT` is not", now with a
 mechanism attached (§ The soak, below).
 
@@ -116,7 +116,7 @@ over 45.
 
 **The loaded line does not transfer to a roast, and that is worth knowing.**
 Phase 0's line sits **4.45 % above the loaded line at BT 145, widening to
-5.05 % at 190**.  Re-basing state-history.md § Phase 0's excess-duty model onto
+5.05 % at 190**.  Re-basing state-history-residual.md § Phase 0's excess-duty model onto
 it moves roast 56's intercept from `RoR = 0.81 + 2.66*excess` to about
 `-11.7 + 2.66*excess`, i.e. a loaded chamber standing still would be cooling at
 12 degC/min, which it is not.  345 g of *roasted* beans sitting still at fan 60

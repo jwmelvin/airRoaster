@@ -989,8 +989,11 @@ companion documents alongside this README:
 | [tools/merge_inlet_base.py](tools/merge_inlet_base.py) | Merges the inlet feed-forward base schedule into a recorded background `.alog` as replayable special events, for the cascade's `INLET TRIM` arrangement — see state-plan.md § The base-curve authoring gap. |
 | [artisan/artisan_help_events.md](artisan/artisan_help_events.md) | Reference for Artisan's Event configuration (custom buttons and sliders): fields, label substitutions, and the full command list (from upstream help text). |
 | [state-current.md](state-current.md) | Development state: the active effort, plus a "read this first" framework overview for anyone (human or LLM) picking the project up. |
-| [state-plan.md](state-plan.md) | Planned work and the specifications currently in force: the cascade `.aset` deltas, the characterisation-run files, the step-9 feed-forward design, the runbook, and the remaining on-roaster validation checklist. |
-| [state-history.md](state-history.md) | The cascade PID investigation record — roasts 40–46, the plant refits, and the operator questions that produced the decisions in state-plan.md. Chronological; later sections supersede earlier ones. |
+| [state-plan.md](state-plan.md) | Planned work and the specifications currently in force: the cascade `.aset` deltas, the test plan for the 170 s residual, the characterisation-run config, the step-9 feed-forward design, and the remaining on-roaster validation checklist. |
+| [state-history.md](state-history.md) | Index of the investigation records below. |
+| [state-history-cascade.md](state-history-cascade.md) | Commissioning the cascade and identifying the plant — roasts 40–49, the tuning, the plant refits, and `feedforward()`. |
+| [state-history-charge.md](state-history-charge.md) | The charge state, the dip model and authoring the background — the charge-thermal test and roasts 50–56. |
+| [state-history-residual.md](state-history-residual.md) | The −2.9 degC residual at 170 s and the bench measurements — phase 0, roast 57, and Phase A (roasts 58–59). |
 | [state-archive.md](state-archive.md) | Completed work, code-review findings (F-numbers), and decided-and-done rationale — the durable historical record. |
 | [work.md](work.md) | Future-work scratchpad and utility notes (e.g. the `make_inlet_background.py` inlet-SV background profile generator). |
 

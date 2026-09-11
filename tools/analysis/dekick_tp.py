@@ -21,7 +21,7 @@ degC of inlet against a 1-3 degC change in the bed it causes, so the neglected
 feedback is a second-order correction on a first-order estimate.
 
 **It is an estimate, not a measurement.**  `theta` carries a band of 13 +5/-1 s
-(state-history.md § Deadtime versus lag) and the separation of disturbance from
+(state-history-cascade.md § Deadtime versus lag) and the separation of disturbance from
 plant is only as good as the card.  The point of it is to say whether the model's
 turning point is wrong or merely unmeasured -- not to supply a new fit.  The
 measurement is a roast with the gate actually armed.

@@ -13,7 +13,7 @@ the one-sample ordering between ``pid.update()`` and ``setSV``).
 ``tau2`` is the plant's **second lag** and defaults to 0, which reproduces every
 number these functions returned before it existed.  It is not cosmetic: roast 48
 identifies the ``Inlet -> BT`` path as ``theta ~ 0`` plus a 10-13 s lag rather
-than 8-13 s of pure deadtime (state-history.md § Deadtime versus lag), and a lag
+than 8-13 s of pure deadtime (state-history-cascade.md § Deadtime versus lag), and a lag
 and a delay of the same size cost different phase -- ``-arctan(w*tau2)``, which
 saturates at 90 deg, against ``-w*theta``, which does not.  Below the crossover
 the two are nearly the same, which is exactly why the open-loop residual on a

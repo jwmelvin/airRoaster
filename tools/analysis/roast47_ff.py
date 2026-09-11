@@ -183,7 +183,7 @@ def main():
 
     print('\n=== against the model runbook step 8 proposed ===')
     print(f'   heat = {OLD[0]} {OLD[1]:+}*fan {OLD[2]:+}*SV   '
-          '(five preheat fan steps, state-history.md § Roast 46)')
+          '(five preheat fan steps, state-history-cascade.md § Roast 46)')
     worst = 0.0
     for s in segs:
         pred = OLD[0] + OLD[1] * s['fan'] + OLD[2] * s['sv']

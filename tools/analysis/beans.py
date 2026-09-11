@@ -61,7 +61,7 @@ ROASTER = "airRoaster"
 
 # Cracks outside this band are a mis-set mark or a probe fault, not a coffee.
 FC_BAND = (170.0, 215.0)
-# The cascade era: roast 40 is the first outer-loop roast (state-history.md
+# The cascade era: roast 40 is the first outer-loop roast (state-history-cascade.md
 # § Roast 40) and 380 g the smallest batch run in it.
 CASCADE_SINCE, CASCADE_MIN_MASS = 40, 380.0
 
@@ -102,7 +102,7 @@ def read_roasts(logdir=LOGS, roaster=ROASTER):
             moisture=float(r.get("moisture_greens", 0.0) or 0.0),
             fcs_t=fcs_t,
             fcs_bt=fcs_bt,
-            # slope over +-15 s, the same window state-history.md quotes
+            # slope over +-15 s, the same window state-history-cascade.md quotes
             ror=(float(np.interp(fcs_t + 15, t, bt))
                  - float(np.interp(fcs_t - 15, t, bt))) / 30.0 * 60.0,
             dev=(float(t[ti[6]]) - fcs_t) if ti[6] > 0 else float("nan"),

@@ -5,7 +5,7 @@
 existing set has to be inferred.  The plant's transport delay makes that
 possible without any control-independent instrument: **nothing the heater does
 reaches BT before ~theta seconds after CHARGE**, so the BT fall over
-``0 .. theta`` is charge mixing alone (state-history.md § Charge temperature).
+``0 .. theta`` is charge mixing alone (state-history-cascade.md § Charge temperature).
 
     proxy = (BT(CHARGE) - BT(CHARGE + theta)) / mass * 100      degC / 100 g
 

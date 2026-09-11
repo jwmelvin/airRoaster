@@ -31,8 +31,17 @@ Rules that still apply:
 
 Read [state-current.md](state-current.md) first — it carries the active effort
 and the version/branch truth. [state-plan.md](state-plan.md) is work not yet
-done and the specifications in force; [state-history.md](state-history.md) is
-the cascade PID investigation record (chronological, later sections supersede
-earlier); [state-archive.md](state-archive.md) is completed work and the
-F-numbered review findings. Keep all four in sync as part of the same commit as
-the change they describe.
+done and the specifications in force. [state-archive.md](state-archive.md) is
+completed firmware work and the F-numbered review findings.
+
+The investigation record is split by effort and indexed in
+[state-history.md](state-history.md): [cascade](state-history-cascade.md)
+(roasts 40-49), [charge](state-history-charge.md) (50-56),
+[residual](state-history-residual.md) (57-59). Each is chronological and later
+sections supersede earlier ones.
+
+**Keep them in sync as part of the same commit as the change they describe —
+and keep the cruft out.** *current* and *plan* carry only what is true or what is
+to be done; when a section there becomes a record of what happened, move it to
+the history file for that effort rather than annotating it "superseded". A
+finished phase leaves a result and a pointer, not its narrative.

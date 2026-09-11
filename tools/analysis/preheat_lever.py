@@ -16,7 +16,7 @@ module prints is still the model's own arithmetic and is kept because the
 *failure* is informative -- in particular the "two thirds store, one third flow"
 decomposition is the specific claim that broke, and the store is the half that
 did not survive: the extra 15 degC had left the BT reading by 20 s, inside the
-window where the PID is still off.  See state-history.md § Roast 57 and § Phase 0
+window where the PID is still off.  See state-history-residual.md § Roast 57 and § Phase 0
 (the BT probe sits on the non-flow side of the expansion chamber and carries a
 slow local-metal component, so a preheat *reading* is not chamber energy).
 

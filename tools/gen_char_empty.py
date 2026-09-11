@@ -11,7 +11,7 @@ and it costs nothing: no beans, and the extra time is electricity.
 Why that is worth doing
 -----------------------
 Runbook step 8 replaces the saturated `feedforward()` with the affine form
-``heat = -30.62 + 0.99*fan + 0.0096*SV`` (state-history.md § Roast 46).  Those
+``heat = -30.62 + 0.99*fan + 0.0096*SV`` (state-history-cascade.md § Roast 46).  Those
 coefficients come from **five preheat fan steps spanning 0.81-1.11 %heat/unit** --
 a short lever arm, fitted on data taken for another purpose.  This schedule gives
 the same regression **six fan levels from 58 to 80 crossed against seven inlet

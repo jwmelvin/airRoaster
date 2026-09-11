@@ -18,7 +18,7 @@ is the run that was supposed to fix that.
 What came out of it, so the sections below are read the right way
 ------------------------------------------------------------------
 The fan term is the clean result and the plant card is not.  ``kf`` lands at
-**0.000**, tightly: forcing it to the 0.049 that state-history.md § Correction
+**0.000**, tightly: forcing it to the 0.049 that state-history-cascade.md § Correction
 once measured (and later retracted for circularity) costs **1.67x** the residual.
 So the plant's gain does not depend on the fan over 60-70.
 
@@ -148,7 +148,7 @@ def section_fan(p, te, ye, hi, f0):
     within = prof[prof[:, 2] <= f.resid_rms * 1.01]
     print(f'   kf within 1 % of the residual minimum: '
           f'{within[:, 1].min():+.3f} .. {within[:, 1].max():+.3f}')
-    print('\n   what a forced kf costs -- state-history.md § Correction measured')
+    print('\n   what a forced kf costs -- state-history-cascade.md § Correction measured')
     print('   ~49 % of plant gain per 10 fan units from roast 45, on a fit later')
     print('   retracted for circularity; this is the bound that replaces it:')
     print(f"      {'kf':>8} {'%gain/10':>9} {'theta':>6} {'a':>9} {'resid':>7} {'x best':>7}")

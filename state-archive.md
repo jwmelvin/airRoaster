@@ -1,10 +1,164 @@
 # state-archive — completed work and standing findings
 
 > Companion to [state-current.md](state-current.md), [state-plan.md](state-plan.md)
-> and [state-history.md](state-history.md).
+> and the history files indexed in [state-history.md](state-history.md).
 > Newest entries first. This file is the durable record: review findings keep
 > their F-numbers here even after the fixes land, so plan/commit references
 > stay resolvable.
+## Firmware v0.19.0 and v0.20.0 — the outer-loop instrumentation and the measured feedforward map
+
+Both on `feature/artisan-pid`, both **flashed** (v0.19.0 2026-09-06, validated on
+roast 47; v0.20.0 in service from roast 48 on).
+
+**v0.19.0, two items.** First, `SV`/`HT` `getData` nodes, so the commanded inlet
+setpoint and the heat percent land in the `.alog` itself and no dashboard CSV is
+needed — Artisan reads them as a third extra device, **113 = `WS_56`**
+(comm.py:491), appended so the virtual `Temp_Drive` (`Y3-Y2`) survives; the ws
+channel index comes from the device *function*, not its position, and `WSread(0)`
+already fills every channel from the one `getData` reply, so it costs no extra
+traffic. Second, **`INLET TRIM`**, which step 9 needs: `INLET <degC>` becomes the
+*base* setpoint (unchanged command, unchanged semantics), `INLET TRIM <degC>`
+sets a bounded trim (±80 degC), and the effective setpoint is
+`clamp(base + trim, INLET_SV_MIN_C, INLET_SV_MAX_C)`. `inletSV` still means the
+*effective* setpoint, so `controlStep()`, `feedforward()`, the OLED, the status
+push and the `getData` `SV` node are untouched; `inletBase`/`inletTrim` sit
+upstream and `inletEffectiveSV()` is the only place they combine. The trim is
+zeroed on `INLET OFF`, `INLET <= 0`, an inlet failsafe, entry to `MODE_TUNE` and
+at boot, and in `MODE_INLET` a trim unrefreshed for 15 s ramps to 0 at 2 degC/s
+(logged once) so a dead outer loop degrades to open-loop feedforward rather than
+to no heat. Every form is `TIER_DRIVE`, `INLET TRIM 0` included — removing a
+*negative* trim raises the setpoint. **It is inert until Artisan is
+reconfigured**; the bench drill is state-plan.md § NEXT item 11, still unrun.
+
+**v0.20.0 — `feedforward()` gets roast 47's measured map**,
+`heat_ff = 69.8685 - 0.8570*fan - 0.5101*sv + 1.1423*fan*sv/100` (rms 0.68 %),
+replacing the single-product `ffK*fan*(sv-ambient)` form that was **clamped at
+100 for 430 of 430 samples of roast 46** — inert rather than miscalibrated, with
+`d(FF)/d(fan) = 0`, collapsing the anti-windup bound to `[-100, 0]`. It is **on
+by default**, a behaviour change at first boot: the old "`ffK = 0` disables"
+idiom cannot survive coefficients that are not sign-constrained, so there is an
+explicit `ffEnabled` behind `FF ON`/`FF OFF`, and NVS uses new keys so an
+upgrading device comes up on the measured defaults rather than a stale
+coefficient. `FF CAL` and `FF AMB` are removed and say so. `FF SLOPE <%/fan-unit>`
+takes a fan slope measured from a single fan step and rescales both fan terms by
+the ratio while holding the operating point fixed — the bean-load correction, a
+command rather than a reflash.
+
+**Roast 48 closed the open question**: the empty-chamber map transfers loaded.
+Fourteen steady windows, fan 60-70 × SV 140-245, read bias **+1.07 %**, rms
+**1.61 %**; pooled over both runs (25 windows, fan 58-80 × SV 140-245) the refit
+differs from the flashed coefficients by at most **1.65 %** anywhere in the box
+the cascade uses. Nothing to reflash, and `FF SLOPE` has nothing to correct.
+And the term does its job: worst inlet excursion after a fan step at a flat
+setpoint is **1.5 degC on a 10-unit step** against roast 47's 13.2 degC on a
+22-unit step with the term dead. Cards: `tools/analysis/ff_roast47.json`,
+`ff_roast48_loaded.json`. Detail in state-history-cascade.md § Roast 47 and
+§ Roast 48.
+
+## 2026-07-11 — Command authentication (v0.18.0), merged to `main`
+
+Connect-time
+challenge–response sessions on the WebSocket: the device pushes a random
+nonce to each new client ("auth" push); a client proves the shared `AUTH_KEY`
+(secrets.h; absent/empty = feature entirely off) by returning
+`AUTH HMAC-SHA256(key, nonce-hex)` and its connection is trusted until it
+drops (5 fails burn the connection; each failure re-nonces). Tiered
+enforcement `AUTH MODE OFF|CONFIG|FULL` (NVS "auth"; a keyed build's first
+boot defaults to CONFIG — operator decision 2026-07-11): CONFIG gates
+safety/config mutations while OT1/OT2/INLET stay open for direct Artisan;
+FULL gates all mutations — Artisan then connects through
+`tools/roaster_proxy.py` (localhost signing proxy: answers the challenge,
+relays everything else; transparent pipe against a keyless device). The
+always-open safe subset (operator requirement): reads plus `OT1 0`,
+`INLET OFF`/`INLET 0`, `COOL ON`, `TUNE ABORT` — any device can stop the
+roaster, never start it. `AUTH MODE` itself always requires auth; serial is
+always trusted (physical access). Single gate at the top of
+`processCommand()` via `cmdTier()`. Dashboard: key field (localStorage),
+automatic challenge answering (Web Crypto), Auth panel. Compile-verified;
+proxy validated end-to-end against a firmware-faithful fake device (correct
+key / wrong key / keyless all behave); dashboard HMAC cross-checked against
+a Python reference. On-roaster + live-Artisan drill: state-plan.md § NEXT
+item 13. Design decisions (operator-confirmed 2026-07-10): session auth over
+per-message HMAC; runtime tier; secrets.h key; python proxy. Key management
+(`tools/auth_key.py`, stdlib-only; operator-confirmed 2026-07-11): secrets.h
+is the single source of truth — `generate` writes a 64-hex CSPRNG key there
+(refuses to replace without `--rotate`), the proxy parses it automatically,
+`show` feeds the dashboard paste, `hmac <nonce>` supports manual testing;
+rotation = generate --rotate + reflash (USB preferred — an OTA image carries
+the key across the LAN in cleartext) + dashboard re-paste. The helper's `ota`
+subcommand likewise generates a dedicated random OTA_PASS (2026-07-11): the
+firmware's WIFI_PASS fallback means a device without one accepts firmware
+pushes from anyone on the WLAN; verify.sh reads the value automatically, and
+the first flash after a change must be USB. Deliberately deferred (see the
+auth item in state-plan § Later for the record): signed images / Secure Boot
+/ OTA arming.
+
+## 2026-07-11 — Ambient reporting (v0.17.0), merged to `main`
+
+The Artisan `getData`
+response gains an `AT` node (°C): Artisan maps it to an extra WebSocket
+channel and selects that channel in **Config › Device › Ambient** (tab), then
+samples it at CHARGE into Roast Properties (README § Ambient temperature has
+the click-path). Three sources via the new `AMB` command (`amb` push, NVS
+namespace "amb", re-validated on load): **cold-start memory** (default) — a
+once-per-boot capture that saves the BT RTD as ambient only when it agrees
+with the MAX31855 cold junction within 8 °C, so a power cycle on a hot roaster
+keeps the capture from the last genuinely cold boot; **cold junction** — live
+`readInternal()`, now read every sensor poll (hold-last-good `cjTemp`) and
+surfaced in telemetry (`cj`, plus `amb` = the reported value); **manual** —
+`AMB <degC>` (also switches the source to manual). Dashboard: cold-junction
+readout in Temperatures, new Ambient panel (source selector; manual entry
+defaults to °F, converts to °C before sending — firmware and Artisan stay
+°C-only). Deliberately separate from `FF AMB` (control-law parameter).
+Compile-verified; dashboard checked in browser preview with simulated pushes;
+on-roaster drill is state-plan.md § NEXT item 9.
+
+## 2026-07-05 — Cooldown guard (v0.16.0), on `main`
+
+Minimum fan-shutdown criteria,
+per operator request: the fan may stop only once the inlet has stayed below
+`COOL_FAN_OFF_C` (70 °C) for the release dwell (`coolDwellS`, default 30 s,
+live-set via `COOL DWELL <1-3600>`, NVS) on fresh readings with heat off.
+**First on-roaster run 2026-07-05**: deferral, hold, and auto-release all
+worked, but the 30 s dwell released into soak-back and the guard re-enforced
+twice (fan pulsed twice at ~17:36–17:38 on the log) — which is why the dwell
+became adjustable; raise it until one release sticks. An `OT2` below
+`coolFanMin` (default 50, live-set via `COOL MIN`, NVS namespace "cool") while
+hot is *deferred* (fan held at `coolFanMin`, requested level auto-applies when
+the criteria are met); a hot roaster with the fan below minimum gets airflow
+forced back on autonomously (manual-mode requested heat zeroed so the raised fan
+can't un-block interlock-capped heat). Stale-hot sensor keeps the fan running;
+`COOL OFF` is the runtime-only operator escape (re-armed every boot). New `COOL`
+command, `cool` push, status `cool` field, OLED row 7; OT2 refactored through
+commit-on-ack `setFanLevel()`. Dashboard gains a Cooldown panel (arm/disarm,
+fan-min read/set, hold-state line; prefilled from `COOL` on connect) and a
+cooldown line in the Status panel. Compile-verified; dashboard checked in
+browser preview with simulated pushes; on-roaster drill is state-plan.md § NEXT
+item 11. README + state docs updated.
+
+## 2026-07-04 — `INLET 0` semantics (v0.15.1), on `main`
+
+A follow-background test (2026-07-04 dashboard CSV)
+ended with Artisan's SV slider at 0; the firmware clamped it to
+`INLET_SV_MIN_C` (0 °C) and kept the loop "engaged" on an unreachable target —
+P railed at about −280 with heat pinned at 0 for the whole cooldown.
+`INLET <sv ≤ 0>` now means "no setpoint": drop to manual, heat 0 (cooldown
+intent). `INLET OFF` unchanged (disengage, hold heat). New tool
+`downsample_logs.py` (repo root) condenses .alog / dashboard-CSV / dashboard
+txt logs into a compact summary for review, and mirrors the semantics (SV ≤ 0
+blanked from series and tracking stats). Compile-verified; on-roaster check is
+trivial: SV slider to 0 → mode `manual`, heat 0.
+
+## 2026-07-04 — `feature/fan-restore` validated and merged (v0.15.0)
+
+`feature/fan-restore` (v0.15.0, RTC no-init fan
+shadow) was **validated on the roaster 2026-07-04** — fan running → OTA
+update → fan kept spinning through the reboot with the UI in sync — and
+fast-forwarded into `main`, which now holds v0.15.0. The full v0.12 → v0.15
+development record (OTA updates, the v0.13 DimmerLink rework, the v0.14
+closed-loop/feedforward fixes, the v0.15 fan-level shadow) is in
+[state-archive.md](state-archive.md). Start the next effort on a fresh branch
+off `main`.
 
 ## 2026-07-04 — v0.15.0 validated on roaster; merged to main
 
