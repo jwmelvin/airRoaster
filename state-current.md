@@ -10,136 +10,126 @@
 > when a plan section turns into a record of what happened rather than a
 > statement of what to do, move it to *history*.
 
-## HANDOFF — after roast 57 (2026-09-08): the preheat lever is dead, and the residual has a new suspect
+## HANDOFF — after Phase A (2026-09-10): the fan step is sized at `f = 0.18` and Phase B is next
 
-**If you are a fresh context, this section is the whole job.** Everything below it
-is background. Full records: state-history.md § Phase 0 and § Roast 57.
+**If you are a fresh context, this section is the whole job.** Everything below
+it is background. Full records: state-history.md § Phase A, § Roast 57 and
+§ Phase 0; the tool is `tools/analysis/fan_ladder.py`.
 
-### What roast 57 and its bench session settled
+### 1. Run Phase B — state-plan.md § TEST PLAN § Phase B
 
-**Three questions closed in one evening, and only one of them cost beans.**
+**One roast, one change: hold fan 64 for the whole roast** (alarm row 7 off),
+everything else exactly roast 56's — same preheat 130.2 / 141.8, same
+`profile_400g_m5C_v4.alog`, 400 g at `greens_temp −5.0`, `moisture_greens 11.0`,
+rows 8 and 7 off. The config is a file, not a dialog untick:
+`artisan/airRoaster_cascadePID_phaseB.aset`, built by `tools/gen_phaseb_aset.py`.
+It also carries the new auto-DROP alarm (row 9, `HT` below 20 % from DRY END) as
+instrumentation that cannot move the measurement.
 
-| question | answer |
-|---|---|
-| `d(TP)/d(preheat)` | **0.100** (predicted 0.415) — **the preheat lever is dead** |
-| `d(TD)/d(BT)` | **+0.025** — stage A's kill criterion (~0.5) cleared by 20× |
-| `C1043` first crack | **197.40 at 397 s** — roast 56's 195.3 was the outlier |
-| the fan gain, loaded | **0.9-1.0 % heat/fan unit**, matching the empty 0.992 |
-| `loss(t)` vs `loss(BT)` | **mostly BT** — one bench line predicts post-DRYe RoR to ~1 degC/min |
+**Score it expecting the dip to disappear.** Phase A put this roast in the top
+row of its own decision table. A residual that survives at anything like 2.9 degC
+falsifies the fan and hands the 140-200 s window to drying; one that shrinks to
+about 1 degC is a partition and both terms are live.
 
-Roast 57 was clean and single-variable: 400 g `C1043`, `greens_temp = −5.0`,
-`moisture_greens = 11.0`, same fan schedule, gate and gains as roast 56, preheat
-130.2 → **145.24**, row 8 confirmed off (no SV step at 105 s), `LA 6` firing as a
-**+19.30 degC SV step at 46.5 s**. All four checks pass.
+**B6, what makes it uninterpretable, is unchanged:** mass other than 400 g,
+greens not −5.0, an alarm row that drifted, or an `Air` event at 120 s in the
+log. Check all four before reading anything else.
 
-| check | roast 56 | **roast 57** | pass |
-|---|---|---|---|
-| peak SV, first minute | 165 | **180.8** | under ~200 — **pass** |
-| seconds of heat at 100% | 1.0 | **0.5** | 0 — **near** |
-| seconds saturated at own floor | 0.0 | **0.0** (min SV 156.1) | **pass** |
-| worst BT error vs background, 30-90 s | +2.2 | **+5.25** | single digits — **pass** |
+### 2. What Phase A measured (roasts 58 and 59, 2026-09-10)
 
-Tracking is worse over 0-120 s (rms 3.29 over 30-90 s against 0.94) and **better
-after it** (1.20 over 120-DROP against 1.28). That split is the finding, not a
-regression: the background demanded a turning point 2.9 degC above what the
-machine delivered and the loop chased it. **The controller is not what changed.**
+Roast 58 ran the planned ladder empty; **roast 59 is the operator's addition —
+the same ladder with 345 g of already-roasted beans in the chamber** — and it is
+the more useful of the two, because it is the configuration the roast runs in.
 
-### 1. The preheat lever is withdrawn — do not build the compensated roast
+```
+HT = A*(fan - f0)*(Inlet - amb) + c          <- a HEATER relation, not a chamber one
 
-**ΔTP = +1.50 degC for +15.04 degC of preheat.** The gain is **0.100**, inside
-the old § 1a stop condition (*"ΔTP under ~2 → the mechanism is not there"*).
-`0.60 / 0.100` = **6.0 degC of preheat per degC of greens temperature**: a 10 degC
-bean-temperature swing would need 60 degC of preheat, and 145 was already
-15 degC hotter than the beans had ever been tipped into.
+empty  fan 53-64    f0 = 39.2   rms 0.182 %   (10 rungs, 3 params, 7 dof)
+loaded fan 56-64    f0 = 42.9   rms 0.202 %   (11 rungs, 3 params, 8 dof)
+joint, shared A,c   f0 = 40.0 / 41.9    c = 22.7 %     rms 0.231 % (21, 4, 17)
 
-`preheat = 124.4 − 1.17 × greens_temp` is **withdrawn**. So is
-`tools/analysis/preheat_lever.py`'s use as a shipping calculator — keep the tool,
-it now reads 6.0 and says so.
+f(64 -> 60) = 0.162 empty, 0.189 loaded, 0.181 joint       threshold was 0.12
+ceiling deficit = RoR*f*T_eff/60 = 3.5 - 4.1 degC          observed 2.93
+```
 
-**Why it failed is worth more than the lever was.** The preheat had left the
-reading by **20 s**, which is *inside the PID-off window* (the cascade engages at
-CHARGE+15.5 s), so no control action removed it. Then it came back **doubled** at
-70 s (+9.10 actual against +4.58 modelled) as the loop chased the missed turning
-point. `dT_mix = phi·(BT_c − T_bean)` treats the preheat reading as the chamber's
-available energy. It is not: it is largely the probe and the metal it sits
-against, on the **non-flow side of the asymmetric expansion chamber**, and 400 g
-of −5 degC beans overwrite the probe's local environment in under twenty seconds.
+**The fan over-covers the residual by about a third**, which is the room the
+ceiling arithmetic asked for: less flow also raises `T_in − T_out`. `c = 22.7 %`
+is the flow-independent duty **measured** rather than extrapolated 5× — the plan
+had assumed 24.9 % and was close.
 
-**The preheat is a slow lever aimed at the wrong window** — it moves 30-120 s by
-more than the model predicts and the turning point by almost nothing. Nothing in
-the plan wants that shape. Do not spend another load on a preheat rung.
+**The direct step response is the part that needs no model.** Roast 59, BT held
+at 145 with the bed in, `64 → 56`: BT moved **−0.67 degC, bottomed at 54 s,
+recovered by ~130 s**. The roast residual bottoms 45-50 s after the 120 s step
+and recovers by 230 s. Same loop, same shape — the first direct evidence that a
+fan step on this machine makes a transient of the residual's shape at all.
+**Do not read a magnitude out of it**: `Inlet − BT` is ~2 degC at the settled
+bench against 49-60 in the roast, so the same `f` removes 25-30× more power
+there, and linear scaling would predict 8-10 degC. Timing from the step, size
+from the duty model.
 
-### 2. The next roast: find out what the 140-200 s dip is — state-plan.md § TEST PLAN
+Three more, all in state-history.md § Phase A:
 
-**This is the cheapest high-value experiment on the list, it needs no beans of
-`C1043`, and it changes one field in the alarm table.**
+- **the blower saturates above fan 64** — fan 72 delivers the flow of a nominal
+  70.4 and fan 80 of a nominal 75.0. `mdot ∝ (fan − 40)` holds across the range
+  the roast uses and bends over above it, so the 60-80 span the plan chose for
+  contrast is not what sized `f`; **the descending 60 / 56 / 53 rungs the
+  operator added did**;
+- **345 g of beans is a 9.3 % flow restriction** (shared `A` and `c`, separate
+  `f0`; pooling onto one `f0` costs 5.5× in residual);
+- **route 1 is unavailable, not disagreeing.** `Temp_Drive` at BT 145 / fan 60
+  read 12.84 / 8.47 / 6.51 / 7.49 in one session while duty repeated to ±0.09 %,
+  and at fan 72 and 80 the settled `Inlet` sits *below* BT, which `1/mdot`
+  cannot produce at all. This is § 4 below, reproduced at 8× the sample count.
 
-BT minus its own background, the two roasts that ran the 45 s lookahead switch:
+### 3. The duty line is linear to BT 190 — and its level is not pinned down
 
-| t | roast 56 | roast 57 |
-|---|---|---|
-| 110 | +0.34 | +2.37 |
-| **120 — `Air 60` fires** | **−0.08** | **+1.55** |
-| 140 | −1.30 | −0.98 |
-| **170** | **−2.76** | **−2.96** |
-| 200 | −2.18 | −2.05 |
-| 230 | −1.04 | −0.88 |
+Four rungs each at fan 60, last 120 s, residuals at the duty quantisation over a
+45 degC span:
 
-Different preheat, different background, **1.63 degC apart at 120 s with the
-error in opposite signs** — and both fall ~2.9 degC over the next fifty seconds,
-bottom within 5 s of each other, and recover by 230 s.
+```
+empty    HT = 15.16 + 0.2165*BT      residuals  -0.00 -0.05 +0.11 -0.06
+loaded   HT = 17.75 + 0.1788*BT      residuals  +0.06 -0.09 +0.00 +0.03
+```
 
-**A type-1 ramp error scales with how far behind the loop already is. This does
-not.** It is a **disturbance the loop is rejecting**, not a lag it is
-accumulating. Two candidates:
+**Nothing is superlinear, no rung failed to settle, and the empty chamber has no
+ceiling below 190** (`HT` only 60.2 % at fan 80). A2 is answered and the
+superlinear-loss candidate for the excess-duty model's intercept disagreement is
+dead.
 
-1. **the fan step at 120 s** — the only scheduled event in the window, and the
-   ~20-40 s delay to the residual's knee matches the plant's `theta` plus lag;
-2. **evaporative load through DRY END** (196.5 / 197.0 s) — the background's RoR
-   spec has no latent-heat term, so a real roast must fall behind where drying
-   loads the bed hardest and recover once free moisture is gone.
+**But phase 0's `HT = 20.25 + 0.1922·BT` is not this line** — it sits 1.57 %
+high at BT 145 falling to 0.47 % at 190, of which ~0.47 % is this session's
+2.4 degC warmer ambient. The slopes are consistent (22 degC of span against 45),
+so the disagreement is a **level**, and there are two candidates this data cannot
+separate: the soak (§ 4), or phase 0's unrecorded fan being a unit or two above
+60 at ~0.96 % of duty per unit.
 
-**The test is written up in full — state-plan.md § TEST PLAN.** It is bench
-first, then one roast, in the same shape as roast 57's phase 0. In summary:
+**Re-basing the excess-duty model on the loaded line does not work** — it drives
+roast 56's `RoR = 0.81 + 2.66·excess` to about `−11.7 + 2.66·excess`, i.e. a
+loaded chamber standing still cooling at 12 degC/min. 345 g of *roasted* beans
+sitting at fan 60 is not 400 g of circulating greens.
 
-- **Phase A, empty chamber, ~60 min, no beans.** A **fan ladder at fixed BT 145**
-  (rungs 60 / 64 / 72 / 80 / 60) sizes or kills the fan hypothesis before a load
-  is spent. Holding BT fixed is the design point — phase 0's ±1.5 degC scatter
-  was hysteresis driven by *moving* BT. Plus **three more BT rungs at 160 / 175 /
-  190** to test whether `HT = 20.25 + 0.1922·BT` stays linear out to roast
-  temperatures, and **set `Air` explicitly** so the log records the fan this time.
-- **Phase B, one roast, one change: hold fan 64 for the whole roast** (alarm row
-  7 off), everything else exactly roast 56's — same preheat, same background,
-  rows 8 and 7 off. Removing the step tests for the *absence* of a known 2.9 degC
-  feature, which beats retiming it and then having to detect a new 1.7 degC one.
-  **The config is now a file, not a dialog untick**:
-  `artisan/airRoaster_cascadePID_phaseB.aset`, built by
-  `tools/gen_phaseb_aset.py` from the preheat variant.
-- **Phase B also carries the new auto-DROP alarm** (row 9, `HT` below 20 % from
-  DRY END, action DROP). It is instrumentation and cannot move the measurement,
-  which is why it rides along instead of waiting: the roast ends after the read
-  window. Measured on roasts 53-57 it fires **0.5-3.5 s before** the DROP mark
-  where the DeltaBT alarm fires **6-7 s after** — state-plan.md § Auto-DROP
-  detection § The inlet spike beats the RoR collapse. **Score the chain, not just
-  the trigger**: roast 56 held its DROP mark for 17.5 s with `HT` at 90-100 %
-  before heat went off, and that is unexplained.
+**What survives is the size of the question.** The intercept disagreement between
+roasts 56 and 57 is 5.65 degC/min, which at the model's own slope is **2.1 % of
+duty**; the baseline candidates measured here span **4.5 %**. The empty line's
+apparent success is to that extent luck, and **no re-basing on this data settles
+it.** Do not quietly pick the baseline that flatters the fit.
 
-**The arithmetic already says "both", and the plan is built to read a partial
-result.** Delivered power is `mdot·cp·(T_in − T_out)` and the inner loop holds
-`T_in`, so a flow drop `f` costs `RoR · f · T_eff/60` of BT before the outer loop
-erases it — at `RoR = 29.0` (v4 at 145 s) and `T_eff ≈ 45 s`, **`f = 0.066` buys
-1.44 degC and `f = 0.123` buys 2.68** against the 2.93 observed. That is a
-ceiling, since less flow also raises the exchanger's effectiveness. The whole
-spread is one unmeasured quantity — how much of the heater duty is
-flow-independent — and the fan ladder measures it two independent ways.
+### 4. Soak the machine before the first rung — 20 minutes, or run second
 
-**`LA 12` stays deferred, and its premise is now weaker.** It was sized against
-the lag reading of this same residual, and 105 s would have pushed SV up fifteen
-seconds *before* the disturbance — masking whichever cause it is without ever
-naming it. **Decide LA 12 after this test, not before**, and note that neither
-candidate cause is a type-1 ramp error.
+Roast 58 started cold (BT 29.0 = ambient). Its fan-60 / BT-145 duty decayed
+**50.5 → 47.6 %** over seven minutes and only reached 46.5 % by 23. Three later
+visits spanning 23 to 62 minutes then agreed to **0.18 %**. So Phase A's own
+criterion — *rung 5 must reproduce rung 1 to ±0.5 %* — **failed**, rung 1 reading
+1.22 % high, and the cause is the cold start rather than drift in the
+measurement. Roast 59, an hour later on the soaked machine, settled in three
+minutes.
 
-### 3. Temp_Drive: stage A passes, but read the number correctly
+**The duty model absorbs the soak and that is informative**: rung 1's residual
+against the fit is +0.03 %, because the soak raises `Inlet` and `HT` together and
+the model is written in `Inlet`. It is the BT-referenced line `HT(BT)` a soaking
+chamber breaks, because a soaking chamber is not standing still.
+
+### 5. Temp_Drive: stage A passes, but read the number correctly
 
 **`d(TD)/d(BT) = +0.025`** across a settled empty ladder at BT 130 / 140 / 145 /
 152 — an order of magnitude below the 0.10-0.383 bracket every document here
@@ -148,40 +138,52 @@ drive→BT loop has a DC gain near 40 and is very nearly an integrator. Even the
 most adverse pairing in the data gives 0.17. **Stage A's gate is open; go to
 stage B (desk).**
 
-**But do not quote 0.025 as a measurement.** Temp_Drive moved **0.6 degC across
-the whole 22 degC ladder** while two same-BT repeats *inside one session*
-disagreed by **−1.51 and +1.02**, with the sign of thermal hysteresis both times.
-Heater duty over the same rungs repeats to **±0.23 %**. The cross-check is roast
-57's own preheat twenty minutes later: at **BT 145.24** it held **HT 48.70**
-(ladder: 48.25 / 48.48) and **Temp_Drive 10.21** (ladder: 7.81 / 8.84).
+**But do not quote 0.025 as a measurement.** Temp_Drive moved 0.6 degC across the
+whole 22 degC ladder while two same-BT repeats *inside one session* disagreed by
+−1.51 and +1.02. Phase A reproduced this at 8× the sample count and worse: four
+visits to BT 145 / fan 60 spread **6.3 degC** while duty repeated to ±0.09 %, and
+`Inlet` goes *below* BT at fan 72 and 80. **Duty is a state variable at this
+precision; `Inlet − BT` is not, and at high fan it does not even carry the right
+sign.** Carry that into stage B item 4: the 29-94 degC drive range is real but
+every figure in it has ±1.5 degC of probe history, so size the range with margin
+and never tune on a Temp_Drive difference under ~2 degC.
 
-**Duty is a state variable at this precision; `Inlet − BT` is not.** Carry that
-into stage B item 4: the 29-94 degC drive range is real but every figure in it
-has ±1.5 degC of probe history in it, so **size the range with margin and never
-tune on a Temp_Drive difference under ~2 degC.**
+### 6. The preheat lever is withdrawn — do not build the compensated roast
 
-### 4. Free bench work — it is Phase A of the test plan
+**ΔTP = +1.50 degC for +15.04 degC of preheat** (roast 57). The gain is **0.100**
+against a predicted 0.415, inside the old stop condition. `0.60 / 0.100` = **6.0
+degC of preheat per degC of greens temperature**: a 10 degC bean-temperature
+swing would need 60 degC of preheat, and 145 was already 15 degC hotter than the
+beans had ever been tipped into.
 
-All of it now lives in **state-plan.md § TEST PLAN § Phase A**, because it is the
-same session: the fan ladder at fixed BT 145, three more BT rungs at 160 / 175 /
-190 to test the duty line's linearity out to roast temperatures, and setting
-`Air` explicitly so the log carries the fan level. **~60 minutes, one warm-up, no
-beans**, and it gates the roast.
+`preheat = 124.4 − 1.17 × greens_temp` is **withdrawn**, and so is
+`tools/analysis/preheat_lever.py`'s use as a shipping calculator — keep the tool,
+it now reads 6.0 and says so.
 
-### 5. What the bench line already bought
+**Why it failed is worth more than the lever was.** The preheat had left the
+reading by **20 s**, *inside the PID-off window* (the cascade engages at
+CHARGE+15.5 s), so no control action removed it; then it came back **doubled** at
+70 s as the loop chased the missed turning point. `dT_mix = phi·(BT_c − T_bean)`
+treats the preheat reading as the chamber's available energy. It is not: it is
+largely the probe and the metal it sits against, on the **non-flow side of the
+asymmetric expansion chamber**, and 400 g of −5 degC beans overwrite the probe's
+local environment in under twenty seconds. **The preheat is a slow lever aimed at
+the wrong window.** Do not spend another load on a preheat rung.
 
-`HT = 20.25 + 0.1922·BT` is the duty the empty chamber needs to stand still.
-Subtract it from a roast's live duty and the remainder is nearly proportional to
-the rate of rise: post-DRY-END, `RoR = 0.81 + 2.66·excess` (roast 56, resid
-0.74 degC/min) and `6.46 + 2.29·excess` (roast 57, resid 1.11), over RoR 2-25
-degC/min. **One parameter, measured empty in forty minutes, tracking the loaded
-roast to about 1 degC/min.**
+### 7. What the bench line already bought
+
+`HT = 20.25 + 0.1922·BT` (phase 0; see § 3 for its level problem) is the duty the
+empty chamber needs to stand still. Subtract it from a roast's live duty and the
+remainder is nearly proportional to the rate of rise: post-DRY-END,
+`RoR = 0.81 + 2.66·excess` (roast 56, resid 0.74 degC/min) and
+`6.46 + 2.29·excess` (roast 57, resid 1.11), over RoR 2-25 degC/min. **One
+parameter, measured empty in forty minutes, tracking the loaded roast to about
+1 degC/min.**
 
 That is the answer to whether `plant_roast46.json`'s `loss(t)` cubic is really a
 BT-dependent loss aliased into a time function: **mostly yes**, and it can be
-replaced by a bench line. The slopes agree to 15 %, the intercepts do not (0.81
-vs 6.46), so this is a **shape** result and not yet a calibration — roast 57 ran
-4.6 degC warmer ambient and lost 357.7 g out of 400.
+replaced by a bench line. The slopes agree to 15 %, the intercepts do not, and
+§ 3 now says why that gap is not going to close from bench data.
 
 The same line reads the ceiling: post-DRY-END RoR is linear in BT in both roasts
 (`79.79 − 0.3657·BT`, `73.57 − 0.3357·BT`), crossing zero at **BT 218.2 and
@@ -196,12 +198,7 @@ the first thing here that is not circular.
 schedule off background playback with no outer loop at all — three special events
 in the whole log — and produced the smoothest BT in the archive: post-dip RoR
 fits its own cubic to **0.375 degC/min** against the cascade's 1.6-2.8, with the
-inner loop holding the commanded polyline at **rms 0.60 degC**. The roughness is
-in the *input*: the cascade's inlet command deviates from a smooth curve by
-12-18× what the schedule did and jumps up to 36.7 degC in ten seconds, because
-the integrator has to supply the whole operating point. **Step 9's base mechanism
-is therefore demonstrated, not speculative** — what was missing was only the file,
-and `tools/merge_inlet_base.py` closed that.
+inner loop holding the commanded polyline at **rms 0.60 degC**.
 
 **Two cautions come with it, and the second is general.** Roast 20 has no BT
 target to score against and the archive has no open-loop repeat pair, so
@@ -212,7 +209,12 @@ sharp minimum at 0.0049. **A smooth input carries no information about the
 transfer function.** Never read a plant number off a well-behaved roast — see
 state-history.md § Roast 20 revisited.
 
-### 6. The bean budget — 2-3 loads of `C1043` left, and none of them are spoken for
+**`LA 12` stays deferred and its premise is now dead.** It was sized against the
+lag reading of the same residual Phase A has just shown to be a disturbance, and
+105 s would have pushed SV up fifteen seconds *before* the fan step, masking the
+cause without ever naming it.
+
+### 8. The bean budget — 2-3 loads of `C1043` left, and none of them are spoken for
 
 **The one question that needed `C1043` is answered.** Roast 57 cracked at
 **197.40 at 397 s**; `beans.py --coffee C1043` now reads nine roasts, cascade-era

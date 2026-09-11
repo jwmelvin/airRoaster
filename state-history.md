@@ -5579,3 +5579,178 @@ needed to lift a bean. The declining ramps in 37 and 38 did reach **53 and 54**,
 under `ilFanFull = 55` — so the soft interlock's heat cap has been inside the
 operating envelope before, and it is the *declining-fan practice* rather than the
 batch size that puts it there.
+
+### Phase A (2026-09-10, 18:25 and 19:31) — roasts 58 and 59: the fan step is sized, and it is big enough
+
+`airRoaster_58.alog` (63 min, empty, `TEST_FAN_LADDER`) and `airRoaster_59.alog`
+(44 min, 345 g of already-roasted beans, `TEST_LADDER_WITH_BEANS`). The second is
+the operator's addition to the plan and it is the more valuable of the two: it
+puts a bed in the chamber, which is the configuration the roast actually runs in.
+Everything below is reproduced by `tools/analysis/fan_ladder.py`.
+
+**Both logs record `Air` explicitly** — A0 is done, and the gap phase 0 left is
+closed.
+
+#### The answer: `f = 0.18`, against a decision threshold of 0.12
+
+`HT = A·(fan − f0)·(Inlet − amb) + c` fits at the duty channel's own 1 %
+quantisation:
+
+| fit | f0 | A | c % | rms | n / params / dof |
+|---|---|---|---|---|---|
+| empty, fan 53-64 | **39.2** | 0.009405 | 22.65 | **0.182 %** | 10 / 3 / 7 |
+| loaded 345 g, fan 56-64 | **42.9** | 0.010228 | 22.96 | **0.202 %** | 11 / 3 / 8 |
+| joint, shared `A` and `c` | **40.0 / 41.9** | 0.009737 | 22.73 | **0.231 %** | 21 / 4 / 17 |
+
+```
+f(64 -> 60)   empty 0.162    loaded 0.189    joint 0.181     threshold 0.12
+deficit = RoR * f * T_eff / 60   at RoR 29.0, T_eff 45 s:   3.5 - 4.1 degC
+                                            observed residual:   2.93 degC
+```
+
+**The fan is not merely sufficient, it over-covers by about a third** — which is
+the room the plan's own caveat asked for, since less flow also raises
+`T_in − T_out` and the arithmetic is a ceiling. **Decision rule: the top row.
+Run Phase B expecting the dip to disappear.**
+
+`c = 22.7-23.0 %` is the flow-independent duty, now **measured** rather than
+extrapolated 5× back to zero air ΔT from a 22 degC ladder. The plan carried
+`c = 24.9 %` and was close.
+
+#### The bed costs 9.3 % of the flow, and the blower saturates above fan 64
+
+`A = K·α` and `c` belong to the heater and the blower, so they must be shared
+between the two sessions and only `f0` may differ. Pooling onto **one** `f0`
+costs a factor of **5.5** in residual (1.281 % against 0.231 %), so the split is
+real: at fan 60, `(60 − 41.9)/(60 − 40.0) = 0.907`. **345 g of beans is a 9.3 %
+flow restriction.**
+
+With `f0` pinned by the fan 53-64 rungs, the two top rungs fall progressively
+short of the linear-flow model:
+
+| rung | predicted HT | measured | deficit | delivers the flow of |
+|---|---|---|---|---|
+| fan 72 | 57.56 | 55.87 | **−1.69** | a nominal **70.4** |
+| fan 80 | 65.43 | 60.18 | **−5.25** | a nominal **75.0** |
+
+`mdot ∝ (fan − 40)` holds across the range the roast uses and bends over above
+it. **The ladder's top rungs are therefore not the ones that size `f`**, which
+is the opposite of the plan's reason for spanning 60-80; the sizing came from
+53 / 56 / 60 / 64, and the plan's own worry — that 60 → 64 alone is too small a
+contrast — was answered by the *descending* rungs the operator added, not by the
+ascending span.
+
+#### Route 1 cannot be run on this machine
+
+`Temp_Drive ∝ 1/mdot` at fixed BT needs `Inlet − BT` to be a measurement. It is
+not. Empty at BT 145 / fan 60, four visits in one session read **12.84, 8.47,
+6.51 and 7.49** while heater duty over the same four repeated to **±0.09 %** —
+and at fan 72 and 80 the settled `Inlet` sits **below** BT (−2.07 and −3.57),
+which `1/mdot` cannot produce at all. This is § Phase 0's "duty is a state
+variable at this precision; `Inlet − BT` is not", reproduced at 8× the sample
+count, and the plan's "the two routes must agree or report it" resolves as
+**route 1 is unavailable, not disagreeing**. The empty/loaded agreement on `f0`
+and the direct step response below stand in for it.
+
+#### The direct step response, loaded — the part that needs no model
+
+Roast 59 held BT 145 under the same cascade with 345 g in the chamber and stepped
+the fan. Against a 90 s pre-step baseline:
+
+| step | `f` | peak ΔBT | at |
+|---|---|---|---|
+| 60 → 64 | −0.23 | **+0.49** | 46 s |
+| **64 → 56** | **+0.38** | **−0.67** | **54 s**, recovered by ~130 s |
+| 56 → 58 | −0.15 | −0.34 | 38 s — in the noise |
+| 58 → 60 | −0.13 | −0.27 | 3 s — in the noise |
+
+**The timing is the finding.** The roast residual bottoms 45-50 s after the 120 s
+fan step and has recovered by 230 s, 110 s after it. The bench step bottoms at
+54 s and recovers by ~130 s. Same loop, same shape, and it is the first direct
+evidence that a fan step on this machine produces a BT transient of the residual's
+shape at all.
+
+The empty chamber's steps peak at **14-18 s** instead, because with no bed the BT
+probe is reading a convection/radiation balance that moves in seconds. That is
+why A3 was rated low value and it was right — it is the *loaded* step that
+transfers.
+
+**Do not read a magnitude out of the bench step.** At a settled BT 145 the
+delivered power is the chamber loss alone — `Inlet − BT` is about 2 degC loaded —
+while at 145 s of roast 56 it is **60 degC** (roast 57: 49). The same `f` removes
+25-30× more power in the roast, and scaling the bench dip linearly predicts 8-10
+degC where the roast shows 2.9. Read the sign, the shape and the timing; the
+magnitude comes from the duty model above.
+
+#### A2: the duty line is linear to BT 190, and no rung failed to settle
+
+Four rungs each at fan 60, read over the last 120 s:
+
+```
+empty    HT = 15.16 + 0.2165*BT      residuals  -0.00 -0.05 +0.11 -0.06
+loaded   HT = 17.75 + 0.1788*BT      residuals  +0.06 -0.09 +0.00 +0.03
+```
+
+Residuals at the duty quantisation across a 45 degC span. **Nothing is
+superlinear**, `HT` at fan 80 reached only 60.2 % against the 85 % abort, and the
+empty chamber has **no ceiling below BT 190**. The plan's first candidate
+explanation for the excess-duty model's intercept disagreement — a superlinear
+loss — is **dead**.
+
+#### But phase 0's line is not this line, and the loaded line does not transfer
+
+| BT | phase 0 `20.25 + 0.1922·BT` | this empty | this loaded |
+|---|---|---|---|
+| 145 | 48.12 | 46.55 (**−1.57**) | 43.67 (**−4.45**) |
+| 160 | 51.00 | 49.80 (−1.20) | 46.35 (−4.65) |
+| 175 | 53.89 | 53.05 (−0.84) | 49.04 (−4.85) |
+| 190 | 56.77 | 56.29 (−0.47) | 51.72 (−5.05) |
+
+About 0.47 % of the empty gap is this session's 2.4 degC warmer ambient
+(`d(HT)/d(amb) = −A(60 − f0) = −0.196 %/degC`). The slopes are consistent —
+0.1922 was fitted over 22 degC where 0.2165 is fitted over 45 — so the
+disagreement is a **level**, and there are two candidates and no way to separate
+them from this data: the soak (below), or phase 0's unrecorded fan being a unit
+or two above 60, one unit being worth ~0.96 % of duty.
+
+**Re-basing the excess-duty model onto the loaded line does not work.** It moves
+roast 56's fit from `RoR = 0.81 + 2.66·excess` to about `−11.7 + 2.66·excess`,
+i.e. a loaded chamber standing still would be cooling at 12 degC/min. It is not.
+345 g of *roasted* beans sitting at fan 60 is not 400 g of circulating greens: no
+water leaves it, it may not be circulating at 56-60 at all, and the BT probe is
+buried in a static pile.
+
+**What survives is the size of the question.** The excess-duty model's intercept
+disagreement between roasts 56 and 57 is 5.65 degC/min, which at its own 2.66
+slope is **2.1 % of duty**. The baseline candidates measured here span **4.5 %**.
+So the disagreement is a baseline-level question, the baseline level is not
+pinned to better than the disagreement itself, and the empty line's apparent
+success is to that extent luck. **No re-basing on this data settles it** — say so
+rather than picking the line that flatters the fit.
+
+#### The soak: the abort criterion fired, and the cause is the cold start
+
+Roast 58 began on a cold machine (BT 29.0 against ambient 29.5). At fan 60 /
+BT 145 its duty decayed **50.5 → 47.6 %** over the first seven minutes and only
+reached 46.5 % by 23 minutes. Three later fan-60 / BT-145 visits, spanning 23 to
+62 minutes, then agreed to **0.18 %** — 46.55 / 46.49 / 46.67.
+
+So Phase A's stated criterion — *"rung 5 must reproduce rung 1's HT to ±0.5 %.
+If it does not, the session drifted and the fit is not trustworthy"* — **failed**:
+rung 1 read **1.22 % high**. The criterion did its job and the diagnosis is the
+cold start, not drift in the measurement. Roast 59, run an hour later on the
+soaked machine, settled in three minutes and its first rung matched its last to
+0.3 %.
+
+**The duty model absorbs the soak anyway, and that is informative.** Rung 1's
+residual against the fit is **+0.03 %**, because the soak raises `Inlet` and `HT`
+*together* and the model is written in `Inlet`, not BT. `HT = A·mdot·(Inlet − amb)
++ c` is a statement about the **heater** — the power to raise air from ambient to
+the inlet setpoint — and is indifferent to what the chamber is doing. It is the
+BT-referenced line `HT(BT)` that a soaking chamber breaks, because a soaking
+chamber is not standing still. That is why rung 1 is kept in the fit and excluded
+from the `HT(BT)` line.
+
+**For the next bench session: soak for 20 minutes before the first rung, or run
+it second.** It costs one rung and it is the difference between phase 0's numbers
+and these.
