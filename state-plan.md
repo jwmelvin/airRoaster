@@ -125,7 +125,7 @@ the label true.
 > roast 60's off-spec precharge inlet put it into the window falling at
 > −5.0 degC/min, and the answer ranges from −0.3 to +1.2 degC with the reference
 > point (state-history-residual.md § Correction). **The next roast repeats
-> roast 60 with the preheat charged on `Inlet − BT = 11.5`**; until it enters the
+> roast 60 with the preheat at the charge fan and settled**; until it enters the
 > window flat, neither branch below can be sized.
 
 **The question.** Roasts 56 and 57 both fall **−2.91 at 165 s** and **−2.96 at
@@ -253,8 +253,7 @@ and a warm-walled chamber holds BT 130 on 9 degC less inlet. It cost an
 somewhere in −0.3 to +1.2 degC of the 2.9 and drying keeps most of what is left,
 but roast 60's entry transient is the same size as the effect
 (state-history-residual.md § Correction). **Neither branch can be sized until a
-roast enters the window flat**, which is what charging on `Inlet − BT = 11.5`
-buys. The fan compensation below is still sized off the 3.93 degC ceiling and
+roast enters the window flat**, which is what preheating at the charge fan buys. The fan compensation below is still sized off the 3.93 degC ceiling and
 **that number is now known to be far too large — do not build it.**
 
 **The fan branch.** The compensation was sized: holding `mdot·(Inlet − BT)`
@@ -1454,7 +1453,7 @@ and v0.20.0. Two items remain.
 
 | # | what | costs | files |
 |---|---|---|---|
-| **P** | **repeat roast 60 with the preheat on spec** — fan 64, background unchanged, charge on `Inlet − BT = 11.5 ± 0.5`. Recovers the measurement Phase B lost and gives the first clean fan-64 baseline | 1 real batch | `..._phaseB.aset` + `profile_400g_m5C_v4.alog` |
+| **P** | **repeat roast 60 with the preheat on spec** — fan 64 for the whole preheat, ≥2 min settled, **preheat BT target 139** (settled gap at fan 64 is 2.8, so inlet lands at ~141.8 = roast 56's). Background and `.aset` unchanged | 1 real batch | `..._phaseB.aset` + `profile_400g_m5C_v4.alog` |
 | **L** | **the latent-heat term** in `make_background.py`'s RoR spec. **Gated on P** — the RoR family is smooth-by-construction with four parameters pinned by four constraints, so this is a fifth shape term, and it must be sized on a roast that entered the window flat. (`--h-fus` is heat of *fusion* in the charge dip, a different quantity.) | authoring + 1 batch to score | `make_background.py` |
 | **9** | **step 9** — the FF base schedule with the PID as a trim (§ Step 9). Gated on the `.aset` half and the `--dip` question, not on more roasts | 1 real batch | new |
 

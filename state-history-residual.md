@@ -34,7 +34,7 @@
 - Phase B — roast 60: the fan is about a third of it, and the answer is "both"
 - Is the dip the loop ringing? — no, but the loop owns its width
 - Correction — Phase B did not cleanly size the fan, and the preheat is why
-- The preheat state is `Inlet - BT`, and it is readable on screen
+- The precharge inlet is set by the fan schedule, not by the soak
 
 ## The record
 
@@ -1413,42 +1413,92 @@ cannot be measured through a 2 degC entry transient that is still decaying at
 120 s. **The preheat is not a side variable in this programme; it is the noise
 floor of every measurement in it.**
 
-### The preheat state is `Inlet − BT`, and it is readable on screen
+### The precharge inlet is set by the fan schedule, not by the soak (operator, 2026-09-13)
 
-The preheat is a PID holding BT at its target, so **the inlet SV is its output
-and `Inlet − BT` is the effort the chamber still demands** — which is a direct
-readout of how far the soak has gone. Roast 60 logged the whole decay:
+**The section this replaces blamed roast 60's low precharge inlet on its 23.8
+minute soak. That was wrong, and the operator said so:** *"the preheat this time
+was at fan 64 by the end (stepped up fan over the 20+ min preheat) — and that
+strongly affects the inlet-BT required for a particular BT."* It does, and it is
+the whole effect.
+
+**The gap is flat within a fan segment and steps at every fan change.** Roast
+60's preheat ran three fans; skipping the first two minutes after each step:
+
+| | fan 55 | fan 58 | fan 60 | **fan 64** |
+|---|---|---|---|---|
+| settled `Inlet − BT` at BT 130 | 23.66 ± 4.39 | 12.36 ± 0.90 | 11.13 ± 0.70 | **2.83 ± 0.61** |
+| settled `Inlet` | 154.2 | 142.7 | 141.4 | **133.1** |
+
+(fan 58 is roast 56, the other three roast 60.) **Decay *within* a segment is
+−0.16 degC/min at fan 60 and −0.22 at fan 64** — over the seven minutes roast 60
+spent at fan 60, about 1 degC. The soak is a rounding error against an 8.3 degC
+step.
+
+**And the two roasts charged on opposite sides of a fan step.**
 
 ```
-t rel CHARGE   -1300  -1100   -900   -700   -500   -400   -300   -200   -100    -10
-roast 60  SV   169.1  153.2  150.2  142.2  141.8  140.9  134.1  132.4  133.6  132.8
-        Inlet-BT +38.0  +22.7  +19.8  +12.2  +11.4  +10.9   +3.4   +2.4   +2.4   +2.6
-roast 56  (9.7 min of preheat only, charged at)                              +11.6
+roast 56   Air 58 at -577 s ......... Air 64 at -5.5 s ... CHARGE
+           inlet settled at 142.7, reads 141.8 at -10 s, 141.9 at -1 s
+           -- the fan stepped 5.5 s before CHARGE and the inlet had not moved at all
+
+roast 60   Air 55 at -1420 ... Air 60 at -789 ... Air 64 at -361 s ... CHARGE
+           inlet settles 139.9 -> 135.4 (+30 s) -> 133.0 (+60 s) and stays
 ```
 
-**Roast 56's precharge state is roast 60's state at about 6-7 minutes into its
-own soak** — `Inlet − BT` +11.6 against +10.9 at −400 s. Nothing about roast 60
-was wrong except that it charged 17 minutes later than that.
+**The inlet settles to a new fan's equilibrium in about 60 s.** Roast 56 charged
+5.5 s after its step, so it charged with *fan-58 air at fan-64 flow*. Roast 60
+charged with fan-64 air at fan-64 flow, six minutes settled. Same BT, same fan at
+CHARGE, **8.8 degC of inlet apart, and the soak has nothing to do with it.**
 
-**Two properties make this the spec to charge on.**
+**The advice that produced this was mine and it was right for what it was for.**
+§ The soak: the abort criterion fired says to soak 20 minutes before a bench
+ladder, because a cold chamber's *duty* was still drifting at seven minutes. That
+finding stands and the operator applied it correctly. **What was wrong was
+reaching for it to explain a roast**, without first checking the fan schedule in
+the log — which is the one thing that had visibly changed.
 
-- **It is the state variable, not a proxy.** BT alone is held at 130 by the
-  controller in *every* case, so it carries no information about the soak at all;
-  the gap carries all of it.
-- **It drifts slowly where it matters.** Over −700 to −400 s the gap moves
-  12.2 → 10.9, i.e. **0.26 degC/min**. Charging at a stated gap ±0.5 is a
-  ±2 minute window — against the 8.8 degC of precharge inlet roast 60 lost by
-  timing the soak instead of reading it.
+#### The gap collapses between fan 60 and 64, and `1/mdot` does not explain it
 
-**Recommended spec: fan 64, preheat BT 130, charge when `Inlet − BT` reads
-11.5 ± 0.5.** That reproduces roast 56's precharge exactly, which is a *measured*
-point at which the existing `profile_400g_m5C_v4.alog` is known to enter 120 s
-flat. It requires no model extrapolation, and § below is why that matters.
+`mdot ∝ (fan − 40)` gives 18 / 20 / 24 for fans 58 / 60 / 64, so a gap that goes
+as `1/mdot` should run 12.4 → 11.2 → **9.3**. Measured: 12.4 → 11.1 → **2.8**.
+Fans 58 and 60 are on the line and **fan 64 is nowhere near it** — an 8.3 degC
+collapse across four fan units against 1.3 across the previous two.
 
-**The fully-soaked end (gap +2.6) is the other candidate and is rejected for
-now.** It is the only genuinely stationary point, so timing would not matter at
-all — but it is roast 60's operating point, its dip is 8.3 degC deeper than the
-authored background, and the dip model cannot author a curve for it.
+This is an *empty* chamber, so bed fluidisation is not it, and Phase A put blower
+saturation above 64 rather than at it. **The leading candidate is the probe:**
+the operator describes an asymmetric expansion chamber with the bean probe on the
+non-flow side, so if the main jet starts washing it somewhere around fan 62 the
+probe stops reading a mixed temperature and starts reading the air. That would
+mean **"preheat BT 130" is not the same physical state at fan 58 and at fan 64**,
+which matters well beyond the preheat.
+
+**It is a bench measurement and costs no beans:** hold the inlet SV fixed on an
+empty chamber and step the fan 56 → 70 in twos, letting each rung settle 90 s,
+and watch the gap. If it has a knee near 62 the probe explanation is live; if it
+follows `1/mdot`, something else is going on at 64.
+
+### The preheat spec: preheat at the charge fan, settled
+
+**Preheat at the fan you will charge at, and leave at least 2 minutes after the
+last fan change.** Then `Inlet − BT` is a fixed property of that fan to ±0.6 and
+the precharge inlet is simply `BT_target + gap`. One knob, one readout, no
+timing to get right.
+
+**At fan 64 the gap is 2.8, so a preheat BT target of 139 lands the inlet at
+~141.8 — roast 56's charge inlet, exactly.** That is runbook row P: fan 64 held,
+`profile_400g_m5C_v4.alog` unchanged, `..._phaseB.aset` unchanged, and the single
+change from roast 60 is the preheat BT target, 130 → 139.
+
+**Why 139 rather than reproducing roast 60's 130/133.1.** The authored background
+expects a turning point near 59.4 and roast 60 delivered 52.8; entering the
+measurement window flat is what Phase B lost and what row P has to buy back.
+Matching roast 56's precharge inlet is the only way to do that which does not
+rely on the dip model, whose inlet sensitivity is 7× too small (§ below).
+
+**It also runs the complement of roast 60's accidental experiment.** Against
+roast 56, row P moves the preheat BT +8.8 and the inlet +0.0; roast 60 moved the
+inlet −8.8 and the BT +0.0. Two roasts, two clean single-variable reads, and
+together they settle which of the two actually moves the turning point.
 
 #### The dip model has the two preheat gains in the wrong order
 

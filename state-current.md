@@ -71,13 +71,12 @@ from it — measured on a roast that enters the window flat, which none of 56, 5
 or 60 does.
 
 **Next is runbook row P: repeat roast 60 with the preheat on spec.** Fan 64,
-background unchanged, `..._phaseB.aset` unchanged — **the only change is that
-CHARGE happens when `Inlet − BT` reads 11.5 ± 0.5 rather than after a fixed
-soak.** That is roast 56's precharge state (+11.6) and roast 60 passed through it
-at −400 s; the gap drifts at only 0.26 degC/min there, so it is a ±2 minute
-window against the 8.8 degC of inlet roast 60 lost. It recovers the measurement
-Phase B lost, gives the first clean fan-64 baseline, and reads the precharge-inlet
-gain for free. § 1b.
+background unchanged, `..._phaseB.aset` unchanged — **the only change is the preheat BT
+target, 130 → 139.** Preheat at fan 64 throughout and leave ≥2 min after the last
+fan change; the settled gap at fan 64 is 2.8, so the inlet lands at ~141.8 —
+roast 56's charge inlet exactly. It recovers the measurement Phase B lost, gives
+the first clean fan-64 baseline, and runs the complement of roast 60's accidental
+lever experiment (BT moved, inlet held). § 1b.
 
 **Then the drying term** — state-plan.md § Runbook
 row **L**. `make_background.py`'s exponential RoR spec carries no latent-heat
@@ -99,7 +98,7 @@ behind it.
 - **120 s → DROP tracking is the best on record, 0.73 rms** against roast 56's
   1.28 and roast 57's 1.76.
 
-### 1b. Charge on `Inlet − BT`, not on a clock — the preheat's state is the gap
+### 1b. The precharge inlet is set by the fan schedule — preheat at the charge fan, settled
 
 Roast 60 held the specified preheat **BT 130.1** but its precharge inlet settled
 at **132.8 against the specified 141.8**, because the machine had soaked 23.8 min
@@ -111,21 +110,40 @@ It cost an **8.3 degC deeper turning point** (52.8 against 61.1), absorbed by
 50 s and worth only +0.5 degC at 120 s — which is the whole reason the Phase B
 read survives it, and the reason the bracket has two ends.
 
-**The preheat is a PID holding BT at target, so the inlet SV is its output and
-`Inlet − BT` is the state.** BT alone carries no information — the controller
-holds it at 130 in every case — and the gap carries all of it. Roast 60 logged
-the whole decay: **+38.0 at −1300 s, +12.2 at −700, +10.9 at −400, +2.6 at −10.**
-Roast 56 charged at **+11.6**, which is roast 60's state at about 6-7 minutes into
-its own soak. *Nothing about roast 60 was wrong except that it charged 17 minutes
-later than that.*
+**The cause was the fan schedule, not the soak** — an earlier version of this
+section blamed the 23.8 minute preheat and the operator corrected it
+(state-history-residual.md § The precharge inlet is set by the fan schedule).
+`Inlet − BT` is flat within a fan segment and steps at every fan change:
 
-**So charge on the gap, not the clock** — it drifts at 0.26 degC/min over
-−700 to −400 s, making `11.5 ± 0.5` a ±2 minute window.
+| | fan 55 | fan 58 | fan 60 | **fan 64** |
+|---|---|---|---|---|
+| settled gap at BT 130 | 23.7 ± 4.4 | 12.4 ± 0.9 | 11.1 ± 0.7 | **2.8 ± 0.6** |
+| settled `Inlet` | 154.2 | 142.7 | 141.4 | **133.1** |
 
-**It also separates two levers roast 57 confounded.** Roast 57 raised preheat BT
-*and* inlet together and moved the TP **+1.50** — gain 0.100 per degC of BT.
-Roast 60 held BT and dropped the inlet 8.8, moving the TP **−8.3** — gain **0.94
-per degC of inlet**. § 6's "the preheat is a slow lever aimed at the wrong
+Within-segment decay is **−0.16 degC/min at fan 60** — about 1 degC over the seven
+minutes roast 60 spent there, against an 8.3 degC step. **Roast 56 stepped
+58 → 64 at −5.5 s and charged before the inlet moved at all** (141.9 at −1 s);
+roast 60 stepped at −361 s and charged six minutes settled. The inlet takes about
+**60 s** to reach a new fan's equilibrium. Same BT, same fan at CHARGE, 8.8 degC
+of inlet apart, entirely from *when* the last fan step happened.
+
+**The spec is therefore: preheat at the fan you will charge at, and leave ≥2
+minutes after the last fan change.** The gap is then a property of that fan to
+±0.6 and the inlet is `BT_target + gap`. **At fan 64 the gap is 2.8, so a preheat
+BT target of 139 lands the inlet at ~141.8 — roast 56's, exactly.**
+
+**A flag worth chasing on the bench: the gap collapses between fan 60 and 64 and
+`1/mdot` does not explain it.** `mdot ∝ (fan − 40)` predicts 12.4 → 11.2 → 9.3
+across fans 58/60/64; measured is 12.4 → 11.1 → **2.8**. The chamber is empty, so
+it is not the bed, and Phase A put blower saturation *above* 64. The leading
+candidate is the **probe** starting to be washed by the main jet near fan 62 — in
+which case "preheat BT 130" is not the same physical state at fan 58 and fan 64.
+One empty-chamber fan ladder at fixed inlet SV settles it and costs no beans.
+
+**Roast 60 still separates two levers roast 57 confounded.** Roast 57 raised
+preheat BT *and* inlet together and moved the TP **+1.50** — gain 0.100 per degC
+of BT. Roast 60 held BT and dropped the inlet 8.8, moving the TP **−8.3** — gain
+**0.94 per degC of inlet**. § 6's "the preheat is a slow lever aimed at the wrong
 window" was drawn on the wrong variable: **the preheat BT is inert; the precharge
 inlet moves the turning point nearly one for one.**
 
