@@ -21,7 +21,7 @@ list — are in state-plan.md and referenced from the history as
 |---|---|---|---|
 | [state-history-cascade.md](state-history-cascade.md) | commissioning the cascade, and identifying the plant | roasts **40-49**, 2026-09-02 → 09-06 | the loop tracks to +0.40 degC; `Kp` 3.0 / `Ki` 0.07 / the lookahead switch settled; `feedforward()` measured; the controller stopped being the limiting error |
 | [state-history-charge.md](state-history-charge.md) | the charge state, the dip model, and authoring the background | the charge-thermal test and roasts **50-56**, 2026-09-06 → 09-07 | `k = 0.1056` over a 37 degC span; `h_fus` under ~1 J/g; the dip model refitted; the SV floor at 100; a background passing all four checks |
-| [state-history-residual.md](state-history-residual.md) | the −2.9 degC residual, and measuring the machine on the bench | phase 0, roast **57**, two archive re-readings, Phase A (roasts **58-59**), 2026-09-08 → 09-10 | the FC temperature is a property of the lot; the ramp was never fitted; the preheat lever is dead; the fan step sized at `f = 0.18`. **Phase B is open** |
+| [state-history-residual.md](state-history-residual.md) | the −2.9 degC residual, and measuring the machine on the bench | phase 0, roast **57**, two archive re-readings, Phase A (roasts **58-59**), Phase B (roast **60**), 2026-09-08 → 09-13 | the FC temperature is a property of the lot; the ramp was never fitted; the preheat lever is dead; the fan step sized at `f = 0.18`. **Phase B answered "both"** — the fan is 0.72-1.22 degC of the 2.9, drying keeps 1.69 |
 
 **Where to look for a given roast.** 40-49 → cascade. 50-56 → charge. 57-59 →
 residual. Roasts 20 and 37/38 are pre-cascade runs re-read in 2026-09-08/09 and

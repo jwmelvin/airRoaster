@@ -6,8 +6,10 @@
 > measurements cost no beans. **2026-09-08 to 2026-09-10: phase 0, roast 57,
 > two archive re-readings, and Phase A (roasts 58 and 59).** Closed: the FC
 > temperature is a property of the lot, the background ramp was never fitted at
-> all, the preheat lever is dead, and the fan step is sized at `f = 0.18`.
-> **Open: Phase B** — state-plan.md § TEST PLAN.
+> all, the preheat lever is dead, the fan step is sized at `f = 0.18`, and
+> **Phase B (roast 60) answered "both"** — the fan is 0.72-1.22 degC of the
+> 2.9 and drying keeps the rest. **Open: the partition's second half**, and the
+> precharge-inlet lever roast 60 stumbled into — state-plan.md § TEST PLAN.
 >
 > One of three history files. [state-history-cascade.md](state-history-cascade.md)
 > is the controller work and [state-history-charge.md](state-history-charge.md)
@@ -29,6 +31,7 @@
 - Roast 20 revisited — the inlet-schedule era, and what its smoothness is and is not
 - Roasts 37 and 38 revisited — the archive already contains a controlled mass experiment
 - Phase A — roasts 58 and 59: the fan step is sized, and it is big enough
+- Phase B — roast 60: the fan is about a third of it, and the answer is "both"
 
 ## The record
 
@@ -1045,3 +1048,214 @@ from the `HT(BT)` line.
 **For the next bench session: soak for 20 minutes before the first rung, or run
 it second.** It costs one rung and it is the difference between phase 0's numbers
 and these.
+
+### Phase B (2026-09-13, 13:52) — roast 60: the fan is about a third of it, and the answer is "both"
+
+The test state-plan.md § Phase B specified: one roast, one change — alarm row 7
+off, fan **64 held from before CHARGE to DROP**, everything else roast 56's.
+`C1043` at 400 g, `greens_temp −5.0`, `moisture_greens 11.0`, background
+`profile_400g_m5C_v4.alog`, config `airRoaster_cascadePID_phaseB.aset`.
+
+#### B3 — the change ran, and the gate held
+
+| check | required | roast 60 |
+|---|---|---|
+| `Air` events after CHARGE | **none at 120 s** | none; `Air 64` at −5.5 s, next is `Air 0` at 473 s |
+| SV step at 105 s (row 8) | absent | absent — `T_inlet` climbs 165 → 167 through 102-108 s |
+| `LA 6` step at ~46 s | present | present, **151 → 172** at 46.0 s |
+| `T_inlet` between +1 s and `PID ON` | empty | empty — events at 1.0 s then 15.5 s |
+
+**B6 passes on all four**: 400 g, greens −5.0, no drifted alarm row, no `Air`
+event at 120 s.
+
+#### The auto-DROP alarm works, and the heat-off chain that failed on roast 56 fired
+
+Row 9 (`HT` below 20 % from DRY END, offset 00:00) fired on the extra-channel
+sample at **414.61 s**, where `HT` fell 70 → 17 and `Inlet` rose 228.0 → 249.0 in
+one sample. The DROP mark landed at **414.50 s** — on the spike, not after it.
+
+```
+         t       Inlet     SV      HT         roast 56, for comparison
+    414.07      228.0   227.7    70          mark at 392.0
+    414.61      249.0   227.7    17   <- alarm   SV climbed 230.9 -> 255.2
+    415.03      252.0   227.7     4          HT went 38 -> 90 -> 100 %
+    415.60      245.5     0.0     0   <- heat off   heat reached 0 at +17.5 s
+```
+
+**`SV` and `HT` both reach 0 within 1.0 s of the mark.** That closes the roast 56
+anomaly recorded in state-plan.md § The inlet spike beats the RoR collapse — the
+detector is worth having *and* the chain behind it fires. Both alarms were armed
+(row 2, `DeltaBT < −25`, and row 9); row 9 fired first and row 2 never acted,
+which is the guard in Artisan v4.2.0 `canvas.py:6260` doing its job —
+`elif action == 13 and self.timeindex[6] == 0` sits in `processAlarm`, *before*
+`markDrop()`, so a second DROP alarm is a no-op rather than an undo.
+
+#### B4 — the primary read: the dip shrinks by a third to a half, and does not go away
+
+`BT − background` on the 0.5 s grid:
+
+| | roast 56 | roast 57 | **roast 60** |
+|---|---|---|---|
+| e at 120 s | −0.08 | +4.12 | **+0.42** |
+| minimum | **−2.91** @ 165 s | −2.60 @ 182 s | **−1.69 @ 168 s** |
+| rms 120-230 s | 1.97 | 2.08 | **1.15** |
+| swing from 120 s to the minimum | −2.83 | −6.72 | **−2.11** |
+
+```
+  t     100    110    120    130    140    150    160    170    180    190    200    210    220    230
+ 56   +0.46  +0.34  -0.08  -0.62  -1.30  -1.92  -2.60  -2.76  -2.60  -2.64  -2.18  -1.64  -1.12  -1.04
+ 60   +1.96  +0.84  +0.42  -0.42  -0.90  -1.62  -1.50  -1.56  -1.60  -1.24  -1.08  -0.94  -0.82  -0.54
+```
+
+**This is the "both" row of B4's decision table**, and the table's predicted band
+for it was −1.2 to −2.0. The dip is still there, at the same second, with the
+same shape — it is **shallower by 1.22 degC read as an absolute minimum, or by
+0.72 degC read as the swing from 120 s.** Take the pair as the bracket; § below
+says why the lower figure is not dismissible.
+
+**The fan is real and it is far smaller than its own ceiling.** Phase A's
+`f = 0.181` predicted a ceiling deficit of **3.93 degC** (joint) and the fan's
+share of the 2.93 was put at 2.68. Removing the step removed **0.72-1.22**, i.e.
+**18-31 % of the ceiling**. The ceiling was honest about being a ceiling; it was
+not a useful estimate of the size.
+
+**What is left — 1.69 degC at 168 s, recovering to −0.54 by 230 s and to zero by
+300 s — is the drying term, or whatever else lives in that window.** DRY END is
+at 194.0 s, and the residual bottoms 26 s before it and is two-thirds gone 36 s
+after it. That is the shape the latent-heat hypothesis wants.
+
+#### The duty model composes — this is the strongest result in the roast
+
+Phase A's `HT = A(fan − f0)(Inlet − amb) + c`, with the joint loaded coefficients
+`A = 0.0097371`, `f0 = 41.9`, `c = 22.73`, fitted on a bench ladder with an empty
+chamber and 345 g of *roasted* beans, predicting the duty difference between two
+*live roasts* at different fan, different ambient and different inlet:
+
+| window | 56 `HT` | 60 `HT` | observed Δ | model Δ | **residual** |
+|---|---|---|---|---|---|
+| 130-200 s | 56.36 | 60.92 | +4.56 | +4.63 | **−0.07** |
+| 200-300 s | 59.05 | 64.53 | +5.48 | +4.85 | **+0.64** |
+| 300-370 s | 60.54 | 66.87 | +6.33 | +5.21 | **+1.12** |
+
+Inlet ran *lower* in roast 60 (201.4 → 196.3 in the first window) and ambient
+5.7 degC warmer, both of which cut duty; the model carries all of it. B5 asked
+for +3 to +5 % raw and got +4.6 to +6.3, which looks like a miss until the two
+corrections are applied — after which the first window is exact.
+
+**So the +4.6 % of duty is the fan, measured, not an inference.** The dip
+shrinking by only a third while the duty rose by exactly what the fan predicts is
+therefore not a failure of the fan step to happen. It happened; it is worth less
+than the ceiling arithmetic said.
+
+#### B5 — the excess-duty model does **not** transfer across fan, on either baseline
+
+Method reproduced from § Phase 0: 30 s centred RoR against 21 s smoothed excess
+duty, post-DRY-END. The method check reproduces the published fits (roast 56
+`1.27 + 2.57·excess`, resid 0.57, against the recorded `0.81 + 2.66`, resid 0.74;
+roast 57 `5.90 + 2.43` against `6.46 + 2.29`).
+
+| baseline | roast 56 | roast 57 | **roast 60** |
+|---|---|---|---|
+| phase 0's empty `HT(BT)` line | `1.27 + 2.57·e` (0.57) | `5.90 + 2.43·e` (0.78) | **`−33.33 + 4.23·e` (1.32)** |
+| the duty model at that roast's fan | `27.27 − 8.94·e` (4.07) | `13.62 − 6.61·e` (3.53) | `28.29 − 5.89·e` (1.84) |
+
+**Both baselines fail, for different reasons.**
+
+- The **fan-60 empty `HT(BT)` line** is simply the wrong baseline for a fan-64
+  roast: it leaves ~5 % of duty unaccounted in every sample, so the excess range
+  collapses from 6.6 % of span to 3.7 % and the fit runs away — intercept −33.3
+  against 0.81 and 6.46. Shifting the line by the modelled +5.2 % moves the
+  intercept to ~−11 and leaves the slope wrong, so this is **not** a level
+  problem that re-basing fixes.
+- The **duty model as a standing-duty baseline** gives a *negative* slope on all
+  three roasts, which is physically backwards. It is fitted in `Inlet` over the
+  bench range and inside a roast `Inlet` runs to 230; the modelled standing loss
+  then grows faster than the real one and eats the whole excess (roast 56's
+  excess range collapses to 0.9-1.8 %). **The duty model predicts levels between
+  roasts and must not be used as an in-roast baseline.**
+
+**One observation, offered as a question rather than a finding.** The excess-duty
+slope moved 2.57 → 4.23 (+65 %) from fan 60 to fan 64. The flow ratio
+`(64 − 41.9)/(60 − 41.9)` is **1.22**, so the direction is right and the size is
+not. Nothing here separates a real fan dependence of the slope from the artefact
+of fitting over a collapsed excess range. **Do not carry 4.23 anywhere.**
+
+#### The four checks, and a charge phase that is worse
+
+| check | roast 56 | **roast 60** | pass |
+|---|---|---|---|
+| peak SV, first minute | 165.1 @ 57.1 s | **180.6 @ 21.6 s** | under ~200 — **pass** |
+| seconds of heat at 100 % | 1.0 | **2.6** | **worse** |
+| seconds saturated at own floor | 0.0 (min SV 159.3) | **0.0** (min SV 159.4) | **pass** |
+| worst `BT − bkg`, 30-90 s | +2.17 @ 32.5 s | **−4.74 @ 30.0 s** | single digits — **pass**, sign flipped |
+| worst \|e\| over 0-30 s | 3.65 | **7.84** | **worse** |
+
+Tracking rms against the same background:
+
+| roast | 0-30 | 30-90 | 60-95 | 95-120 | **120-DROP** | 0-DROP |
+|---|---|---|---|---|---|---|
+| 56 | 2.00 | **0.94** | **0.58** | **0.41** | 1.28 | **1.26** |
+| **60** | 5.47 | 2.28 | 2.54 | 1.47 | **0.73** | 1.88 |
+
+**From 120 s to DROP roast 60 tracks better than any roast on record (0.73
+against 56's 1.28 and 57's 1.76)** — which is what removing a scheduled
+disturbance from that window should do. Everything worse is before 100 s, and
+§ below is why.
+
+#### The precharge inlet was 8.8 degC low, and it is a second variable
+
+B1 specified the preheat as roast 56's **130.2 BT / 141.8 inlet**. Roast 60 held
+**BT 130.1** and the inlet settled at **132.8**.
+
+| | roast 56 | roast 60 |
+|---|---|---|
+| preheat BT at −10 s | 130.2 | 130.1 |
+| `SV` / `Inlet` at −10 s | 142.1 / 141.8 | **132.8 / 132.7** |
+| `HT` at −10 s | 45.9 | 49.0 |
+| preheat recorded before CHARGE | 9.7 min | **23.8 min** |
+| ambient | 22.7 | 28.4 |
+
+**Nobody set this; the soak did.** Holding BT 130 on a chamber whose walls have
+had 24 minutes to come up needs 9 degC less inlet than one 10 minutes in. This is
+§ The soak: the abort criterion fired, restated on the roasting side — **a
+preheat specified in BT is not a state of the machine**, and "preheat 130.2 /
+141.8" is a pair of numbers only one of which the operator controls directly.
+
+**What it cost: the turning point is 8.3 degC deeper.**
+
+```
+  t      0      5     10     15     20     25     30     40     50     60     90    120
+ bkg  130.2  103.8   81.6   69.0   62.4   59.7   59.2   63.5   70.7   78.1   98.8  116.6
+  56  130.2  106.2   83.6   71.0   63.9   61.3   61.2   64.6   69.9   77.0   99.5  116.5
+  60  129.8  103.9   77.7   62.4   54.7   52.8   54.5   61.7   70.3   79.2  101.6  117.0
+```
+
+TP **52.8 @ 24.5 s** against 56's **61.1 @ 25.5 s**. The loop absorbs it: back on
+background by 50 s, 1-2.4 degC *above* it from 60 to 95 s, and only **+0.5 degC**
+different from roast 56 at 120 s.
+
+**So the measurement window is contaminated, but lightly.** The honest statement
+is the bracket already given: the fan removed **0.72 degC** if the entry offset
+at 120 s is charged against it and **1.22 degC** if it is not. Both sit in B4's
+"both" band; neither approaches the 2.68 the ceiling arithmetic predicted.
+
+**And it is an accidental preheat experiment that separates two levers roast 57
+could not.** Roast 57 raised preheat BT by 15.0 *and* inlet by 13.7 and moved the
+TP by **+1.50** — gain 0.100 per degC of BT. Roast 60 held BT constant and
+dropped the inlet 8.8, moving the TP by **−8.3** — gain **0.94 per degC of
+inlet**, nine times larger. § Roast 57's conclusion that "the preheat is a slow
+lever aimed at the wrong window" was drawn on the wrong variable: **it is the
+preheat BT that is inert, and the precharge inlet that moves the turning point
+nearly one for one.** One roast each, confounded with soak time and 5.7 degC of
+ambient, so this is a hypothesis with a number on it, not a lever. **It is also
+the cheapest open question in the project** — it needs no beans to hold the inlet
+where the spec says, only a longer or shorter soak.
+
+#### The lot, and the rest
+
+`C1043`, FCs at 384 s / **BT 196.9**, against roast 57's 197.4 and the pooled
+197.6 — confirming § First crack: 195.3 was the outlier. DROP at 414.5 s /
+BT 200.6, DTR 7.4 %, weight 400.0 → 354.5 g (**11.38 %** against roast 57's
+10.58 %). Post-DRY-END `RoR(BT) = 71.15 − 0.3173·BT`, zero at **BT 224.2**,
+against 222.6 and 226.7 for roasts 56 and 57 — the asymptote is not moved
+by the fan in any way this can see.

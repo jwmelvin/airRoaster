@@ -116,14 +116,15 @@ cascade reads it — `calcSV` reads only `BT(t + svLookahead)` and `drop_t`
 Regenerate when you want the crack at a different **time**, not merely to make
 the label true.
 
-## TEST PLAN — what causes the −2.9 degC residual at 170 s (2026-09-08, phase A done 2026-09-10)
+## TEST PLAN — what causes the −2.9 degC residual at 170 s (2026-09-08, phases A and B done)
 
-> **Where this stands.** Phase A is measured and the fan hypothesis is **sized,
-> not killed**: `f(64 → 60) = 0.18`, a ceiling deficit of 3.5-4.1 degC against
-> the 2.93 observed, and a loaded bench step whose dip bottoms at 54 s where the
-> roast's bottoms at 45-50 s. **Phase B is the next thing to run**, and it runs
-> in the top row of its own decision table — expect the dip to disappear.
-> Drying is not excluded; only the roast can see it.
+> **Where this stands. Both phases are run and the answer is both causes.**
+> Phase A sized the fan at `f = 0.181`; Phase B (roast 60, fan 64 held) removed
+> **0.72-1.22 degC of the 2.9** and left **−1.69 at 168 s** behind. The fan is
+> therefore worth about a third of what its own ceiling arithmetic predicted, and
+> **the remainder belongs to drying** — it bottoms 26 s before DRY END and is
+> two-thirds gone 36 s after it. Both branches below are now live, and the
+> drying one is the larger of the two.
 
 **The question.** Roasts 56 and 57 both fall **−2.91 at 165 s** and **−2.96 at
 170 s** below their own backgrounds, from a standing start of −0.08 and +1.55 at
@@ -183,119 +184,76 @@ failed this plan's ±0.5 % repeatability criterion by reading 1.22 % high, and t
 cause is the cold start — its duty was still falling at 0.4 %/min at seven
 minutes and did not settle until 23. Roast 59, an hour later on the soaked
 machine, settled in three.
-### Phase B — one roast, one change
+### Phase B — DONE 2026-09-13, roast 60. The answer is **both**
 
-**Phase A sized `f` at 0.18 and put Phase B in the top row of the decision
-table: expect the dip to disappear.** Score it against that. A dip that survives
-at anything like 2.9 degC falsifies the fan and hands the window to drying; a dip
-that shrinks to ~1 degC is a partition and both terms are live.
+**The record is state-history-residual.md § Phase B**; the config is
+`artisan/airRoaster_cascadePID_phaseB.aset` (`tools/gen_phaseb_aset.py`).
 
-**B1. Configuration: roast 56's, exactly, with the fan step removed.**
+One roast, one change: fan **64 held from before CHARGE to DROP**, row 7 off,
+everything else roast 56's. B6 passes on all four counts and B3 passes on all
+four — no `Air` event at 120 s, no SV step at 105 s, `LA 6` present at 46.0 s,
+the gate empty from +1 s to `PID ON`.
 
-| | roast 56 | **this roast** |
-|---|---|---|
-| preheat BT / precharge inlet | 130.2 / 141.8 | **unchanged** |
-| background | `profile_400g_m5C_v4.alog` | **unchanged** |
-| `.aset` | `…_floor100.aset` | **`…_phaseB.aset`** (`tools/gen_phaseb_aset.py`) |
-| mass / greens / moisture | 400 g / −5.0 / 11.0 | **unchanged** |
-| alarm row 7, `Fan 60` at 02:00 | ON | **off in the file — the whole change** |
-| alarm row 9, DROP on the inlet spike | — | **new, on** (§ The inlet spike beats the RoR collapse) |
-| fan | 64 → 60 at 120 s | **64, set before CHARGE, held to DROP** |
+```
+                     e(120)    minimum        rms 120-230   swing from 120 s
+roast 56              -0.08    -2.91 @ 165 s     1.97            -2.83
+roast 60 (fan 64)     +0.42    -1.69 @ 168 s     1.15            -2.11
+```
 
-**Hold fan 64 for the whole roast rather than moving the step, and the reason is
-signal-to-noise.** Moving `Fan 60` to 04:00 creates a *new* transient that then
-has to be detected: at 240 s the background's RoR is 17.9 rather than 29.0, so
-the same `f` buys only 0.62× the deficit — about 2.3 degC at the measured
-`f = 0.181` —
-against a 120 s-to-DROP tracking rms of 1.28. Removing the step instead tests for
-the **absence of a known 2.9 degC feature**, which is a far better proposition.
-It is also one field rather than a retimed row, and it carries no circulation
-risk: 64 is the circulation level, and 400 g needs ~64 to start circulating in
-the first place.
+**The dip is shallower and it is still there, at the same second, with the same
+shape** — B4's "both" row, whose predicted band was −1.2 to −2.0. Removing the
+step removed **0.72-1.22 degC**: the lower figure charges the +0.5 degC that
+roast 60 carried into 120 s against the fan, the upper does not. Take the pair as
+the bracket.
 
-*Do not move the step to 01:00.* At 400 g the bed is at its densest and wettest
-at 60 s; 60 sustains circulation once established but this is not the roast to
-find the edge of that on.
+**The fan is real and worth a third of its own ceiling.** `f = 0.181` predicted a
+3.93 degC ceiling deficit and put the fan's share of the 2.93 at 2.68; the
+measurement is 18-31 % of that. **The ceiling was honest about being a ceiling
+and is not an estimate of the size.** What is left — 1.69 degC bottoming 26 s
+before DRY END and two-thirds gone 36 s after it — is the drying term's to
+explain.
 
-**On the coffee.** Prefer **`C1043` at 400 g**, because then the background is
-unchanged and roast 56 is an exact one-variable baseline. If another lot is used
-instead, it is still a good test, but the background must be regenerated for its
-`--fcs` / `--ror-at-fcs` (`beans.py`, pooled default if the lot has no
-cascade-era history) — and **print the new background against
-`profile_400g_m5C_v4.alog` over 120-300 s first and confirm the difference is
-under 1 degC.** That is a free desk check and it keeps the second change from
-landing inside the measurement window.
+Four results carry forward:
 
-**B2. Pre-flight, and none of it is optional.**
+- **the duty model composes across roasts.** Phase A's
+  `HT = A(fan−f0)(Inlet−amb)+c`, fitted on the bench, predicts roast 60's live
+  duty from roast 56's to **−0.07 / +0.64 / +1.12 %** over the three windows,
+  through a fan change, 5.7 degC of ambient and 5 degC of inlet. The +4.6 % duty
+  step **is** the fan, measured;
+- **and it must not be used as an in-roast baseline.** As a standing-duty line
+  inside a roast it gives a negative RoR-vs-excess slope on all three roasts,
+  because it is fitted in `Inlet` over the bench range. The excess-duty model
+  **does not transfer across fan on either baseline** — the fan-60 empty
+  `HT(BT)` line leaves roast 60 at `−33.3 + 4.23·excess`, and re-basing it by the
+  modelled +5.2 % fixes the level and not the slope;
+- **the auto-DROP alarm works and the roast 56 heat-off anomaly is closed.**
+  Row 9 fired on the spike sample (`HT` 70 → 17, `Inlet` 228 → 249); the mark
+  landed at −0.1 s rather than 56's −0.5, and **`SV` and `HT` both reached 0
+  within 1.0 s** against roast 56's 17.5 s. Row 2 never acted — Artisan v4.2.0
+  guards `action == 13` on `timeindex[6] == 0` *before* `markDrop()`, so the
+  second DROP alarm is a no-op, not an undo;
+- **120 s → DROP tracking is the best on record at 0.73 rms** (56: 1.28,
+  57: 1.76), which is what removing a scheduled disturbance from the window
+  should do.
 
-- Open **Alarms** and check every row against the table in state-current.md
-  § The alarm table can silently disagree with the .aset. **Row 7 off, row 8
-  off, row 9 ON**, rows 1-6 unchanged. The time column is `mm:ss`. Row 9 should
-  read `From DRY END / 00:00 / HT / below / 20 / DROP` — **the offset must be
-  00:00**, or it fires on the clock alone the moment DRY END is marked.
-- `airRoaster_cascadePID_phaseB.aset` is **generated**, not hand-edited. If it
-  needs changing, edit `tools/gen_phaseb_aset.py` and re-run it.
-- Confirm `Air 64` is set before CHARGE and that the `Fan 60` button is not
-  pressed by hand at any point.
-- Enter `greens_temp` and `moisture_greens`; weigh in and out.
+**One unplanned variable, and it is the most interesting thing in the roast.**
+The precharge inlet came out at **132.8 against the specified 141.8** while the
+preheat BT was exactly on spec — the machine had soaked 23.8 min rather than 9.7,
+and a warm-walled chamber holds BT 130 on 9 degC less inlet. It cost an
+**8.3 degC deeper turning point**, absorbed by 50 s and worth only +0.5 degC at
+120 s. It also separates two levers roast 57 confounded: **preheat BT is inert
+(gain 0.100) and the precharge inlet moves the turning point nearly one for one
+(gain 0.94)**. One roast each, so it is a hypothesis with a number on it.
 
-**B3. Verify from the log afterwards, before reading any result.**
+### What follows — both branches, and drying is the bigger one
 
-- **exactly two `Air` events** — the preset and `markCharge`'s re-record at +1 s
-  — **and none at 120 s**. This is the change; if it did not run, nothing else
-  matters.
-- **no SV step at 105 s** (row 8 stayed off) and the `LA 6` step present at
-  ~46 s.
-- `T_inlet` carries **nothing between +1 s and the `PID ON` alarm at +15.5 s** —
-  the gate held.
-- **The new DROP alarm, scored two ways.** (a) Did the DROP mark land on the
-  inlet spike rather than 6-7 s after it — compare the mark to the sample where
-  `Inlet − SV` first exceeds 10. (b) **Did the heat-off chain actually run at the
-  mark**: `SV` and `HT` must both go to 0 within a sample or two, not 17 s later
-  as they did on roast 56. (b) is the one that matters; the detector is only
-  worth having if the chain behind it fires.
+**Phase B settled the partition: the fan is 0.72-1.22 degC and drying keeps
+1.69.** Do the drying branch first — it is the larger term, it costs no beans to
+author, and the fan compensation below is sized against a deficit the roast has
+now shown to be three times too large. **Re-derive `ΔSV` from 0.72-1.22 degC, not
+from the 3.93 ceiling, before building it.**
 
-**B4. The primary read.** `BT − background` on the 0.5 s grid, reported at 10 s
-marks over **100-320 s**, plus the value at 120 s, the minimum and its time over
-120-230 s, and the rms over 120-230 s. Baselines: **roast 56 −2.91 at 165 s**,
-**roast 57 −2.96 at 170 s**.
-
-| outcome | signature | conclusion |
-|---|---|---|
-| **the fan** | \|e\| under ~1.0 across 120-230 s, no coherent dip anywhere | the 2:00 step causes it — go to § What follows, fan branch |
-| **drying** | e reaches −2.5 to −3.0 at 160-180 s and half-recovers by ~215 s, as in 56 and 57 | the background's RoR spec needs a latent-heat term |
-| **both** | dip present but shallower, roughly −1.2 to −2.0 | partition it: phase A's `f` predicts the fan's share, the remainder is drying |
-| **something else** | the dip moves, or a new feature appears | record it; do not force it into the partition |
-
-**"Both" is the outcome to expect**, not a hedge: the current arithmetic puts the
-fan at 2.68 degC of the 2.93 observed, and that figure is a *ceiling*.
-
-**B5. Secondary reads, all free.**
-
-- **The four checks.** Expect them unchanged or better — fan 64 throughout is
-  more authority, not less, so peak SV, seconds at 100 % heat and floor
-  saturation should all be at least as good as roast 56's 165 / 1.0 / 0.0.
-- **The loaded fan gain, as a prediction rather than a measurement.** Roast 56
-  ran `HT` **56.36 / 59.05 / 60.54** over 130-200 / 200-300 / 300-370 s at fan
-  60. At 64 throughout, 0.9-1.0 %/unit predicts **+3.6 to +4.0 %** in each
-  window. If it comes back outside +3 to +5, the fan gain does not hold loaded at
-  this operating point, and that is a finding in its own right.
-- **The excess-duty model, tested for transferability.** Subtract phase A's
-  *fan 64* duty line (not the fan 60 one) from this roast's live duty and refit
-  `RoR = m·excess + c`. Roasts 56 and 57 agree on the slope to 15 % and disagree
-  on the intercept (0.81 vs 6.46). A roast at a different fan, scored against the
-  matching bench line, is the first real test of whether the model composes.
-- **This roast gives up the free fan-step read** (state-plan.md § Step 4/5) —
-  there is no step in it. Worth naming as a cost; it comes back on the next roast.
-- **FCs BT for whichever lot is used**, via `beans.py`.
-
-**B6. What would make it uninterpretable:** mass other than 400 g, greens not
-−5.0, an alarm row that drifted, or an `Air` event at 120 s in the log. Check all
-four before reading anything else.
-
-### What follows, by branch
-
-**If the fan.** The compensation is now sized: holding `mdot·(Inlet − BT)`
+**The fan branch.** The compensation was sized: holding `mdot·(Inlet − BT)`
 across the step needs `ΔSV = TD·f/(1−f)`, and at the **measured `f = 0.181`**
 that is **+10.8 degC at `TD = 49` and +13.3 at the `TD = 60` roast 56 actually
 ran at 120 s**. That is a large step to put into an SV that the four checks
@@ -319,8 +277,9 @@ gone. Two ways to deliver it, and they are not equivalent:
 Do (a) first; it is one roast and it either removes the dip or falsifies the
 whole line of reasoning.
 
-**If drying.** `make_background.py`'s exponential RoR spec needs a latent-heat
-term, and the −2.9 degC becomes a **background-authoring** fix rather than a
+**The drying branch, and it now carries 1.69 of the 2.9.**
+`make_background.py`'s exponential RoR spec needs a latent-heat term, and the
+larger part of the residual becomes a **background-authoring** fix rather than a
 control one. That would also explain the property that started this: it never
 varied with the loop's state, because the loop was tracking a curve that was
 asking for something the bed could not deliver while it was still wet. The
@@ -783,16 +742,20 @@ nor the instrumented lever — the lever is still the measured event, this is th
 best inference available without new hardware — and it can run alongside the
 DeltaBT alarm, since the DROP action is guarded by `timeindex[6] == 0`.
 
-**One anomaly to resolve first, and it is independent of the detector.** In
-roast 56 the DROP mark sits at 392 s, on the spike — but the heat-off chain did
+**The roast 56 anomaly is closed — roast 60's chain fired in 1.0 s**
+(state-history-residual.md § Phase B). What was wrong is recorded below for the
+next time it happens; nothing in the roast 60 log says which of the candidates it
+was, so this is a symptom description, not a diagnosis. In
+roast 56 the DROP mark sat at 392 s, on the spike — but the heat-off chain did
 not run there. `SV` climbed 230.9 → **255.2** and `HT` went 38 → 90 → **100 %**
 over the next 16 s, BT recovering 194.4 → **201.7** in an emptied chamber; heat
 reached 0 only at **+17.5 s**. `pidOffDROP = true` and `buttonactions[6] =
 "19,14,11,12"` are both present in `airRoaster_cascadePID_floor100.aset`, so on
-the file the chain should have fired at the mark. **Find out why it did not
-before changing the detector**: a trigger 3 s earlier into a chain that takes
-17 s to act buys nothing, and this is the failure mode auto-DROP exists to
-prevent.
+the file the chain should have fired at the mark — and on
+`airRoaster_cascadePID_phaseB.aset` it did. **If a future roast shows the mark
+landing without the heat going off, that is this bug back**: score check (b) of
+§ Phase B's B3 on every roast that auto-DROPs, because a trigger 3 s earlier into
+a chain that takes 17 s to act buys nothing.
 
 ### The characterisation-run config — `airRoaster_cascadePID_char.aset`
 
@@ -1483,11 +1446,19 @@ and v0.20.0. Two items remain.
 
 | # | what | costs | files |
 |---|---|---|---|
-| **B** | **§ TEST PLAN § Phase B** — hold fan 64 for the whole roast and find out what the 170 s residual is | 1 real batch | `..._phaseB.aset` + `profile_400g_m5C_v4.alog` |
+| **L** | **the latent-heat term** in `make_background.py`'s RoR spec — the 1.69 degC Phase B left behind. Author and desk-check first; it costs no beans to build | 1 real batch to score | `make_background.py` |
 | **9** | **step 9** — the FF base schedule with the PID as a trim (§ Step 9). Gated on the `.aset` half and the `--dip` question, not on more roasts | 1 real batch | new |
 
-**Phase B comes first**, and nothing else should be changed underneath it: it is
-scored as a one-variable comparison against roast 56.
+**B is done** (roast 60, 2026-09-13): the answer was **both**, so **L comes
+first** — it is the larger half of the partition and the only one that can be
+built and desk-checked before a load is spent. The fan compensation waits behind
+it and must be re-sized off 0.72-1.22 degC rather than the 3.93 ceiling.
+
+**Free, and it should ride on the next roast rather than cost one:** hold the
+precharge inlet at the specified 141.8 by soaking to the same point roast 56 did,
+and see whether the turning point comes back to 61. Roast 60 put the
+precharge-inlet gain at **0.94 degC of TP per degC of inlet** against preheat
+BT's 0.100 — nine times larger, from one roast each.
 
 **Steps 1b (profile_004) and 1c (the `Ki` gate) are not scheduled and should not
 be run.** Over the *reachable* — warm-side — charge range the gate makes every
@@ -1792,8 +1763,9 @@ resistance moves — mass loss, ~15 % expansion, chaff, and the fluidisation
 hysteresis already on record (64 to start circulating, 60 to sustain). That turns
 a static efficiency loss into a **time-varying flow disturbance**, which is the
 shape of the thing § TEST PLAN is chasing at 140-200 s. It does not make the leak
-the cause — Phase B's fan-64 roast is still the test — but "it only changes the
-fan number" is the optimistic case, not the certain one.
+the cause — Phase B's fan-64 roast was the test, and it left 1.69 degC standing
+that the fan does not explain — but "it only changes the fan number" is the
+optimistic case, not the certain one.
 
 **The measurement.** Phase A's `TD = C/(fan − f0)` fit returns `f0` **empty**.
 A loaded `f0` needs one deliberate fan step inside a roast, which `FF SLOPE`
@@ -1803,8 +1775,9 @@ it is an efficiency job or a control job.
 
 ### Auto-DROP from the inlet spike
 
-Measured and written up in § Auto-DROP detection § The inlet spike beats the RoR
-collapse. Short version: `Inlet − SV > 10` armed from DRY END fires **0.5-3.5 s
+**Flown on roast 60 and it works** — state-history-residual.md § Phase B. Written
+up in § Auto-DROP detection § The inlet spike beats the RoR collapse. Short
+version: `Inlet − SV > 10` armed from DRY END fires **0.5-3.5 s
 before** the DROP mark against the DeltaBT alarm's **6-7 s after**, with 4-8×
 margin over the armed window — but roast 56's heat-off chain took 17.5 s to act
 on a mark it already had, and that is the first thing to fix.
