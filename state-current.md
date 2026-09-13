@@ -36,15 +36,17 @@ roast 60 (fan 64)     +0.42    -1.69 @ 168 s     1.15            -2.11
 ```
 
 **The dip is shallower and it is still there**, at the same second, with the same
-shape — B4's "both" row. Removing the step removed **0.72-1.22 degC**: the lower
-figure charges roast 60's +0.5 degC entry offset at 120 s against the fan, the
-upper does not. **Report the bracket, not one end of it.**
+shape — so B4's top row is out: the fan does not account for the residual.
 
-**The fan is worth about a third of its own ceiling.** `f = 0.181` predicted a
-3.93 degC deficit and put the fan's share of the 2.93 at 2.68; the measurement is
-18-31 % of that. The ceiling arithmetic was honest about being a ceiling and is
-not an estimate of the size. **Anything built on it must be re-sized off
-0.72-1.22.**
+**But Phase B did not size the fan, and the number first recorded here
+(0.72-1.22 degC) is withdrawn** — state-history-residual.md § Correction. Roast
+60 entered the window falling at **−5.0 degC/min** where roast 56 was at −1.2,
+still decaying from the charge overshoot its off-spec precharge inlet caused.
+Measured from 100 s the excursion is **−3.37 (fan 60) against −3.65 (fan 64)**;
+from 120 s the fan removed 0.72; as an absolute minimum, 1.22. **The honest range
+is about −0.3 to +1.2 degC** and the experiment does not fix the reference point
+that decides it. Do not build anything on a fan number until a roast enters the
+window flat.
 
 **It is not the loop ringing — that was tested and rejected on four counts**
 (state-history-residual.md § Is the dip the loop ringing?). The suspicion is well
@@ -57,13 +59,27 @@ unwinds; the background's RoR is smooth and monotone through it
 not** — `sim.py` overshoots to +0.9…+1.2 after its dip, while the real roasts
 return to within **±0.4** and stay there for 200 s.
 
-**What the loop does own is the width.** A 213 s crossover period is why a
-disturbance of a few tens of seconds takes ~45 s to bottom and ~110 s to recover.
-**So the −1.69 degC is the closed-loop response to the drying load, not the
-load** — it is narrower and larger than the error trace shows. **Do not fit the
-latent-heat term to the shape of the residual.**
+**What the loop does own is the slow tail.** A 213 s crossover period is why the
+recovery from ~200 s to DROP takes as long as it does.
 
-**Next is the drying term, and it is the larger half** — state-plan.md § Runbook
+**It does *not* own the descent, and an earlier version of this section said it
+did — that was wrong.** The 110-170 s feature has a period near 100 s, which is
+**2.1× the crossover**, and at 2× crossover a 33.7 degC-margin loop gives
+essentially no rejection (`|S| ≈ 1`). So through the descent **the error is
+approximately the load's own signature**, and the latent-heat term can be shaped
+from it — measured on a roast that enters the window flat, which none of 56, 57
+or 60 does.
+
+**Next is runbook row P: repeat roast 60 with the preheat on spec.** Fan 64,
+background unchanged, `..._phaseB.aset` unchanged — **the only change is that
+CHARGE happens when `Inlet − BT` reads 11.5 ± 0.5 rather than after a fixed
+soak.** That is roast 56's precharge state (+11.6) and roast 60 passed through it
+at −400 s; the gap drifts at only 0.26 degC/min there, so it is a ±2 minute
+window against the 8.8 degC of inlet roast 60 lost. It recovers the measurement
+Phase B lost, gives the first clean fan-64 baseline, and reads the precharge-inlet
+gain for free. § 1b.
+
+**Then the drying term** — state-plan.md § Runbook
 row **L**. `make_background.py`'s exponential RoR spec carries no latent-heat
 term; the 1.69 degC that survives bottoms **26 s before DRY END** and is
 two-thirds gone 36 s after it, which is the shape that hypothesis wants.
@@ -83,7 +99,7 @@ behind it.
 - **120 s → DROP tracking is the best on record, 0.73 rms** against roast 56's
   1.28 and roast 57's 1.76.
 
-### 1b. The precharge inlet is the lever, not the preheat BT — and roast 60 found it by accident
+### 1b. Charge on `Inlet − BT`, not on a clock — the preheat's state is the gap
 
 Roast 60 held the specified preheat **BT 130.1** but its precharge inlet settled
 at **132.8 against the specified 141.8**, because the machine had soaked 23.8 min
@@ -95,15 +111,30 @@ It cost an **8.3 degC deeper turning point** (52.8 against 61.1), absorbed by
 50 s and worth only +0.5 degC at 120 s — which is the whole reason the Phase B
 read survives it, and the reason the bracket has two ends.
 
+**The preheat is a PID holding BT at target, so the inlet SV is its output and
+`Inlet − BT` is the state.** BT alone carries no information — the controller
+holds it at 130 in every case — and the gap carries all of it. Roast 60 logged
+the whole decay: **+38.0 at −1300 s, +12.2 at −700, +10.9 at −400, +2.6 at −10.**
+Roast 56 charged at **+11.6**, which is roast 60's state at about 6-7 minutes into
+its own soak. *Nothing about roast 60 was wrong except that it charged 17 minutes
+later than that.*
+
+**So charge on the gap, not the clock** — it drifts at 0.26 degC/min over
+−700 to −400 s, making `11.5 ± 0.5` a ±2 minute window.
+
 **It also separates two levers roast 57 confounded.** Roast 57 raised preheat BT
 *and* inlet together and moved the TP **+1.50** — gain 0.100 per degC of BT.
 Roast 60 held BT and dropped the inlet 8.8, moving the TP **−8.3** — gain **0.94
 per degC of inlet**. § 6's "the preheat is a slow lever aimed at the wrong
 window" was drawn on the wrong variable: **the preheat BT is inert; the precharge
-inlet moves the turning point nearly one for one.** One roast each, confounded
-with soak and 5.7 degC of ambient, so it is a hypothesis with a number on it —
-**and the cheapest open question in the project, because holding the inlet on
-spec costs a longer soak and no beans.**
+inlet moves the turning point nearly one for one.**
+
+**And the dip model has those two in the wrong order** — `make_background.py`
+gives 0.28 per degC of charge BT against 0.13 per degC of precharge inlet, i.e.
+BT dominant, where the roasts say inlet dominant by 9×. Both roast readings are
+single roasts confounded with soak and ambient, so neither calibrates anything —
+but the disagreement in *ordering* is why **row P reproduces a measured preheat
+point instead of authoring a dip for a new one.**
 
 ### 1c. The duty model composes between roasts, and must not be used inside one
 

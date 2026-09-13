@@ -119,12 +119,14 @@ the label true.
 ## TEST PLAN — what causes the −2.9 degC residual at 170 s (2026-09-08, phases A and B done)
 
 > **Where this stands. Both phases are run and the answer is both causes.**
-> Phase A sized the fan at `f = 0.181`; Phase B (roast 60, fan 64 held) removed
-> **0.72-1.22 degC of the 2.9** and left **−1.69 at 168 s** behind. The fan is
-> therefore worth about a third of what its own ceiling arithmetic predicted, and
-> **the remainder belongs to drying** — it bottoms 26 s before DRY END and is
-> two-thirds gone 36 s after it. Both branches below are now live, and the
-> drying one is the larger of the two.
+> Phase A sized the fan at `f = 0.181`; Phase B (roast 60, fan 64 held) left
+> **−1.69 degC at 168 s** standing, so the top row is out — the fan does not
+> account for the residual. **How much of it the fan *is* was not measured**:
+> roast 60's off-spec precharge inlet put it into the window falling at
+> −5.0 degC/min, and the answer ranges from −0.3 to +1.2 degC with the reference
+> point (state-history-residual.md § Correction). **The next roast repeats
+> roast 60 with the preheat charged on `Inlet − BT = 11.5`**; until it enters the
+> window flat, neither branch below can be sized.
 
 **The question.** Roasts 56 and 57 both fall **−2.91 at 165 s** and **−2.96 at
 170 s** below their own backgrounds, from a standing start of −0.08 and +1.55 at
@@ -247,11 +249,13 @@ and a warm-walled chamber holds BT 130 on 9 degC less inlet. It cost an
 
 ### What follows — both branches, and drying is the bigger one
 
-**Phase B settled the partition: the fan is 0.72-1.22 degC and drying keeps
-1.69.** Do the drying branch first — it is the larger term, it costs no beans to
-author, and the fan compensation below is sized against a deficit the roast has
-now shown to be three times too large. **Re-derive `ΔSV` from 0.72-1.22 degC, not
-from the 3.93 ceiling, before building it.**
+**Phase B ruled out the top row and did not settle the partition** — the fan is
+somewhere in −0.3 to +1.2 degC of the 2.9 and drying keeps most of what is left,
+but roast 60's entry transient is the same size as the effect
+(state-history-residual.md § Correction). **Neither branch can be sized until a
+roast enters the window flat**, which is what charging on `Inlet − BT = 11.5`
+buys. The fan compensation below is still sized off the 3.93 degC ceiling and
+**that number is now known to be far too large — do not build it.**
 
 **The fan branch.** The compensation was sized: holding `mdot·(Inlet − BT)`
 across the step needs `ΔSV = TD·f/(1−f)`, and at the **measured `f = 0.181`**
@@ -1450,19 +1454,17 @@ and v0.20.0. Two items remain.
 
 | # | what | costs | files |
 |---|---|---|---|
-| **L** | **the latent-heat term** in `make_background.py`'s RoR spec — the 1.69 degC Phase B left behind. Author and desk-check first; it costs no beans to build | 1 real batch to score | `make_background.py` |
+| **P** | **repeat roast 60 with the preheat on spec** — fan 64, background unchanged, charge on `Inlet − BT = 11.5 ± 0.5`. Recovers the measurement Phase B lost and gives the first clean fan-64 baseline | 1 real batch | `..._phaseB.aset` + `profile_400g_m5C_v4.alog` |
+| **L** | **the latent-heat term** in `make_background.py`'s RoR spec. **Gated on P** — the RoR family is smooth-by-construction with four parameters pinned by four constraints, so this is a fifth shape term, and it must be sized on a roast that entered the window flat. (`--h-fus` is heat of *fusion* in the charge dip, a different quantity.) | authoring + 1 batch to score | `make_background.py` |
 | **9** | **step 9** — the FF base schedule with the PID as a trim (§ Step 9). Gated on the `.aset` half and the `--dip` question, not on more roasts | 1 real batch | new |
 
-**B is done** (roast 60, 2026-09-13): the answer was **both**, so **L comes
-first** — it is the larger half of the partition and the only one that can be
-built and desk-checked before a load is spent. The fan compensation waits behind
-it and must be re-sized off 0.72-1.22 degC rather than the 3.93 ceiling.
-
-**Free, and it should ride on the next roast rather than cost one:** hold the
-precharge inlet at the specified 141.8 by soaking to the same point roast 56 did,
-and see whether the turning point comes back to 61. Roast 60 put the
-precharge-inlet gain at **0.94 degC of TP per degC of inlet** against preheat
-BT's 0.100 — nine times larger, from one roast each.
+**B is done** (roast 60, 2026-09-13) and it ruled out the fan as the whole
+cause — but its own preheat drifted off spec and cost it the measurement, so
+**P comes first and L is gated on it.** P changes nothing but the preheat, and
+it also reads the precharge-inlet gain for free: roast 60 put it at **0.94 degC
+of TP per degC of inlet** against preheat BT's 0.100, while the dip model has
+those two at 0.13 and 0.28 — the model has the ordering backwards, which is why
+P reproduces a measured preheat point rather than authoring for a new one.
 
 **Steps 1b (profile_004) and 1c (the `Ki` gate) are not scheduled and should not
 be run.** Over the *reachable* — warm-side — charge range the gate makes every

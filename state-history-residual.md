@@ -33,6 +33,8 @@
 - Phase A — roasts 58 and 59: the fan step is sized, and it is big enough
 - Phase B — roast 60: the fan is about a third of it, and the answer is "both"
 - Is the dip the loop ringing? — no, but the loop owns its width
+- Correction — Phase B did not cleanly size the fan, and the preheat is why
+- The preheat state is `Inlet - BT`, and it is readable on screen
 
 ## The record
 
@@ -1371,3 +1373,101 @@ not the load. The underlying disturbance is **narrower in time and larger in
 amplitude** than the error trace shows, and the RoR term authored into
 `make_background.py` has to match the load, not the error. **Do not fit a
 latent-heat term to the shape of the residual.**
+
+### Correction (2026-09-13) — Phase B did not cleanly size the fan, and the preheat is why
+
+**§ Phase B reported the fan as worth 0.72-1.22 degC. That bracket is too
+narrow and the lower end of the real range is zero.** The correction came out of
+authoring work for the drying term and it is recorded here because the committed
+number is wrong, not merely uncertain.
+
+**The two roasts entered the measurement window on different slopes.** Fitting
+`e = BT − background` over 85-115 s:
+
+| roast | e at 100 s | e at 120 s | **slope at 85-115 s** | trough | swing from 100 s | from 120 s |
+|---|---|---|---|---|---|---|
+| 56 | +0.46 | −0.08 | **−1.22 degC/min** | −2.91 | **−3.37** | −2.83 |
+| 57 | +3.68 | +1.55 | −6.65 | −2.98 | −6.66 | −4.53 |
+| 60 | +1.96 | +0.42 | **−5.01 degC/min** | −1.69 | **−3.65** | −2.11 |
+
+**Roast 56 entered the window nearly flat and roast 60 entered it falling at four
+times the rate**, still decaying from the charge-phase overshoot its off-spec
+precharge inlet caused. Measured from 100 s the excursion is **−3.37 (fan 60)
+against −3.65 (fan 64)** — the fan removed nothing and may have cost 0.3.
+Measured from 120 s it removed 0.72; measured as an absolute minimum, 1.22.
+
+**The answer depends entirely on a reference point the experiment does not fix,
+so the honest range is about −0.3 to +1.2 degC and Phase B's decision table
+cannot be scored.** Linear extrapolation of the entry trend does not rescue it
+either — the entry is a decaying transient, not a line, and extrapolating roasts
+57 and 60 to their troughs returns −4.8 and −3.7, i.e. nonsense.
+
+**What survives Phase B unchanged:** everything that did not depend on the
+120-230 s error — the duty model composing to −0.07/+0.64/+1.12 %, the auto-DROP
+alarm and its heat-off chain, the 0.73 rms tracking from 120 s to DROP, and the
+qualitative result that **the dip is not gone at fan 64**, which still rules out
+the top row of B4's table. The fan's *size* is what is not measured.
+
+**The lesson is the one the project keeps re-learning**: a 1 degC effect at 165 s
+cannot be measured through a 2 degC entry transient that is still decaying at
+120 s. **The preheat is not a side variable in this programme; it is the noise
+floor of every measurement in it.**
+
+### The preheat state is `Inlet − BT`, and it is readable on screen
+
+The preheat is a PID holding BT at its target, so **the inlet SV is its output
+and `Inlet − BT` is the effort the chamber still demands** — which is a direct
+readout of how far the soak has gone. Roast 60 logged the whole decay:
+
+```
+t rel CHARGE   -1300  -1100   -900   -700   -500   -400   -300   -200   -100    -10
+roast 60  SV   169.1  153.2  150.2  142.2  141.8  140.9  134.1  132.4  133.6  132.8
+        Inlet-BT +38.0  +22.7  +19.8  +12.2  +11.4  +10.9   +3.4   +2.4   +2.4   +2.6
+roast 56  (9.7 min of preheat only, charged at)                              +11.6
+```
+
+**Roast 56's precharge state is roast 60's state at about 6-7 minutes into its
+own soak** — `Inlet − BT` +11.6 against +10.9 at −400 s. Nothing about roast 60
+was wrong except that it charged 17 minutes later than that.
+
+**Two properties make this the spec to charge on.**
+
+- **It is the state variable, not a proxy.** BT alone is held at 130 by the
+  controller in *every* case, so it carries no information about the soak at all;
+  the gap carries all of it.
+- **It drifts slowly where it matters.** Over −700 to −400 s the gap moves
+  12.2 → 10.9, i.e. **0.26 degC/min**. Charging at a stated gap ±0.5 is a
+  ±2 minute window — against the 8.8 degC of precharge inlet roast 60 lost by
+  timing the soak instead of reading it.
+
+**Recommended spec: fan 64, preheat BT 130, charge when `Inlet − BT` reads
+11.5 ± 0.5.** That reproduces roast 56's precharge exactly, which is a *measured*
+point at which the existing `profile_400g_m5C_v4.alog` is known to enter 120 s
+flat. It requires no model extrapolation, and § below is why that matters.
+
+**The fully-soaked end (gap +2.6) is the other candidate and is rejected for
+now.** It is the only genuinely stationary point, so timing would not matter at
+all — but it is roast 60's operating point, its dip is 8.3 degC deeper than the
+authored background, and the dip model cannot author a curve for it.
+
+#### The dip model has the two preheat gains in the wrong order
+
+`make_background.py --charge-bt / --inlet-precharge`, `--mass 400
+--greens-temp -5`:
+
+| | modelled TP | gain |
+|---|---|---|
+| charge BT 130.2 → 139.5, inlet ~142 | 59.4 → 62.0 | **0.28** per degC of BT |
+| inlet 141.8 → 132.8, charge BT 130.2 | 59.4 → 58.2 | **0.13** per degC of inlet |
+
+Against the roasts: **0.100** per degC of preheat BT (roast 57) and **0.94** per
+degC of precharge inlet (roast 60). **The model says BT matters twice as much as
+the inlet; the machine says the inlet matters nine times as much as BT.** Both
+roast readings are single roasts confounded with soak and ambient, so neither is
+a calibration — but the *ordering* disagrees, and that is enough to stop the
+model being used to author a dip at a preheat point no roast has visited.
+
+**So reproduce a measured preheat point rather than authoring for a new one**,
+until a deliberate pair settles the two gains. Roast 60 already supplies half of
+that pair (inlet moved, BT held); the complement is BT moved with the inlet held,
+which a fully-soaked roast at preheat BT ~139.5 would deliver.
