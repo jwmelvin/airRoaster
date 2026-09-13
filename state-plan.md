@@ -280,7 +280,11 @@ whole line of reasoning.
 **The drying branch, and it now carries 1.69 of the 2.9.**
 `make_background.py`'s exponential RoR spec needs a latent-heat term, and the
 larger part of the residual becomes a **background-authoring** fix rather than a
-control one. That would also explain the property that started this: it never
+control one. **Author it against the load, not against the residual**: the
+−1.69 degC is the closed-loop response to the drying load through a loop with a
+213 s crossover period, so the load itself is narrower in time and larger in
+amplitude than the error trace (state-history-residual.md § Is the dip the loop
+ringing?). That would also explain the property that started this: it never
 varied with the loop's state, because the loop was tracking a curve that was
 asking for something the bed could not deliver while it was still wet. The
 `moisture_greens` field is already entered on every roast since 56, so there is

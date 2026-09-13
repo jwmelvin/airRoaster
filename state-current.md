@@ -46,6 +46,23 @@ upper does not. **Report the bracket, not one end of it.**
 not an estimate of the size. **Anything built on it must be re-sized off
 0.72-1.22.**
 
+**It is not the loop ringing — that was tested and rejected on four counts**
+(state-history-residual.md § Is the dip the loop ringing?). The suspicion is well
+founded: `Ki = 0.07` gives a **33.7 degC phase margin and a 213 s crossover
+period**, so the loop is genuinely underdamped on the timescale of the feature.
+But the entry overshoot varies **8×** across roasts 56/57/60 while the trough
+moves 4 %; the integrator winds monotonically across the whole window and never
+unwinds; the background's RoR is smooth and monotone through it
+(`corr(e, bg RoR)` ≈ 0); and **the simulated loop rings where the real one does
+not** — `sim.py` overshoots to +0.9…+1.2 after its dip, while the real roasts
+return to within **±0.4** and stay there for 200 s.
+
+**What the loop does own is the width.** A 213 s crossover period is why a
+disturbance of a few tens of seconds takes ~45 s to bottom and ~110 s to recover.
+**So the −1.69 degC is the closed-loop response to the drying load, not the
+load** — it is narrower and larger than the error trace shows. **Do not fit the
+latent-heat term to the shape of the residual.**
+
 **Next is the drying term, and it is the larger half** — state-plan.md § Runbook
 row **L**. `make_background.py`'s exponential RoR spec carries no latent-heat
 term; the 1.69 degC that survives bottoms **26 s before DRY END** and is

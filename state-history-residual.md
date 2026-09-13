@@ -32,6 +32,7 @@
 - Roasts 37 and 38 revisited — the archive already contains a controlled mass experiment
 - Phase A — roasts 58 and 59: the fan step is sized, and it is big enough
 - Phase B — roast 60: the fan is about a third of it, and the answer is "both"
+- Is the dip the loop ringing? — no, but the loop owns its width
 
 ## The record
 
@@ -1259,3 +1260,114 @@ BT 200.6, DTR 7.4 %, weight 400.0 → 354.5 g (**11.38 %** against roast 57's
 10.58 %). Post-DRY-END `RoR(BT) = 71.15 − 0.3173·BT`, zero at **BT 224.2**,
 against 222.6 and 226.7 for roasts 56 and 57 — the asymptote is not moved
 by the fan in any way this can see.
+
+### Is the dip the loop ringing? (operator, 2026-09-13) — no, but the loop owns its width
+
+The operator, looking at roasts 56-60 in Artisan: *"it looks like the 130-200
+(really about 130-240 s) dip is part of the control ringing as it converges on
+the BT target."*
+
+**The observation is well-founded and the timescales really do coincide.** At the
+shipped `Ki = 0.07` the loop has a phase margin of **33.7 degC** and a crossover
+period of **213 s** (`roast46_refit.py` § 4) — genuinely underdamped, and a
+213 s period puts a quarter-cycle at 53 s against an excursion that takes ~45 s
+to bottom. Anything that shape, in a loop that lightly damped, *should* be
+suspected of being the loop. Four tests say it is not, and none of them needs a
+plant model.
+
+#### 1. The entry overshoot varies 8× and the trough does not care
+
+Each roast against **its own** background:
+
+| roast | e at 100 s | e at 120 s | trough |
+|---|---|---|---|
+| 56 | +0.46 | −0.08 | **−2.91** @ 165.0 s |
+| 57 | **+3.68** | +1.55 | **−2.98** @ 175.5 s |
+| 60 | +1.96 | +0.42 | **−1.69** @ 167.5 s |
+
+**Under ringing the undershoot is a fixed fraction of the overshoot that precedes
+it.** The overshoot spans 8× across these three and the trough moves by 4 %
+between the two extremes. The only thing that *did* move the trough is the fan
+(roast 60), which is not a term in the loop's dynamics at all.
+
+#### 2. The integrator winds monotonically and never reverses
+
+`SV` is the PID's output in Follow-Background — `(SV − 100)/2 = Kp·err + Iterm`
+on the `[100, 300]` map — so the split can be backed out of measured data with no
+model:
+
+```
+roast 56    t    100    120    140    160    180    200    220    240    260    280
+          err  +3.13  +3.32  +4.22  +5.24  +4.99  +4.34  +3.07  +2.47  +1.88  +1.58
+        Iterm  24.72  27.80  30.09  34.57  40.74  45.54  50.74  53.05  55.85  57.80
+           HT   55.4   56.5   52.5   55.0   57.5   57.2   57.5   59.1   60.5   60.0
+
+roast 60  err  +1.63  +2.82  +3.82  +4.14  +3.99  +3.24  +2.77  +2.27  +1.88  +1.58
+        Iterm  26.92  27.80  31.14  35.47  39.39  43.69  47.04  50.15  52.10  54.10
+           HT   51.5   54.2   57.2   60.0   61.9   61.8   63.0   64.0   63.2   66.0
+```
+
+**The integrator climbs monotonically across the whole window — 24.7 → 57.8 and
+26.9 → 54.1 — and never unwinds.** So does `HT`. A ringing loop's integrator
+oscillates; this one is winding up against something and holding what it wins.
+The lookahead error never changes sign either: `err` is positive at every sample
+from 100 to 280 s in both roasts.
+
+#### 3. The loop rings in simulation and the roasts do not
+
+`sim.py`'s closed loop, driven from the same background with the same gains and a
+**smooth** loss (a cubic in `t`, which cannot manufacture a 40 s feature),
+started exactly on the background at 100 s with `Iterm` matched to the measured
+`SV`:
+
+```
+   t        110    130    150    170    190    210    230    250    270    290
+sim (56)  -1.27  -2.50  -1.65  -0.48  +0.39  +0.86  +0.97  +0.80  +0.55  +0.41
+sim (60)  -1.50  -3.05  -2.23  -0.86  +0.24  +0.88  +1.06  +0.97  +0.71  +0.42
+real 56   +0.34  -0.62  -1.92  -2.76  -2.64  -1.64  -1.04  -0.41  -0.22  -0.22
+real 60   +0.84  -0.42  -1.62  -1.56  -1.24  -0.94  -0.54  -0.31  -0.22  -0.12
+```
+
+**The simulated loop does exactly what a 33.7 degC phase margin predicts: it dips,
+then overshoots to +0.9 to +1.2, then settles.** The real roasts never cross back
+— the largest error anywhere from the trough to DROP is **+0.43** (roast 56, at
+360 s) and **+0.37** (roast 60, at 372 s), over 200 s of run, more than a full
+crossover period. **A loop that just rang 2.9 degC down does not come back inside
+±0.4 and stay there.** The real traces decay to zero without a second crossing,
+which is a disturbance being rejected.
+
+*(The simulation's own dip at 128-130 s is a start-up transient of the initial
+conditions and the roast-46 plant card; it is not evidence of anything and is
+quoted here only for the sign of what follows it.)*
+
+#### 4. The reference has no feature to track
+
+A type-1 loop's error follows the reference's rate, so a kink in the background's
+RoR would show up as an excursion without any disturbance at all. The background
+has none:
+
+```
+   t        100    120    140    160    180    200    220    240    260    280    300
+bg RoR    36.47  32.91  29.71  26.83  24.24  21.91  19.82  17.93  16.24  14.71  13.34
+dRoR/dt  -11.22 -10.12  -9.10  -8.19  -7.37  -6.63  -5.96  -5.36  -4.82  -4.34  -3.90
+```
+
+Smooth and monotone in both, through the whole window. `corr(e, bg RoR)` over
+100-300 s is **−0.10** (roast 56) and **+0.15** (roast 60) — nothing.
+`make_background.py` builds the curve from an integrated RoR specification, so
+this is what it is *for*; it is worth having checked rather than assumed.
+
+#### What the operator's reading does own: the width
+
+**The loop's dynamics set the shape and duration of the excursion, and the
+disturbance sets only its cause and rough size.** A 213 s crossover period is why
+a disturbance lasting a few tens of seconds takes ~45 s to reach its worst and
+~110 s to come back; the 130-240 s envelope really is the loop's signature, drawn
+around something exogenous.
+
+**This has a consequence for the latent-heat term** (§ Phase B, runbook row L):
+the observed −1.69 degC error is the *closed-loop response* to the drying load,
+not the load. The underlying disturbance is **narrower in time and larger in
+amplitude** than the error trace shows, and the RoR term authored into
+`make_background.py` has to match the load, not the error. **Do not fit a
+latent-heat term to the shape of the residual.**
