@@ -1453,13 +1453,17 @@ and v0.20.0. Two items remain.
 
 | # | what | costs | files |
 |---|---|---|---|
-| **P** | **repeat roast 60 with the preheat on spec** — fan 64 from the start of the preheat, **`T_inlet` SV fixed at 141.8**, CHARGE when BT flat 2 min (BT lands 139-141, recorded not set). Background and `.aset` unchanged. Measures the settled precharge-inlet gain directly | 1 real batch | `..._phaseB.aset` + `profile_400g_m5C_v4.alog` |
+| **P** | **re-ask Phase B's question with the charge matched** — preheat fan 58, **CHARGE when `T_inlet` reads 141.8 ± 0.5**, step fan 58 → 64 at −5 s, fan 64 held for the roast. Background and `.aset` unchanged. Reproduces roast 56's charge on both variables; the only change against 56 is the fan step. **Unscored unless the 85-115 s entry slope is inside ±2 degC/min** | 1 real batch | `..._phaseB.aset` + `profile_400g_m5C_v4.alog` |
+| **Q** | **the settled-fan preheat, as a deliberate one-variable change** — fan 64 from the start of the preheat, `T_inlet` fixed at 141.8, CHARGE when BT flat 2 min. Measures the settled precharge-inlet gain and retires the fan-step burst | 1 real batch, after P | same |
 | **L** | **the latent-heat term** in `make_background.py`'s RoR spec. **Gated on P** — the RoR family is smooth-by-construction with four parameters pinned by four constraints, so this is a fifth shape term, and it must be sized on a roast that entered the window flat. (`--h-fus` is heat of *fusion* in the charge dip, a different quantity.) | authoring + 1 batch to score | `make_background.py` |
 | **9** | **step 9** — the FF base schedule with the PID as a trim (§ Step 9). Gated on the `.aset` half and the `--dip` question, not on more roasts | 1 real batch | new |
 
 **B is done** (roast 60, 2026-09-13) and it ruled out the fan as the whole
 cause — but its own preheat drifted off spec and cost it the measurement, so
-**P comes first and L is gated on it.** P changes nothing but the preheat, and
+**P comes first and L is gated on it.** P reproduces roast 56's charge rather
+than adopting the new preheat spec, because roast 56's is the only configuration
+with a *demonstrated* flat entry and the residual question has been blocked for
+five roasts; Q adopts the spec once the residual is settled. P changes nothing but the preheat, and
 it also reads the precharge-inlet gain for free: roast 60 put it at **0.94 degC
 of TP per degC of inlet** against preheat BT's 0.100, while the dip model has
 those two at 0.13 and 0.28 — the model has the ordering backwards, which is why

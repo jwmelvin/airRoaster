@@ -70,21 +70,65 @@ approximately the load's own signature**, and the latent-heat term can be shaped
 from it — measured on a roast that enters the window flat, which none of 56, 57
 or 60 does.
 
-**Next is runbook row P: repeat roast 60 with the preheat on spec.** Fan 64,
-background unchanged, `..._phaseB.aset` unchanged — **the only change is the preheat BT
-target, 130 → 139.** Preheat at fan 64 throughout and leave ≥2 min after the last
-fan change; the settled gap at fan 64 is 2.8, so the inlet lands at ~141.8 —
-roast 56's charge inlet exactly. It recovers the measurement Phase B lost, gives
-the first clean fan-64 baseline, and runs the complement of roast 60's accidental
-lever experiment (BT moved, inlet held). § 1b.
+### 1a. The next roast — row P, and it reproduces roast 56's charge exactly
 
-**Then the drying term** — state-plan.md § Runbook
-row **L**. `make_background.py`'s exponential RoR spec carries no latent-heat
-term; the 1.69 degC that survives bottoms **26 s before DRY END** and is
-two-thirds gone 36 s after it, which is the shape that hypothesis wants.
-`moisture_greens` has been entered on every roast since 56, so the input exists.
-**Author and desk-check it before spending a load**; the fan compensation waits
-behind it.
+**The blocker is not the fan and it is not drying: it is that no roast since 56
+has entered 120 s flat, and nothing in the window can be measured until one
+does.** Roast 56's entry slope over 85-115 s was −1.22 degC/min; roast 60's was
+−5.01, because a turning point 8.3 degC below the background sent the loop into
+an overshoot that was still decaying at 120 s. **So the next roast reproduces
+roast 56's charge conditions on both variables and changes only the thing Phase B
+is about.**
+
+| | roast 56 | roast 60 | **row P** |
+|---|---|---|---|
+| preheat fan | 58 | 55 → 60 → 64 at −361 s | **58** |
+| fan at CHARGE | 64 (stepped at −5.5 s) | 64, settled 6 min | **64 (stepped at −5 s)** |
+| fan during the roast | 64 → **60 at 120 s** | 64 held | **64 held** |
+| BT at CHARGE | 130.2 | 129.8 | **130.2** (not a setting — see below) |
+| **inlet at CHARGE** | **141.8** | 133.0 | **141.8 ± 0.5 — charge on this reading** |
+| background | `…m5C_v4` | `…m5C_v4` | **`…m5C_v4`, unchanged** |
+| `.aset` | `…floor100` | `…phaseB` | **`…phaseB`, unchanged** |
+
+**Against roast 56 the single change is the fan step — exactly Phase B's
+question, asked again with the charge matched.** Against roast 60 the single
+change is the preheat. It is also the repeatability check on roast 56 that this
+project has never run.
+
+**Charge on the inlet reading, not the clock and not a soak time.** The preheat
+PID holds BT at the background's CHARGE BT automatically (§ below), so BT looks
+after itself; the inlet is the PID's *output* and it drifts down as the session
+warms — at fan 58, **0.21 degC/min** (roast 61's fit). Watch `T_inlet` and CHARGE
+when it reads **141.8 ± 0.5**, which at that drift rate is a ±2.5 minute window.
+Roast 61's fit puts that at roughly 6-9 minutes into a session from cold.
+
+**Then step the fan 58 → 64 at −5 s and charge.** That is deliberately roast
+56's fan-step burst, kept because it is part of the configuration being
+reproduced and because § 1b cannot yet say what it is worth. **Do not adopt the
+settled-fan preheat on this roast** — it is the right standing spec and it is the
+roast *after* this one, as a deliberate one-variable preheat change.
+
+**The preheat BT target is not an operator setting.** `calcSV` before CHARGE
+returns the *background's* BT at CHARGE (`artisan_pid.py:377-379`), so the
+preheat holds 130.20 because that is what `profile_400g_m5C_v4.alog` says.
+Changing the preheat BT means changing the background — which is why row P leaves
+both alone.
+
+**Score it exactly as Phase B's B3/B4/B5/B6** (state-plan.md § Phase B), with one
+addition that comes first: **the entry slope over 85-115 s must be inside
+±2 degC/min, or the roast is unscored** and nothing in 120-230 s should be read.
+Baselines: roast 56 −2.91 @ 165 s, roast 60 −1.69 @ 168 s.
+
+**On the lot.** `C1043` keeps the background byte-identical and makes this an
+exact one-variable comparison. Another lot is acceptable and § 8 prefers it — the
+RoR-peak pin holds BT(60 s) to 0.8 degC across the whole `--fcs` range — but it
+needs the B1 desk check: regenerate with `beans.py`'s numbers and confirm the new
+background is within 1 degC of v4 over 120-300 s before loading it.
+
+**On fan 64 being high for 400 g.** It stays for this roast because it is Phase
+B's variable and there is still no clean fan-64 baseline. Once row P lands, the
+way to bring the fan down is a whole roast at 60 with the background unchanged —
+one more single-variable change, and no step inside the measurement window.
 
 **Two things roast 60 settled that were not the question:**
 
