@@ -37,6 +37,8 @@
 - The precharge inlet is set by the fan schedule, not by the soak
 - Roast 61 — the fan ladder at held BT, and the leak seal is a null
 - The preheat spec: fix the inlet, not BT
+- Roast 62 — row P lands: the fan step is worth 1.4-1.7 degC
+- The precharge inlet does not move the turning point — it sets the PID handover
 
 ## The record
 
@@ -1641,3 +1643,143 @@ settled fan 64, same background, same `.aset` — it moves the commanded inlet
 133.0 → 141.8 and nothing else. If the turning point comes back to ~61 the gain
 is near 0.94 and the inlet is the lever; if it stays near 53 the gain is near 0.1
 and the burst was doing the work in roasts 56 and 57.
+
+### Roast 62 (2026-09-13, 20:54) — row P lands: the fan step is worth 1.4-1.7 degC
+
+The first roast since 56 to enter the measurement window flat, and the first
+whose answer does not move with the reference point.
+
+#### The charge was reproduced, and the operator improved on the method
+
+Row P asked for roast 56's charge state. The operator got it by **holding the
+inlet SV fixed at 142.0 through the whole preheat and trimming BT with the fan**
+(58 → 60 → 62 → 58 over −573 to −97 s), then stepping to 64 at −5.5 s — roast
+56's step timing exactly.
+
+| at −2 s | roast 56 | **roast 62** |
+|---|---|---|
+| Inlet | 141.8 | **142.0** |
+| BT | 130.4 | **130.6** |
+| fan | 64 (stepped −5.5 s) | **64 (stepped −5.5 s)** |
+
+**That is the fixed-inlet preheat § The preheat spec argued for, run a better way
+than the spec described** — the spec assumed BT would be left to float, and using
+the fan as the BT trim at fixed inlet pins both. Worth adopting as the method.
+
+#### The gate, and it is the whole reason this roast is readable
+
+| | roast 56 | roast 60 | **roast 62** |
+|---|---|---|---|
+| entry slope, 85-115 s | −1.22 | −5.01 | **−0.03 degC/min** |
+| | pass | **fail** | **pass** |
+
+#### B4 — and for the first time every reference point agrees
+
+| | roast 56 (fan 60) | **roast 62 (fan 64)** | the fan's share |
+|---|---|---|---|
+| minimum | −2.91 @ 165 s | **−1.50 @ 179 s** | **1.41** |
+| swing from 100 s | −3.37 | **−1.66** | **1.71** |
+| swing from 120 s | −2.83 | **−1.12** | **1.71** |
+| rms 120-230 s | 1.97 | **1.06** | |
+
+```
+  t     100    110    120    130    140    150    160    170    180    190    200    210    220    230
+ 56   +0.46  +0.34  -0.08  -0.62  -1.30  -1.92  -2.60  -2.76  -2.60  -2.64  -2.18  -1.64  -1.12  -1.04
+ 62   +0.16  -0.16  -0.38  -0.82  -1.00  -1.22  -1.20  -1.36  -1.40  -1.14  -0.98  -0.94  -0.72  -0.64
+```
+
+**The 120 s fan step is worth 1.4-1.7 degC of the 2.9, and about 1.5 degC
+survives at fan 64.** The range is now the spread between three ways of reading
+the same curve rather than a disagreement about which reading to trust — which is
+exactly what the entry gate was added to buy.
+
+Against Phase A: the ceiling arithmetic predicted 2.68-3.93 and the fan delivers
+**about half** of it. The withdrawn Phase B figure of 0.72-1.22 was too low.
+**What is left — 1.5 degC bottoming at 179 s, 14 s before DRY END — is the
+drying term's**, and runbook row L can now be sized on this roast.
+
+#### B3, B5, and the DROP alarm
+
+All of B3 passes. No `Air` event after CHARGE at all; `T_inlet` carries nothing
+between `markCharge`'s +1.0 s re-record and the handover; `LA 6` present at
+46.0 s (136 → 158); no step at 105 s (167 / 168 / 169 through 103-107 s).
+
+**The auto-DROP alarm fired on the spike again and the chain held** — `HT`
+69 → 20 at −0.37 s, `Inlet` 226 → 246, `SV` to 0 at **+0.70 s**. Two for two
+since roast 60.
+
+| | 56 | 60 | **62** |
+|---|---|---|---|
+| peak SV, first minute | 165.1 @ 57.1 s | 180.6 @ 21.6 s | **167.6 @ 58.1 s** |
+| seconds of heat at 100 % | 1.0 | 2.6 | **0.5** |
+| min SV after 50 s (floor 100) | 159.3 | 159.4 | **162.9** |
+| **rms 120 s → DROP** | 1.28 | 0.73 | **0.67** |
+| `HT` 130-200 / 200-300 / 300-370 | 56.36/59.05/60.54 | 60.92/64.53/66.87 | 63.18/67.95/70.89 |
+
+**Best tracking on record and the best four-check row on record.** FCs BT
+**197.3** for `C1043` against the pooled 197.6; DROP 419.5 s at BT 201.3; weight
+loss 11.40 %.
+
+#### The PID was off at CHARGE and came on at +14.0 s — the operator's manual push changed nothing
+
+The operator: *"i wasn't sure if PID was turned on when the roast started so i
+pushed it manually as the dip looked to be going low."* The log answers it
+exactly:
+
+```
+  t     0.0   2.0   4.0   6.0   8.0  10.0  12.0  14.0 | 15.0  16.0  17.0
+ SV   142.0 142.0 142.0 142.0 142.0 142.0 142.0 142.0 | 137.0 137.0 138.9
+ BT   130.4 122.8 110.3  97.8  87.1  78.2  71.1  65.3 |  63.3  61.3  59.8
+```
+
+**`SV` sits at 142.00 exactly while BT falls 65 degC.** No running PID does that.
+The first move is at **+14.00 s**, and row 6's `PID on` alarm is `CHARGE + 00:15`
+— on the 0.5 s grid that is the same event. Whether the button or the alarm got
+there first cannot be distinguished and does not matter: the handover happened
+where it was meant to, and the gate held.
+
+**The dip going low was correct behaviour, not a fault.** BT bottoms at 53.8 at
+27 s in every roast of this configuration; the loop is deliberately held off
+until +15 s so that the charge transient is not chased.
+
+### The precharge inlet does not move the turning point — it sets the PID handover
+
+**Roast 62 kills the 0.94 gain reported in § 1b.** It carries roast 56's
+precharge inlet and roast 60's charge state, and it returns **roast 60's turning
+point**.
+
+`charge_state.py`'s air-corrected mixing proxy, which is control-independent:
+
+| roast | proxy /100 g | inlet_pre | logged greens | TP |
+|---|---|---|---|---|
+| 56 | **14.10** | 142.0 | −5.0 | **61.1** |
+| 57 | 16.92 | 155.3 | −5.0 | 62.6 |
+| 60 | **15.80** | 133.0 | −5.0 | **52.8** |
+| 62 | **15.87** | 141.9 | **0.0 (not entered)** | **53.8** |
+
+**Roasts 60 and 62 are indistinguishable in charge state (15.80 against 15.87)
+and roast 56 is 1.7 warmer** — after the air correction, so this is the beans,
+not the inlet. Roast 62 was the third session of the evening on a hot chamber,
+which if anything biases its proxy *down*, so the reading is conservative.
+
+- **the precharge-inlet gain is 0.11**, from roasts 60 and 62 at the same charge
+  state and inlets 8.9 degC apart — and that matches roast 57's 0.11 exactly.
+  **The 0.94 was an unmeasured bean-temperature difference between roasts 56 and
+  60 read as an inlet effect.** Withdrawn;
+- **the turning point is set by the charge state**, which nothing in the log
+  measures because `greens_temp` is not being recorded (0.0 here);
+- **and the precharge inlet's real job is the handover.** At +15 s the PID
+  inherits whatever SV the preheat left. Roast 60 handed it **132.8** against a
+  demand near 142, so it slammed to **180.6 by 21.6 s** and spent 100 s unwinding
+  the overshoot — the −5.01 entry slope. Roasts 56 and 62 handed over **142** and
+  peaked at **167.3** and **167.6**, both around 60 s, both entering flat.
+
+**That is why the fixed-inlet preheat is right, and the reason is not the dip.**
+`--inlet-precharge` in the dip model is nearly inert and correctly so; what the
+precharge inlet buys is a loop that starts from the right operating point instead
+of catching up through the measurement window.
+
+**One consequence for every future roast: record `greens_temp`.** It is the only
+unmeasured term left in the charge, it moves the turning point by 7 degC between
+two roasts that were otherwise identical, and the proxy can only ever say which
+roast was colder, not by how much.

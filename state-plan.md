@@ -119,6 +119,15 @@ the label true.
 ## TEST PLAN — what causes the −2.9 degC residual at 170 s (2026-09-08, phases A and B done)
 
 > **Where this stands. Both phases are run and the answer is both causes.**
+> **CLOSED by roast 62 (2026-09-13): the fan step is worth 1.4-1.7 degC of the
+> 2.9 and about 1.5 degC is drying's.** Roast 62 is the first roast since 56 to
+> enter the window flat (entry slope −0.03 degC/min) and the first whose answer
+> does not move with the reference point — minimum, swing-from-100 and
+> swing-from-120 give 1.41 / 1.71 / 1.71. Phase A's ceiling said 2.68-3.93, so
+> the fan delivers about half. **Row L is next and is now sizeable.**
+> state-history-residual.md § Roast 62. What follows is the record of how it got
+> there.
+>
 > Phase A sized the fan at `f = 0.181`; Phase B (roast 60, fan 64 held) left
 > **−1.69 degC at 168 s** standing, so the top row is out — the fan does not
 > account for the residual. **How much of it the fan *is* was not measured**:
@@ -1453,9 +1462,9 @@ and v0.20.0. Two items remain.
 
 | # | what | costs | files |
 |---|---|---|---|
-| **P** | **re-ask Phase B's question with the charge matched** — preheat fan 58, **CHARGE when `T_inlet` reads 141.8 ± 0.5**, step fan 58 → 64 at −5 s, fan 64 held for the roast. Background and `.aset` unchanged. Reproduces roast 56's charge on both variables; the only change against 56 is the fan step. **Unscored unless the 85-115 s entry slope is inside ±2 degC/min** | 1 real batch | `..._phaseB.aset` + `profile_400g_m5C_v4.alog` |
+| ~~**P**~~ | **DONE — roast 62, 2026-09-13.** Entry slope −0.03 degC/min, fan step measured at 1.4-1.7 degC. Was: re-ask Phase B's question with the charge matched — preheat fan 58, **CHARGE when `T_inlet` reads 141.8 ± 0.5**, step fan 58 → 64 at −5 s, fan 64 held for the roast. Background and `.aset` unchanged. Reproduces roast 56's charge on both variables; the only change against 56 is the fan step. **Unscored unless the 85-115 s entry slope is inside ±2 degC/min** | 1 real batch | `..._phaseB.aset` + `profile_400g_m5C_v4.alog` |
 | **Q** | **the settled-fan preheat, as a deliberate one-variable change** — fan 64 from the start of the preheat, `T_inlet` fixed at 141.8, CHARGE when BT flat 2 min. Measures the settled precharge-inlet gain and retires the fan-step burst | 1 real batch, after P | same |
-| **L** | **the latent-heat term** in `make_background.py`'s RoR spec. **Gated on P** — the RoR family is smooth-by-construction with four parameters pinned by four constraints, so this is a fifth shape term, and it must be sized on a roast that entered the window flat. (`--h-fus` is heat of *fusion* in the charge dip, a different quantity.) | authoring + 1 batch to score | `make_background.py` |
+| **L** | **the latent-heat term** in `make_background.py`'s RoR spec — **now unblocked, size it on roast 62** (residual bottoms −1.50 at 179 s, 14 s before DRY END). the RoR family is smooth-by-construction with four parameters pinned by four constraints, so this is a fifth shape term, and it must be sized on a roast that entered the window flat. (`--h-fus` is heat of *fusion* in the charge dip, a different quantity.) | authoring + 1 batch to score | `make_background.py` |
 | **9** | **step 9** — the FF base schedule with the PID as a trim (§ Step 9). Gated on the `.aset` half and the `--dip` question, not on more roasts | 1 real batch | new |
 
 **B is done** (roast 60, 2026-09-13) and it ruled out the fan as the whole
