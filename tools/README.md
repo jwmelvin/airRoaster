@@ -16,9 +16,9 @@ the loop follows it.
 Two halves, drawn separately:
 
 | `0 .. TP` | the **dip** — physics. Mass, charge temperature and the machine decide it; nothing here is a choice. |
-| `TP .. DROP` | the **design** — a rate-of-rise curve, integrated to BT so it is smooth by construction. |
+| `TP .. DROP` | the **design** — a rate-of-rise curve, integrated to BT so it is smooth by construction, **less the drying load** between BT 100 and BT 140. |
 
-## Four inputs, and where each comes from
+## Five inputs, and where each comes from
 
 | input | source | never |
 |---|---|---|
@@ -26,21 +26,37 @@ Two halves, drawn separately:
 | `--greens-temp` | the operator's thermometer, **read the same way every time** | mix scales — `phi` absorbs any offset and is only right if fed numbers read the same way (`analysis/charge_dip.py --scale`) |
 | `--fcs`, `--ror-at-fcs` | `analysis/beans.py --coffee <hr_id>` | pool across coffees — see below |
 | `--development` | how the operator roasts: seconds from FCs to DROP | pin a DROP temperature instead unless you mean to |
+| `--moisture-greens` | the roast's own `moisture_greens` field (11.0 on this lot) | leave it at the default for a lot that reads differently — it sets the drying term's size |
 
-A fifth input, `--ror-peak-at`, has a default (53 s) and normally stays there.
+A sixth input, `--ror-peak-at`, has a default (53 s) and normally stays there.
 It is the constraint that pins the **ramp**; see § The ramp used to be a lottery.
+The drying term (§ below) has three more, `--drying-eta`, `--drying-window` and
+`--drying-shape`, which are the *calibration* and stay put; `--no-drying`
+authors the pre-2026-09-13 curve for comparison.
 
 The coffee's hr_id is in the last roast's `.alog` as `plus_coffee`.
+
+**Changing a mark is not free, so change one thing at a time.** `profile_400g_m5C_v4.alog`
+carries `--fcs 399:198.8 --ror-at-fcs 8.3`, and 198.8 is the retired
+pooled-across-three-coffees figure; `beans.py` now reads **197.4 / 9.1** for
+`C1043`. Regenerating onto the lot's own numbers moves the curve **+1.1 degC at
+90-120 s and −1.8 degC at 300-320 s** — larger than most of the effects being
+measured, and squarely inside the window the residual is scored in. It is a
+wanted correction and it wants its own roast.
 
 ## The recipe
 
 ```bash
 .venv/bin/python tools/analysis/beans.py --coffee C1043      # prints --fcs and --ror-at-fcs
 .venv/bin/python tools/make_background.py --mass 400 --greens-temp -5 \
-    --fcs 399:197.7 --development 28 --ror-at-fcs 9.4 \
+    --fcs 399:198.8 --ror-at-fcs 8.3 --development 28 --moisture-greens 11.0 \
     --compare artisan/profile_400g_m5C_v4.alog \
-    --out artisan/profile_400g_m5C_fc197_v6.alog
+    --out artisan/profile_400g_m5C_dry_v7.alog
 ```
+
+(That is the command that authored `profile_400g_m5C_dry_v7.alog`, the current
+400 g / −5 degC background. The marks are **v4's**, deliberately — see the note
+above — so that the drying term is the only thing that changed.)
 
 Then read the check block it prints, and do not load the file until all four
 hold:
@@ -58,6 +74,14 @@ hold:
    will saturate against. Its *timing* is no longer diagnostic, because it is
    now an input: it is whatever `--ror-peak-at` says.
 4. **The `30-120 s` row against `--compare`.** This is the one people skip.
+
+**And read the residuals, do not assume they are zero.** The four-constraint
+solve reaches 1e-14 at 400 g over `--greens-temp` −24…0, which is the corner
+every roast has been run in — but **not everywhere**. At 250 g / +25 degC the
+RoR@FCs constraint is missed by 1.6 degC/min with or without the drying term
+(the term makes it slightly *better*, never worse): the marks are simply not
+reachable by this family from that turning point. The tool prints the number; a
+non-zero error row means the curve is approaching the marks, not hitting them.
 
 ## The ramp used to be a lottery — fixed 2026-09-08
 
@@ -84,8 +108,9 @@ peaks land at **65, 68, 53 and 69 s** (`m12C_v3`, `m12C_v4`, `m5C_v4`,
 `m5C_fc195_v5`) with nobody having chosen any of them.
 
 `--ror-peak-at` is the fourth constraint. With it the system is square, it
-converges to 1e-14 across −24…+25 degC and 250…500 g in both `--development`
-and `--drop` mode, and what is left is the honest coupling:
+converges to 1e-14 at 400 g across `--greens-temp` −24…0 in both `--development`
+and `--drop` mode (**not** everywhere — see the residual note above), and what is
+left is the honest coupling:
 
 | `--fcs` | 198.8 | 197.7 | 197.4 | 195.5 | spread |
 |---|---|---|---|---|---|
@@ -121,6 +146,54 @@ pre-2026-09-08 file to compare against. It prints a warning saying so.
 only `BT(t + svLookahead)` and `drop_t`. A curve marked 198.8 that passes 195.4
 at 375 s still cracks a 195.4 bean at a repeatable 375 s. Regenerate when you
 want the crack at a different **time**, not to make the label true.
+
+## The drying term — added 2026-09-13, runbook row L
+
+**The RoR specification above carries no evaporative load, and a wet bed cannot
+make it.** Every cascade roast falls below its own background between about 110
+and 200 s and recovers by 300. Roast 62 — the only roast to enter that window
+flat — bottoms at **−1.50 degC at 179 s**, of which the 120 s fan step accounts
+for none (roast 62 held fan 64 all the way). That is what the term is.
+
+```
+RoR(u) = rise(u) * fall(u) / (1 + K*g(BT))          K = 1.62 degC at 400 g / 11.0 %
+```
+
+`g(BT)` is the free water released per degC of BT, a single bump over
+**BT 100 → 140**, normalised so the term costs exactly `K` degC of BT however
+fast the curve crosses the window.
+
+| | | |
+|---|---|---|
+| **measured** | the window's far end | the RoR deficit crosses zero at **BT 138-141** on roasts 56, 57, 60 and 62 alike — not at DRY END (BT 149), not at a fixed second. That is why the term is written in BT |
+| **measured** | the total, `K` | **1.62 degC** at 400 g / 11.0 %, fitted over roast 62's descent (100-175 s) to rms 0.076 degC |
+| **assumed** | the onset, BT 100 | water boils. The term leaves BT 100 at zero and grows linearly, so it first clears the residual's own 0.1 degC quantisation near BT 105 — which is where roast 62's deficit becomes visible |
+| **assumed** | that `K` scales with water mass | `eta * m_w * h_vap / (m*c_b + C_chamber)`. **Nothing measures this**; it is what lets the term transfer to another mass or another lot's moisture instead of being a constant fitted to one roast. `eta = 0.0156` is a lumped number, not an evaporation efficiency |
+| **weakly measured** | the shape exponents | `q = 1.0` costs 0.016 degC of rms against the fitted 1.4. The roast says the release is a single bump; it does not pin its exponents |
+
+**What the term does to the curve, which is the part to look at before loading
+it.** The four-constraint solve re-converges with the term in place, so DRY END,
+FCs, RoR@FCs and the peak are all still hit — which means the rate the term
+removes inside the window is paid back *before* it. At 400 g / 11.0 %, `v7`
+against `v4`:
+
+```
+   t      40     60     80    100    120    140    160    180    200 .. 427
+ dBT   -0.01  +0.28  +0.66  +0.85  +0.46  +0.05  -0.10  -0.04  +0.02 .. +0.01
+ dRoR  +0.27  +1.17  +1.04  -0.54  -1.43  -0.91  -0.00  +0.21  +0.13 .. +0.02
+```
+
+**About +1.2 degC/min more rate over 50-90 s and 1.4 degC/min less over
+105-140 s, and nothing at all after 160 s.** The intervention is to get the bed
+about 0.85 degC ahead by the time the water boils and then let the drying load
+spend that lead. It is not a lowering of the curve through the dip: over
+120-300 s the two curves differ by at most **0.46 degC, at 120 s**.
+
+**So the term can only relieve about half the swing on its own.** Over 100-180 s
+`v7` asks for 0.89 degC less BT gain than `v4` against a measured 1.66 degC of
+swing; the other 0.77 has to come from the loop actually delivering the extra
+front-end rate. That is what the scoring roast tests, and `e` at 100 s is the
+sample that says which happened.
 
 ## The other four, briefly
 

@@ -289,22 +289,63 @@ gone. Two ways to deliver it, and they are not equivalent:
 Do (a) first; it is one roast and it either removes the dip or falsifies the
 whole line of reasoning.
 
-**The drying branch, and it now carries 1.69 of the 2.9.**
-`make_background.py`'s exponential RoR spec needs a latent-heat term, and the
-larger part of the residual becomes a **background-authoring** fix rather than a
-control one. **Author it against the load, not against the residual**: the
-−1.69 degC is the closed-loop response to the drying load through a loop with a
-213 s crossover period, so the load itself is narrower in time and larger in
-amplitude than the error trace (state-history-residual.md § Is the dip the loop
-ringing?). That would also explain the property that started this: it never
-varied with the loop's state, because the loop was tracking a curve that was
-asking for something the bed could not deliver while it was still wet. The
-`moisture_greens` field is already entered on every roast since 56, so there is
-an input for it.
+**The drying branch carries ~1.5 of the 2.9 and is now authored** — § Row L
+below, and state-history-residual.md § The drying term. What is left of it is one
+roast.
 
 **Either way, `LA 12` stays dead.** Neither cause is a type-1 ramp error, and a
 lookahead patch fired at 105 s would have hidden whichever it is behind an SV
 step fifteen seconds before the event.
+
+### Row L — the roast that scores the drying term
+
+**One roast, one change: the background.** Configuration is roast 62's exactly —
+`artisan/airRoaster_cascadePID_phaseB.aset` with **alarm rows 7 and 8 off and
+row 9 on**, **fan 64 held for the whole roast**, 400 g `C1043`,
+`greens_temp −5.0`, `moisture_greens 11.0` — and
+**`artisan/profile_400g_m5C_dry_v7.alog`** in place of `profile_400g_m5C_v4.alog`.
+Preheat by roast 62's method: hold the inlet SV at 142.0 and trim BT to 130 with
+the fan, step to 64 at about −5 s.
+
+**Gate it before reading anything.**
+
+1. **Entry slope over 85-115 s must be inside ±2 degC/min.** Outside that the
+   roast is **unscored** — say so and stop; do not read 120-230 s. The gate
+   exists because Phase B published a fan number it had not measured
+   (state-history-residual.md § Correction). Note that the gate does *not*
+   discriminate here: both limits of the prediction pass it.
+2. **Charge proxy**, `python3 tools/analysis/charge_state.py 62 <n>`. Roasts 60
+   and 62 agree to 0.07 per 100 g and that is what makes them comparable; roast
+   56 sits 1.77 off. More than ~0.2 from roast 62 and the pairing is weakened.
+   **Pair on the proxy, never on the entered `greens_temp`** (state-current.md
+   § 1b).
+3. **B6 and B3** — mass, greens, alarm rows, no `Air` event at 120 s, nothing in
+   the gate between +1 s and the PID handover, `LA 6` at ~46 s, no SV step at
+   105 s, and the auto-DROP chain firing within a second or two of the mark.
+
+**The read.** `BT − background` on the 0.5 s grid at 10 s marks over 100-320 s;
+the minimum and its time over 120-230; the rms over 120-230; and **the swing from
+100 s and from 120 s as well as the absolute minimum — report all three.**
+Baseline, roast 62 against `v4`: **−1.50 @ 179 s, rms 1.06, swings −1.66 and
+−1.12.** Also the 120 s → DROP tracking rms (roast 62's **0.67** is the record),
+the four checks, and `HT` in the 130-200 / 200-300 / 300-370 windows against
+roast 62's **63.18 / 67.95 / 70.89**.
+
+**The outcome table is state-history-residual.md § The drying term § 4, written
+before the roast.** Its one non-obvious row: if the minimum stays near **−1.4 at
+≈179 s** while the swings fall to about **−0.76 and −0.61**, the term is the
+right size and the loop did not take the front-end rate — that is the computed
+pessimistic limit arriving, it is **not** a reason to refit the magnitude, and it
+is an argument for feedforward (step 9). **On roast 62 the three reference points
+agreed; here they are designed to disagree if the loop did not follow**, which is
+a different failure from a dirty entry and must not be read as one. `e` at 100 s
+is the single most diagnostic sample: about **+0.1** if the loop delivered the
+lead, about **−0.85** if it did not.
+
+**Over-correction is a real outcome and must be reported as one**: `e` positive
+over 130-200 means the term is too large, and that is as informative as the dip
+surviving. A **new** feature, or the dip moving, gets recorded and not forced
+into the model.
 
 ## NEXT — remaining on-roaster validation
 
@@ -1464,12 +1505,13 @@ and v0.20.0. Two items remain.
 |---|---|---|---|
 | ~~**P**~~ | **DONE — roast 62, 2026-09-13.** Entry slope −0.03 degC/min, fan step measured at 1.4-1.7 degC. Was: re-ask Phase B's question with the charge matched — preheat fan 58, **CHARGE when `T_inlet` reads 141.8 ± 0.5**, step fan 58 → 64 at −5 s, fan 64 held for the roast. Background and `.aset` unchanged. Reproduces roast 56's charge on both variables; the only change against 56 is the fan step. **Unscored unless the 85-115 s entry slope is inside ±2 degC/min** | 1 real batch | `..._phaseB.aset` + `profile_400g_m5C_v4.alog` |
 | **Q** | **the settled-fan preheat, as a deliberate one-variable change** — fan 64 from the start of the preheat, `T_inlet` fixed at 141.8, CHARGE when BT flat 2 min. Measures the settled precharge-inlet gain and retires the fan-step burst | 1 real batch, after P | same |
-| **L** | **the latent-heat term** in `make_background.py`'s RoR spec — **now unblocked, size it on roast 62** (residual bottoms −1.50 at 179 s, 14 s before DRY END). the RoR family is smooth-by-construction with four parameters pinned by four constraints, so this is a fifth shape term, and it must be sized on a roast that entered the window flat. (`--h-fus` is heat of *fusion* in the charge dip, a different quantity.) | authoring + 1 batch to score | `make_background.py` |
+| **L** | **the latent-heat term — AUTHORED 2026-09-13, one roast needed to score it.** `make_background.py` carries it and `artisan/profile_400g_m5C_dry_v7.alog` is the background; sizing, desk check and the written-down prediction are state-history-residual.md § The drying term, and the scoring procedure is § Row L below. Against roast 62 the background is the only change | 1 real batch | `..._phaseB.aset` + `profile_400g_m5C_dry_v7.alog` |
+| **M** | **correct the back-half marks to the lot's own numbers** — `--fcs 399:197.4 --ror-at-fcs 9.1` from `beans.py --coffee C1043`, against the retired pooled 198.8 / 8.3 that `v4` and `v7` both carry. Worth **+1.1 degC at 90-120 s and −0.5…−1.8 across 220-320 s**, so it cannot ride along with anything else; it is why row L held v4's marks | 1 real batch, after L | `make_background.py` |
 | **9** | **step 9** — the FF base schedule with the PID as a trim (§ Step 9). Gated on the `.aset` half and the `--dip` question, not on more roasts | 1 real batch | new |
 
 **B is done** (roast 60, 2026-09-13) and it ruled out the fan as the whole
 cause — but its own preheat drifted off spec and cost it the measurement, so
-**P comes first and L is gated on it.** P reproduces roast 56's charge rather
+**P came first and L was gated on it; P landed on roast 62 and L is authored.** P reproduces roast 56's charge rather
 than adopting the new preheat spec, because roast 56's is the only configuration
 with a *demonstrated* flat entry and the residual question has been blocked for
 five roasts; Q adopts the spec once the residual is settled. P changes nothing but the preheat, and

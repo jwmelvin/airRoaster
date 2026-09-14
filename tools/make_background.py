@@ -9,10 +9,11 @@ USAGE -- the whole recipe is four lines; tools/README.md is the orientation.
         --compare artisan/<the background it replaces>.alog --out artisan/<new>.alog
 
 Pass --mass and --greens-temp for the roast you are ACTUALLY about to run --
-never scale.  Read the printed check block before loading it: all FOUR
-constraints at 0.00, RoR monotone both sides of the peak, and the 30-120 s row
-against --compare.  The rest of this docstring is why the curve is shaped this
-way.
+never scale.  --moisture-greens sizes the drying term and is on the roast's own
+`moisture_greens` field.  Read the printed check block before loading it: all
+FOUR constraints at 0.00, RoR monotone both sides of the peak, and the 30-120 s
+row against --compare.  The rest of this docstring is why the curve is shaped
+this way.
 
 `make_charge_background.py` **merges** a computed dip into an existing Designer
 curve and smoothsteps back onto it.  That was the right move while the ramp was
@@ -94,6 +95,35 @@ early to still make DRY END).  That is a background you can attribute a roast
 to.  See `fit` for why the peak's *time* and not its height, and
 tools/README.md for the operator-facing version.
 
+**AND THE SPEC CARRIES A DRYING TERM (2026-09-13, runbook row L).**  Everything
+above describes a curve whose RoR is a smooth ``rise x fall`` -- and a bed that
+is still wet cannot make it.  Every cascade roast falls below its own background
+between about 110 and 200 s and recovers by 300; roast 62, the only one to enter
+that window flat (entry slope -0.03 degC/min over 85-115 s), leaves **1.5 degC**
+of it after the 120 s fan step is accounted for.  Through the descent the loop
+is not rejecting it -- the feature's ~100 s period is 2.1x the loop's 213 s
+crossover, where a 33.7 degC phase margin gives ``|S| ~ 1`` -- so the RoR deficit
+reads the load directly.  The slow tail after 200 s is loop dynamics and is NOT
+load; nothing here is fitted to it.
+
+    RoR(u) = rise(u) * fall(u) / (1 + K*g(BT))
+
+``g(BT)`` is the free water released per degC of BT over a window, normalised so
+the term costs exactly ``K`` degC of BT however fast the curve crosses it; ``K``
+comes from the water mass.  **It is written in BT and not in time because that
+is what the roasts say**: the deficit ends at BT 138-141 on roasts 56, 57, 60 and
+62 alike -- not at DRY END (BT 149), not at a fixed second.  See
+`drying_release`, `drying_K` and `build`, and the block above them for which
+parts are measured and which are assumed.
+
+The four-constraint solve re-converges with the term in place, so DRY END, FCs,
+RoR@FCs and the RoR peak are still hit to 1e-14.  What the term changes is the
+*shape* before DRY END: at 400 g / 11.0 % it asks for about **+1 degC/min more
+rate over 50-95 s and 1.5 degC/min less over 105-145 s**, leaving BT from 160 s
+to DROP untouched to 0.1 degC.  That is the intervention -- the bed is brought
+along before the water boils and the curve then backs off while it does.
+``--no-drying`` authors the old curve for comparison.
+
     .venv/bin/python tools/make_background.py --mass 400 --greens-temp -12
     .venv/bin/python tools/make_background.py --mass 400 --greens-temp -12 \\
         --decline linear --compare artisan/profile_400g_m12C_v2.alog
@@ -108,6 +138,7 @@ import sys
 
 import numpy as np
 from scipy.optimize import least_squares
+from scipy.special import beta as beta_fn
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'analysis'))
 
@@ -148,6 +179,83 @@ DEVELOPMENT_DEFAULT = 28.0    # s from FCs to DROP
 # deliberately, one roast at a time, like any other design number.
 ROR_PEAK_AT_DEFAULT = 53.0    # s since CHARGE
 
+# --- the drying (latent-heat) term, 2026-09-13, runbook row L -------------
+# The RoR specification above is a smooth rise-times-fall and carries no
+# evaporative load, so a real roast falls behind it while the bed is still wet.
+# Roast 62 -- the only roast to enter the measurement window flat (entry slope
+# -0.03 degC/min over 85-115 s) -- measures the deficit at 1.5-1.6 degC of BT,
+# bottoming at 179 s (minimum -1.50 degC; 1.63 degC integrated across the
+# window).  See state-history-residual.md § The drying term.
+#
+# WHAT IS MEASURED and WHAT IS ASSUMED, because one roast cannot identify both:
+#
+#   measured, roast 62      the WINDOW.  The RoR deficit crosses zero at
+#                           BT 138-141 on roasts 56, 57, 60 and 62 alike -- not
+#                           at DRY END (BT 149) and not at a fixed second, which
+#                           is why this term is written in BT.
+#   measured, roast 62      the TOTAL, K = 1.63 degC of BT at 400 g / 11.0 %,
+#                           fitted over the descent (100-175 s) to rms
+#                           0.076 degC, worst 0.21.
+#   assumed (physics)       the onset, BT 100: water boils.  With p = 1 the term
+#                           leaves BT 100 at zero and grows linearly, so it only
+#                           clears the residual's own 0.1 degC quantisation
+#                           around BT 105 -- which is where roast 62's deficit
+#                           is first visible.  The boiling point is the physics;
+#                           BT 104-105 is what the measurement can say.
+#   assumed (physics)       that K scales with the water mass and inversely with
+#                           the charge's heat capacity -- the `eta` relation
+#                           below.  NOTHING here measures that scaling; it is
+#                           what makes the term transfer to another mass or
+#                           another lot's moisture instead of being a constant
+#                           fitted to one roast.
+#   weakly measured         the shape exponents.  Pinning p = 1 (a C1 start at
+#                           the boiling point) the descent fits best at q = 1.4,
+#                           but q = 1.0 costs 0.016 degC of rms and p free lands
+#                           at 0.64/0.99 for none at all.  The roast says the
+#                           release is a single bump across the window; it does
+#                           not pin its exponents.
+DRY_BT_ON = 100.0             # degC, water boils
+DRY_BT_OFF = 140.0            # degC, measured: the deficit is spent
+DRY_P, DRY_Q = 1.0, 1.4       # release-profile exponents, x^p (1-x)^q
+DRY_ETA = 0.0156              # lumped efficiency, fitted to roast 62 (see below)
+H_VAP = 2260.0                # J/g, latent heat of vaporisation of water
+MOISTURE_DEFAULT = 11.0       # %, `moisture_greens` on every roast since 56
+
+
+def drying_release(bt, bt_on=DRY_BT_ON, bt_off=DRY_BT_OFF, p=DRY_P, q=DRY_Q):
+    """``g(BT)``: the fraction of the charge's free water released per degC.
+
+    Normalised so that ``integral of g dBT`` over the window is exactly 1, which
+    is what makes the term's total cost independent of how fast the roast
+    crosses the window -- see `build`.  Returns ``(g, dg/dBT)``.
+    """
+    span = bt_off - bt_on
+    x = np.clip((np.asarray(bt, dtype=float) - bt_on) / span, 0.0, 1.0)
+    inside = (x > 0.0) & (x < 1.0)
+    norm = beta_fn(p + 1.0, q + 1.0) * span
+    g = np.where(inside, x ** p * (1.0 - x) ** q, 0.0) / norm
+    with np.errstate(invalid='ignore', divide='ignore'):
+        dg = np.where(inside,
+                      p * x ** (p - 1.0) * (1.0 - x) ** q
+                      - q * x ** p * (1.0 - x) ** (q - 1.0), 0.0) / (norm * span)
+    return g, np.nan_to_num(dg)
+
+
+def drying_K(mass, moisture, eta=DRY_ETA, c_b=1.7, C_ch=0.0, h_vap=H_VAP):
+    """Total BT the drying term removes, degC.
+
+    ``eta * m_water * h_vap / (m*c_b + C_chamber)`` -- the charge's latent load
+    divided by the heat capacity the dip model already uses, times a lumped
+    efficiency.  **eta is not an efficiency of evaporation.**  It absorbs two
+    things this data cannot separate: the fraction of the charge's water that
+    actually leaves below BT 140 (most of it does not -- roast 62 lost 11.40 %
+    of its mass over the whole roast, dry matter included), and the fact that a
+    roaster is a flow system rather than a calorimeter, so only part of a latent
+    load ever appears as a BT deficit at all.  What roast 62 measures is the
+    product; what is assumed is that the product scales with water mass.
+    """
+    return eta * mass * moisture / 100.0 * h_vap / (mass * c_b + C_ch)
+
 
 def _mark(s):
     """``<seconds>:<BT>`` or ``m:ss:<BT>``."""
@@ -156,6 +264,12 @@ def _mark(s):
     t = (float(parts[0]) if len(parts) == 2
          else float(parts[0]) * 60.0 + float(parts[1]))
     return t, bt
+
+
+def _pair(s):
+    """``<a>:<b>`` -- two floats, for the drying window and its exponents."""
+    a, b = s.split(':')
+    return float(a), float(b)
 
 
 def ror_spec(u, params, decline='exp'):
@@ -187,6 +301,10 @@ def ror_spec_deriv(u, params, decline='exp'):
     ``argmax`` over the 1 s grid would be a staircase the least-squares step
     cannot descend.  Not clipped at zero the way `ror_spec` is -- the clip only
     ever bites well past DROP, and the peak is never there.
+
+    This is the derivative of the UNLOADED specification.  With the drying term
+    on, `fit` adds the correction rather than this function, because the term is
+    a function of BT and BT is only known once the curve has been built.
     """
     tau_r = params[0]
     uu = np.clip(u, 0.0, None)
@@ -207,18 +325,54 @@ def ror_spec_deriv(u, params, decline='exp'):
     return d_rise * fall + rise * d_fall
 
 
-def build(t, dip_bt, i_tp, params, decline='exp'):
-    """BT over ``t``: the dip up to its turning point, the spec after it."""
+def build(t, dip_bt, i_tp, params, decline='exp', dry_K=0.0, dry=None):
+    """BT over ``t``: the dip up to its turning point, the spec after it.
+
+    With ``dry_K`` at 0 this is a cumulative sum of the RoR specification, as it
+    has always been.
+
+    THE DRYING TERM.  The water leaves as a function of **BT**, not of the clock
+    -- the RoR deficit ends at BT 138-141 on every roast that has been read, not
+    at DRY END and not at a fixed second -- so the rate at which it leaves is
+    ``m_w * g(BT) * dBT/dt``, proportional to the rate the roast is actually
+    making.  Writing that out,
+
+        RoR = S(u) - K*g(BT)*RoR        ->        RoR = S(u) / (1 + K*g(BT))
+
+    where ``S`` is the unloaded specification.  That is closed-form rather than
+    implicit, and it has the property the term is built around: **the BT it
+    removes across the window is exactly K**, however fast or slow the curve
+    crosses it, because the integral of ``g`` over the window is 1.
+
+    The RoR now depends on the BT reached at each step, so the integration is
+    sequential -- forward Euler on the same grid, which adds 0.05 degC against
+    the same curve integrated at 0.05 s.  (The 1 s left-Riemann sum this file
+    has always used is itself worth 0.75 degC against 0.05 s, all of it at the
+    RoR peak; the drying term neither causes that nor makes it worse, and the
+    fit is run on the same grid the file ships on, so the marks are exact for
+    the curve Artisan actually plays.)  ``dry`` carries the window and the
+    exponents as a dict for `drying_release`.
+    """
     u = t - t[i_tp]
     R = ror_spec(u, params, decline)
     R[:i_tp + 1] = 0.0
     y = np.array(dip_bt, dtype=float)
     dt = float(t[1] - t[0])
-    y[i_tp:] = dip_bt[i_tp] + np.cumsum(np.r_[0.0, R[i_tp:-1]]) * dt / 60.0
+    if dry_K <= 0.0:
+        y[i_tp:] = dip_bt[i_tp] + np.cumsum(np.r_[0.0, R[i_tp:-1]]) * dt / 60.0
+        return y, R
+    kw = dry or {}
+    bt = float(dip_bt[i_tp])
+    for i in range(i_tp, len(t)):
+        g = drying_release(bt, **kw)[0]
+        R[i] = R[i] / (1.0 + dry_K * float(g))
+        y[i] = bt
+        bt = bt + R[i] * dt / 60.0
     return y, R
 
 
-def fit(t, dip_bt, i_tp, marks, decline='exp', ror_mark=None, peak_at=None):
+def fit(t, dip_bt, i_tp, marks, decline='exp', ror_mark=None, peak_at=None,
+        dry_K=0.0, dry=None):
     """Fit the spec so the curve passes through the marks.
 
     ``marks`` are ``(t, BT)`` pairs.  ``ror_mark``, if given, is a
@@ -287,12 +441,23 @@ def fit(t, dip_bt, i_tp, marks, decline='exp', ror_mark=None, peak_at=None):
     u_peak = None if peak_at is None else peak_at - float(t[i_tp])
 
     def resid(p):
-        y, R = build(t, dip_bt, i_tp, p, decline)
+        y, R = build(t, dip_bt, i_tp, p, decline, dry_K, dry)
         out = [float(np.interp(tm, t, y)) - bm for tm, bm in marks]
         if ror_mark is not None:
             out.append(float(np.interp(ror_mark[0], t, R)) - ror_mark[1])
         if u_peak is not None:
-            out.append(float(ror_spec_deriv(u_peak, p, decline)) * peak_w)
+            d = float(ror_spec_deriv(u_peak, p, decline))
+            if dry_K > 0.0:
+                # RoR = S/(1+K g(BT)), so dRoR/du = [S' - K g' RoR^2/60]/(1+K g)
+                # and the positive prefactor does not move the root.  g' is zero
+                # wherever the peak belongs (BT ~72 at 53 s, the window opens at
+                # 100), but a peak pushed into the drying window would otherwise
+                # be solved against the wrong derivative, silently.
+                bt_pk = float(np.interp(peak_at, t, y))
+                r_pk = float(np.interp(peak_at, t, R))
+                dg = float(drying_release(bt_pk, **(dry or {}))[1])
+                d = d - dry_K * dg * r_pk * r_pk / 60.0
+            out.append(d * peak_w)
         return out
 
     best = None
@@ -343,7 +508,33 @@ def main():
     ap.add_argument('--template', default=TEMPLATE,
                     help="only for the file's Artisan metadata; no curve is read")
     ap.add_argument('--compare', default=None, help='an existing background to print beside')
-    ap.add_argument('--h-fus', type=float, default=0.0)
+    ap.add_argument('--moisture-greens', type=float, default=MOISTURE_DEFAULT,
+                    help='%% water in the greens, as entered in Artisan '
+                         f'(default {MOISTURE_DEFAULT:.1f}, every roast since '
+                         '56). Sets the SIZE of the drying term: the term is '
+                         'proportional to the water mass')
+    ap.add_argument('--drying-eta', type=float, default=DRY_ETA,
+                    help='the drying term\'s lumped efficiency (default '
+                         f'{DRY_ETA:.4f}, fitted to roast 62). Not an '
+                         'evaporation efficiency -- see `drying_K`')
+    ap.add_argument('--no-drying', action='store_true',
+                    help='author without the latent-heat term, i.e. the '
+                         'pre-2026-09-13 curve. For regenerating an old '
+                         'background to compare against')
+    ap.add_argument('--drying-window', type=_pair, default=(DRY_BT_ON, DRY_BT_OFF),
+                    help='<BT on>:<BT off> for the drying term (default '
+                         f'{DRY_BT_ON:.0f}:{DRY_BT_OFF:.0f}). The onset is the '
+                         'boiling point; the end is measured -- the RoR deficit '
+                         'crosses zero at BT 138-141 on roasts 56/57/60/62')
+    ap.add_argument('--drying-shape', type=_pair, default=(DRY_P, DRY_Q),
+                    help='<p>:<q> exponents of the release profile '
+                         f'x^p (1-x)^q (default {DRY_P:.1f}:{DRY_Q:.1f}). '
+                         'Weakly identified -- q = 1.0 costs 0.016 degC of rms '
+                         'on roast 62')
+    ap.add_argument('--h-fus', type=float, default=0.0,
+                    help='heat of FUSION, J/g, for a frozen charge in the dip '
+                         '-- a different quantity from the drying term above, '
+                         'and settled under ~1 J/g')
     ap.add_argument('--out', default=None)
     ap.add_argument('--no-write', action='store_true')
     args = ap.parse_args()
@@ -397,8 +588,24 @@ def main():
               "rest; BT at 60 s can land anywhere\n       over a ~9 degC range. "
               "For comparison against old files only.")
 
-    params, err = fit(t, dip_bt, i_tp, marks, args.decline, ror_mark, peak_at)
-    bt, R = build(t, dip_bt, i_tp, params, args.decline)
+    dry = {'bt_on': args.drying_window[0], 'bt_off': args.drying_window[1],
+           'p': args.drying_shape[0], 'q': args.drying_shape[1]}
+    dry_K = 0.0 if args.no_drying else drying_K(
+        args.mass, args.moisture_greens, args.drying_eta, c_b, C_ch)
+    if args.no_drying:
+        print("   *** --no-drying: no latent-heat term. The curve asks the bed "
+              "for rate it cannot\n       make while it is still wet; roast 62 "
+              "measures that as 1.5 degC of BT.")
+    else:
+        print(f"   drying: {args.moisture_greens:.1f} % of {args.mass:.0f} g = "
+              f"{args.mass * args.moisture_greens / 100.0:.1f} g of water; "
+              f"eta {args.drying_eta:.4f}\n        -> K = {dry_K:.2f} degC "
+              f"removed across BT {dry['bt_on']:.0f}-{dry['bt_off']:.0f}, "
+              f"shape x^{dry['p']:.1f} (1-x)^{dry['q']:.1f}")
+
+    params, err = fit(t, dip_bt, i_tp, marks, args.decline, ror_mark, peak_at,
+                      dry_K, dry)
+    bt, R = build(t, dip_bt, i_tp, params, args.decline, dry_K, dry)
 
     names = ['DRY END', 'FCs', 'DROP']
     print("\n   mark      target            authored          error")
@@ -420,6 +627,12 @@ def main():
     # stationary point.  Refine on a 0.1 s grid for reporting.
     uf = np.arange(0.0, float(t_drop - t[i_tp]), 0.1)
     Rf = ror_spec(uf, params, args.decline)
+    if dry_K > 0.0:
+        # the same attenuation the built curve carries, off the built BT.  It is
+        # 1.000 wherever the peak belongs -- BT ~72 at 53 s against a window
+        # that opens at 100 -- but not if someone pushes the peak late.
+        Rf = Rf / (1.0 + dry_K
+                   * drying_release(np.interp(t[i_tp] + uf, t, bt), **dry)[0])
     j_pk = int(np.argmax(Rf))
     t_pk, R_pk = float(t[i_tp] + uf[j_pk]), float(Rf[j_pk])
     if peak_at is not None:
@@ -485,7 +698,12 @@ def main():
            f"{float(np.interp(t_drop, t, bt)):.1f} degC."
            if dev_mode else "DRY END/FCs/DROP.")
         + (f" RoR peak pinned at {peak_at:.0f} s." if peak_at is not None
-           else " RAMP UNPINNED (--free-ramp): underdetermined."))
+           else " RAMP UNPINNED (--free-ramp): underdetermined.")
+        + (f" Drying term: {args.moisture_greens:.1f} % moisture, eta "
+           f"{args.drying_eta:.4f} -> K {dry_K:.2f} degC over BT "
+           f"{dry['bt_on']:.0f}-{dry['bt_off']:.0f}, x^{dry['p']:.1f}"
+           f"(1-x)^{dry['q']:.1f}." if dry_K > 0.0
+           else " NO drying term (--no-drying)."))
     out = args.out or os.path.join(
         REPO, 'artisan',
         f"profile_{args.mass:.0f}g_{args.greens_temp:+.0f}C_authored.alog"

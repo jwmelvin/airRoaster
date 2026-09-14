@@ -41,13 +41,32 @@ survives at fan 64.** Phase A's ceiling arithmetic said 2.68-3.93, so the fan
 delivers about half of it; the Phase B figure of 0.72-1.22 is superseded, and it
 was too low because roast 60 never entered the window flat.
 
-**Next is runbook row L — the latent-heat term — and it is now sizeable.** What
-survives bottoms at **179 s, 14 s before DRY END**, and roast 62 is the clean
-roast to author it against. The descent sits at ~2× the loop's crossover, where
-`|S| ≈ 1`, so through the descent the error is approximately the load's own
-signature (§ the ringing test). `make_background.py`'s RoR family is smooth by
-construction with four parameters pinned by four constraints, so this is a fifth
-shape term; `--h-fus` is heat of *fusion* in the charge dip, a different quantity.
+**Row L is authored and the next thing needed is one roast to score it.** The
+term is in `make_background.py` and the background is
+**`artisan/profile_400g_m5C_dry_v7.alog`**; the sizing, the desk check and the
+written-down prediction are state-history-residual.md § The drying term. In
+short:
+
+```
+RoR(u) = rise(u) * fall(u) / (1 + K*g(BT))     K = 1.62 degC at 400 g / 11.0 %
+```
+
+`g(BT)` is the free water released per degC of BT over **BT 100 → 140**, and the
+window's far end is the measured part: the RoR deficit crosses zero at **BT
+138-141 on roasts 56, 57, 60 and 62 alike** — not at DRY END (BT 149), not at a
+fixed second. `K` is written as `eta·m_w·h_vap/(m·c_b + C_chamber)` so it scales
+with water mass; `eta = 0.0156` is one lumped number fitted to roast 62, and
+what it lumps is in the record. `--h-fus` remains heat of *fusion* in the charge
+dip, a different quantity.
+
+**Two things to carry into scoring it.** The four-constraint solve pays the
+removed rate back before the window, so `v7` differs from `v4` by **+0.85 degC at
+100 s, +0.46 at 120, and under 0.07 from 180 s to DROP** — the intervention is to
+bring the bed along before the water boils, not to lower the curve through the
+dip. And it therefore relieves only **0.89 degC of roast 62's 1.66 degC swing**
+on the curve alone; the rest depends on the loop delivering the extra front-end
+rate. **`e` at 100 s says which happened** — about +0.1 if it did, about −0.85 if
+it did not.
 
 **Then row Q** — the settled-fan preheat — and after that the fan can come down
 off 64 as a whole-roast change with no step in the window.
@@ -440,12 +459,17 @@ the recipe, the check block to read, and the traps. In short:
 
 ```
 .venv/bin/python tools/make_background.py --mass 400 --greens-temp <measured> \
-    --fcs 399:<bean FCs BT> --development 28 --out artisan/profile_400g_<T>_<tag>.alog
+    --fcs 399:<bean FCs BT> --ror-at-fcs <lot> --development 28 \
+    --moisture-greens 11.0 --out artisan/profile_400g_<T>_<tag>.alog
 ```
+
+**The current 400 g / −5 degC background is
+`artisan/profile_400g_m5C_dry_v7.alog`** — v4 plus the drying term, marks
+unchanged (§ 1).
 
 `--development` places DROP at `FCs + <seconds>` with whatever temperature
 follows; `--fcs <s>:<BT>` sets the crack mark, and the per-lot value comes from
-state-plan.md § Bean reference. Generate at the mass and charge temperature
+state-plan.md § Bean reference. `--moisture-greens` sizes the drying term. Generate at the mass and charge temperature
 actually being roasted — **never scale** (see § The mass term below).
 
 **The first-minute coupling was a solver defect, and it is fixed (2026-09-08).**
@@ -748,8 +772,8 @@ to **+0.40 degC / 1.84 s** with the error inside −1.94…+0.93 degC for the wh
 ramp; roasts 50 and 51 agree with each other to 0.5 s at every level across a
 37 degC charge difference. What is left is in the *reference* — the background
 curve — and § 1 has now put a number on it: of the 140-200 s residual, **the fan
-step was 0.72-1.22 degC and the background's missing latent-heat term owns the
-remaining 1.69.**
+step is 1.4-1.7 degC and the background's missing latent-heat term owned the
+remaining ~1.5, which is now authored into it.**
 
 ### The four things that had to be got right, and what each cost
 
@@ -811,9 +835,11 @@ preheat away from 130.2.
 
 ### What is still open, in order
 
-1. **The latent-heat term in `make_background.py`'s RoR spec** — the 1.69 degC
-   Phase B left standing. § 1; author and desk-check before spending a load.
-   The fan compensation is behind it and must be re-sized off 0.72-1.22 degC.
+1. **Score the latent-heat term** — authored 2026-09-13 into
+   `make_background.py` and `artisan/profile_400g_m5C_dry_v7.alog`, sized on
+   roast 62, desk-checked and predicted. § 1 and state-plan.md § Row L. One
+   roast, the background the only change. The fan compensation is behind it and
+   must be re-sized off the measured 1.4-1.7 degC.
 2. **Refit the dip model's `BT_c` term** — and on the **precharge inlet**, not
    the preheat BT. § 1b: the gains are 0.94 and 0.100 respectively, and the
    inlet one is free to test.

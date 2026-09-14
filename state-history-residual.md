@@ -39,6 +39,7 @@
 - The preheat spec: fix the inlet, not BT
 - Roast 62 — row P lands: the fan step is worth 1.4-1.7 degC
 - The precharge inlet does not move the turning point — it sets the PID handover
+- The drying term — row L authored on roast 62, and what the four-constraint solve does to it
 
 ## The record
 
@@ -1803,3 +1804,219 @@ their 0.11 inlet gain trustworthy; roast 56's 1.77 gap is why it cannot be paire
 with either on the charge. Record `greens_temp` *and* how long the beans were out
 of the freezer — the entered temperature was identical across all four and did
 not predict the proxy.
+
+### The drying term (2026-09-13) — row L authored on roast 62, and what the four-constraint solve does to it
+
+Desk work, no beans. Roast 62 is the only roast that entered the measurement
+window flat, so it is the only one whose residual is not contaminated by a
+charge-phase transient, and it is what the term is sized on. The other three
+readable roasts enter at −1.22 (56), −6.65 (57) and −5.01 (60); **nothing here
+is fitted to 57 or 60.**
+
+#### 1. What the residual says, read as a load rather than as an error
+
+The feature's period is near 100 s, **2.1× the loop's 213 s crossover period**,
+and at 2× crossover a 33.7 degC phase margin gives `|S| ≈ 1` — essentially no
+rejection. So through the descent the RoR deficit `−d(e)/dt` reads the load
+directly (§ Is the dip the loop ringing?). Fitting `e = BT − background` over a
+centred 30 s window and differentiating:
+
+```
+roast 62   t     100    110    120    130    140    150    160    170    175    180
+           BT  105.2  110.8  116.2  121.1  126.0  130.6  135.2  139.4  141.5  143.5
+            e  +0.16  -0.16  -0.38  -0.82  -1.00  -1.22  -1.20  -1.36  -1.36  -1.40
+   deficit, degC/min
+                0.03   1.86   2.15   1.55   1.01   0.77   0.72   0.34  -0.19  -0.60
+```
+
+**The deficit turns on between BT 105 and BT 110, peaks at about 2.2 degC/min
+near BT 114, and crosses zero at BT 141.** It is the window's far end that
+transfers, and it transfers cleanly:
+
+| | roast 56 | roast 57 | roast 60 | **roast 62** |
+|---|---|---|---|---|
+| deficit crosses zero at | 174 s | 174 s | 167 s | **174 s** |
+| **BT there** | **139.7** | **140.2** | **138.0** | **140.8** |
+
+Four roasts, three backgrounds, two fan schedules, DRY END anywhere from 193.4
+to 197.0 s — and the deficit ends at **BT 138-141** every time, 9-11 degC below
+DRY END. **The load is indexed on bean temperature, not on the clock**, which is
+what makes it a term in BT and not a term in `t`.
+
+**And the fan step falls out of the same arithmetic as a cross-check nobody
+asked for.** Roast 56's deficit minus roast 62's — same background, same marks,
+the only difference the `Air 64 → 60` at 120 s — is `+1.85 / +3.34 / +3.20 /
++1.43 / +0.14` at 130 / 140 / 150 / 160 / 170 s: a single hump that starts at the
+step, peaks 25 s later and is spent by 175 s, integrating to about 1.6 degC.
+That is Phase A's bench step response (bottoms 54 s after the step, recovered by
+130 s) and it is the 1.41-1.71 degC the fan was independently measured at. The
+two roasts' drying components cancel and what is left is the fan. Nothing in the
+term is fitted to it; it is a consistency check that passed.
+
+#### 2. The term
+
+```
+RoR(u) = rise(u) * fall(u) / (1 + K*g(BT))
+```
+
+`g(BT)` is the fraction of the charge's free water released per degC of BT — a
+single bump `x^p (1-x)^q` on `x = (BT − 100)/(140 − 100)`, normalised so
+`∫g dBT = 1`. Written that way the load is `m_w·g(BT)·dBT/dt`, proportional to
+the rate the roast is actually making, and the attenuation is the closed-form
+solution of `RoR = S − K·g·RoR` rather than an implicit one. **The BT it removes
+across the window is then exactly `K`, however fast or slow the curve crosses
+it** — which is the property that makes a term written in BT well-posed.
+
+`K` comes from the water mass:
+
+```
+K = eta * m_w * h_vap / (m*c_b + C_chamber)      m_w = mass * moisture_greens/100
+  = 0.0156 * 44.0 g * 2260 J/g / 955.5 J/K  =  1.62 degC        (400 g, 11.0 %)
+```
+
+Fitted over roast 62's descent (100-175 s) with `p = 1`, the fit is **K = 1.63,
+q = 1.4, rms 0.076 degC, worst 0.21** across 150 samples of the 0.5 s grid.
+
+**What is measured and what is assumed, because one roast cannot identify both:**
+
+- **measured** — the window's far end (BT 138-141, four roasts) and the total
+  (1.63 degC at 400 g / 11.0 %);
+- **assumed** — the onset at BT 100, because water boils. With `p = 1` the term
+  leaves BT 100 at zero and grows linearly, so it first clears the residual's own
+  0.1 degC quantisation near BT 105, which is where roast 62's deficit becomes
+  visible. The boiling point is the physics; BT 104-105 is what the measurement
+  can say;
+- **assumed** — that `K` scales with water mass and inversely with the charge's
+  heat capacity. **Nothing here measures that**, and it is the whole reason the
+  magnitude is written physically rather than as a constant: it is what lets the
+  term transfer to 300 g, or to a lot that reads 9 % instead of 11 %;
+- **`eta = 0.0156` is not an evaporation efficiency.** 44 g of water at 2260 J/g
+  over 955.5 J/K is 104 degC of BT; 1.6 degC of it lands in the window. `eta`
+  absorbs the fraction of the charge's water that actually leaves below BT 140
+  (roast 62 lost 11.40 % of its mass over the *whole* roast, dry matter
+  included) and the fact that a roaster is a flow system rather than a
+  calorimeter, so only part of a latent load ever appears as a BT deficit at all.
+  It is one lumped number carrying two unknowns, and the roast measures their
+  product;
+- **weakly measured** — the exponents. `q = 1.0` costs 0.016 degC of rms against
+  the fitted 1.4, and freeing `p` lands at 0.64/0.99 for nothing at all. The
+  roast says the release is a single bump across the window; it does not pin its
+  shape.
+
+#### 3. `profile_400g_m5C_dry_v7.alog`, and the marks were deliberately not touched
+
+```
+.venv/bin/python tools/make_background.py --mass 400 --greens-temp -5 \
+    --fcs 399:198.8 --ror-at-fcs 8.3 --development 28 --moisture-greens 11.0 \
+    --compare artisan/profile_400g_m5C_v4.alog \
+    --out artisan/profile_400g_m5C_dry_v7.alog
+```
+
+`--fcs 399:198.8 --ror-at-fcs 8.3` are **v4's own marks, not the lot's.**
+`beans.py` now reads 197.4 / 9.1 for `C1043` and v4's 198.8 is the retired
+pooled-across-three-coffees figure, so correcting it is wanted — but not in this
+roast. Regenerating onto 197.4 / 9.1 moves the curve **+1.1 degC at 90-120 s and
+−0.5 to −1.8 degC across 220-320 s**, which is larger than the effect being
+measured and lands inside the window it is scored in. Held at v4's marks, the
+tool's own no-drying regeneration reproduces the v4 **file** to 0.17 degC, so the
+drying term is the only thing that changed. The mark correction is runbook row M.
+
+Desk check, all of it:
+
+```
+   mark      target            authored          error
+   DRY END     192 s (3:12)   149.6    149.6    -0.00 degC
+   FCs         399 s (6:39)   198.8    198.8    +0.00 degC
+   RoR@FCs     399 s             8.3      8.3    +0.00 degC/min
+   DROP        427 s (7:07)     ---    202.4      --   <- 28 s past FCs, not pinned
+   RoR peak     53 s (0:53)      --     53.0    +0.00 s
+
+   RoR peaks at 46.0 degC/min at 53 s (v4: 44.9; roast 54's machine delivered 72)
+   monotone rising TP->peak: True;  monotone falling peak->DROP: True
+   drying: 11.0 % of 400 g = 44.0 g of water; eta 0.0156
+        -> K = 1.62 degC removed across BT 100-140, shape x^1.0 (1-x)^1.4
+```
+
+**The difference from v4 is the intervention, and it is not where one might
+expect it:**
+
+```
+   t      40     60     80    100    120    140    160    180    200 .. 427
+ dBT   -0.01  +0.28  +0.66  +0.85  +0.46  +0.05  -0.10  -0.04  +0.02 .. +0.01
+ dRoR  +0.27  +1.17  +1.04  -0.54  -1.43  -0.91  -0.00  +0.21  +0.13 .. +0.02
+```
+
+**About +1.2 degC/min more rate over 50-90 s and 1.4 degC/min less over
+105-140 s, and nothing after 160 s** (`|dBT| ≤ 0.07` from 180 s to DROP). Over
+the 120-300 s window the two curves differ by at most **0.46 degC, and that is at
+120 s**, the window's own left edge.
+
+**That is the four-constraint solve doing its job, and it caps what the term can
+buy.** The term removes 1.62 degC of BT inside BT 100-140, all of it before the
+DRY END pin at 192 s / 149.6, so the solve pays it back as extra rate earlier.
+The net effect is that over 100-180 s `v7` asks for **0.89 degC less BT gain than
+v4** against roast 62's measured **1.66 degC** of swing. **The term relieves
+about half the swing on the curve alone; the other half has to come from the loop
+actually delivering the extra front-end rate.** The intervention is to bring the
+bed along *before* the water boils and then spend that lead, not to lower the
+curve through the dip.
+
+#### 4. The prediction, on the record before the roast
+
+Scored as `BT − background` on the 0.5 s grid, roast 62's baseline being
+**−1.50 @ 179 s, rms 1.06 over 120-230, swings −1.66 (from 100 s) and −1.12
+(from 120 s)**.
+
+**The two limits are both computable and they differ in a useful way.**
+
+*If the loop does not take the front-end offer at all* — the machine repeats
+roast 62's BT(t) exactly — then scoring roast 62's own BT against `v7` gives:
+
+```
+   t      100    120    140    160    180    200    220    240    260    280    300    320
+ e(v4)  +0.16  -0.38  -1.00  -1.20  -1.40  -0.98  -0.72  -0.40  -0.29  -0.13  -0.10  +0.07
+ e(v7)  -0.69  -0.84  -1.05  -1.10  -1.36  -1.00  -0.77  -0.47  -0.35  -0.19  -0.15  +0.03
+```
+
+minimum **−1.46 @ 179 s**, rms **1.08**, swings **−0.76 and −0.61**, entry slope
+**+0.34 degC/min**.
+
+*If the loop does take it*, `e` sits inside ±0.7 across the whole of 100-320 with
+no coherent dip.
+
+So the prediction is:
+
+| what comes back | what it means |
+|---|---|
+| \|e\| under ~0.7 across 120-230, minimum shallower than −0.7 **and at no particular second**, rms under 0.5 | the term is right and the loop delivered the lead. The residual is closed |
+| minimum still ≈ **−1.4 at ≈ 179 s** and rms ≈ **1.05**, but the swings fall to about **−0.76 and −0.61** | the term is the right size and **the loop did not take the front-end rate**. This is the pessimistic limit above, arriving almost exactly. It is not a reason to refit the magnitude — it is an argument for feedforward, i.e. step 9 |
+| minimum −0.7 to −1.0 **with the swings also roughly halved and agreeing** | partly right: refit the magnitude, keep the shape |
+| minimum unchanged near −1.5 **and** swings unchanged near −1.66 / −1.12 | the term is in the wrong place, or the load is not evaporative |
+| `e` positive over 130-200 | over-correction — the term is too large, and that is as informative as the dip surviving |
+
+**`e` at 100 s is the single most diagnostic sample.** `v7` asks for 0.85 degC
+more BT there than `v4` did. Roast 62 returned **+0.16**; if the new roast
+returns about **+0.1** again the loop delivered the lead, and if it returns about
+**−0.85** it did not. **Report the minimum, the swing from 100 s and the swing
+from 120 s all three** — on roast 62 they agreed, and here they are *designed* to
+disagree if the loop did not follow, which is a different failure from a dirty
+entry and must not be read as one.
+
+Secondary: the entry slope over 85-115 s should go slightly **positive** (the
+pessimistic limit gives +0.34), so the ±2 degC/min gate passes either way and
+does not discriminate.
+
+#### 5. Two things found in passing and not fixed
+
+- **the four-constraint solve does not reach 1e-14 everywhere**, and never did.
+  At 250 g / +25 degC the RoR@FCs constraint is missed by **1.6 degC/min**, with
+  the drying term and without it (the term makes it slightly *better*, never
+  worse) — the marks are not reachable by this family from that turning point.
+  400 g over −24…0 degC, which is every roast run so far, is exact.
+  tools/README.md § the residual note now says so; the tool has always printed
+  the number;
+- **the 1 s left-Riemann integration is worth 0.75 degC** against the same curve
+  integrated at 0.05 s, all of it at the RoR peak. The drying term neither causes
+  it nor makes it worse (its own contribution is 0.05 degC), and the fit runs on
+  the same grid the file ships on, so the marks are exact for the curve Artisan
+  actually plays. Changing it would reshape every background authored to date.
