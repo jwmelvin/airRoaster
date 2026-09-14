@@ -1453,7 +1453,7 @@ and v0.20.0. Two items remain.
 
 | # | what | costs | files |
 |---|---|---|---|
-| **P** | **repeat roast 60 with the preheat on spec** — fan 64 for the whole preheat, ≥2 min settled, **preheat BT target 139** (settled gap at fan 64 is 2.8, so inlet lands at ~141.8 = roast 56's). Background and `.aset` unchanged | 1 real batch | `..._phaseB.aset` + `profile_400g_m5C_v4.alog` |
+| **P** | **repeat roast 60 with the preheat on spec** — fan 64 from the start of the preheat, **`T_inlet` SV fixed at 141.8**, CHARGE when BT flat 2 min (BT lands 139-141, recorded not set). Background and `.aset` unchanged. Measures the settled precharge-inlet gain directly | 1 real batch | `..._phaseB.aset` + `profile_400g_m5C_v4.alog` |
 | **L** | **the latent-heat term** in `make_background.py`'s RoR spec. **Gated on P** — the RoR family is smooth-by-construction with four parameters pinned by four constraints, so this is a fifth shape term, and it must be sized on a roast that entered the window flat. (`--h-fus` is heat of *fusion* in the charge dip, a different quantity.) | authoring + 1 batch to score | `make_background.py` |
 | **9** | **step 9** — the FF base schedule with the PID as a trim (§ Step 9). Gated on the `.aset` half and the `--dip` question, not on more roasts | 1 real batch | new |
 
@@ -1755,6 +1755,14 @@ as it is (0.99 % heat per fan unit, empty and loaded agreeing).
 *effective* flow, not on where the offset sits. Sealing the leak moves the
 working point down by about as much as it moves `f0`. On that axis the operator
 is right: it is just a different number.
+
+> **Measured 2026-09-13 and the premise does not hold.** The operator sealed the
+> leaks mid-session on roast 61, inside a fan-58 rung: the settled `Inlet − BT`
+> went **+8.58 → +8.29** and duty **43.27 → 43.23 %**, inside the ±0.5 scatter of
+> a single rung, and the four post-seal rungs fit the pre-seal curve with no
+> offset. Whatever was sealed is worth **under a fifth of a fan unit**. The
+> arithmetic below is kept because it is the right arithmetic *if* a leak of that
+> size is ever found; nothing here is now a reason to act.
 
 **But the number moves toward the interlock, not away from it.** `ilFanFull = 55`,
 `ilFanMin = 48`. A 400 g floor of 58-59 has ~4 units of margin today; sealing a

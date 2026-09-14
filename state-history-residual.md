@@ -35,6 +35,8 @@
 - Is the dip the loop ringing? — no, but the loop owns its width
 - Correction — Phase B did not cleanly size the fan, and the preheat is why
 - The precharge inlet is set by the fan schedule, not by the soak
+- Roast 61 — the fan ladder at held BT, and the leak seal is a null
+- The preheat spec: fix the inlet, not BT
 
 ## The record
 
@@ -1521,3 +1523,121 @@ model being used to author a dip at a preheat point no roast has visited.
 until a deliberate pair settles the two gains. Roast 60 already supplies half of
 that pair (inlet moved, BT held); the complement is BT moved with the inlet held,
 which a fully-soaked roast at preheat BT ~139.5 would deliver.
+
+### Roast 61 (2026-09-13, 19:56) — the fan ladder at held BT, and the leak seal is a null
+
+An empty chamber with BT held at 130 by the cascade, the fan stepped 54 → 70 in
+twos and then partly back down, ~110 s a rung. **The operator sealed air leaks
+at t = 1711.8 s**, inside the descending fan-58 rung, and flagged it. Three
+questions, three answers.
+
+#### 1. There is no knee — the gap is `1/mdot` and my probe hypothesis is dead
+
+Settled `Inlet − BT` over the last 60 s of each rung, BT 130, ambient 28:
+
+| fan | 54 | 56 | 58 | 60 | 62 | 64 | 66 | 68 | 70 |
+|---|---|---|---|---|---|---|---|---|---|
+| gap | +23.71 | +16.42 | +11.78 | +7.44 | +3.64 | **+0.80** | −0.53 | −2.11 | −3.52 |
+| inlet | 154.1 | 146.8 | 142.0 | 137.7 | 133.8 | 130.9 | 129.5 | 128.0 | 126.6 |
+
+**Smooth and monotone through the whole range.** Fitting every rung from both
+legs and both sides of the seal, with a session-drift term:
+
+```
+gap = (A0 + A1*(t - 525))/(fan - f0) + B
+A0 = 492.0   A1 = -0.0412 /s (-2.47/min)   f0 = 42.83   B = -20.46
+rms 0.345 degC over 15 rungs, 4 parameters, 11 dof, fans 54-70
+```
+
+`f0 = 42.83` against Phase A's **41.9 loaded** from an entirely different
+measurement (duty, not gap). **The 60 → 64 "collapse" reported in
+§ The precharge inlet is set by the fan schedule was an artefact of mixing
+unsettled readings from two different roasts** — roast 60's fan-60 segment gave
+11.13 where the settled ladder gives 7.44, because it was seven minutes into a
+session that drifts. There is no discontinuity, so **the probe-washing
+hypothesis is withdrawn** and no further test of it is needed.
+
+**What is real is the sign change.** The gap crosses zero near fan 65 and the
+inlet settles *below* BT above it. That is the same thing Phase A saw at fans 72
+and 80 (§ Route 1 cannot be run on this machine) and it is now bracketed: it
+begins at 65, not somewhere past 70. `1/mdot` alone cannot produce it — the `B`
+term, **−20.5 degC**, is what does, and it is the part of the chamber's balance
+that does not come through the air.
+
+#### 2. The leak seal is a null, and the rung that straddles it says so
+
+| fan 58 | window | BT | Inlet | gap | HT |
+|---|---|---|---|---|---|
+| **pre-seal** | 1652-1712 | 130.00 | 138.58 | **+8.58 ± 0.51** | 43.27 |
+| **post-seal** | 1821-1881 | 130.02 | 138.31 | **+8.29 ± 0.35** | 43.23 |
+
+**−0.29 degC of gap and −0.03 % of duty**, inside the ±0.5 scatter of a single
+rung. The four post-seal rungs also fit the pre-seal curve with no offset —
+residuals +0.08, −0.43, −0.25, +0.23 against a 0.345 rms.
+
+So state-plan.md § The leak's premise — that a parallel path is stealing a
+worth-sealing fraction of the flow — **is not supported**: whatever was sealed
+was worth less than 0.3 degC of gap at fan 58, i.e. under a fifth of a fan unit.
+The operator raised the seal as a possible confound on this session; it is not
+one, and the rest of the session can be read as a single machine.
+
+#### 3. The apparent hysteresis is session drift, and it is on the numerator
+
+Every repeated rung reads lower the second time — fan 54 **23.71 → 17.01**, fan
+58 11.78 → 8.58, fan 60 7.44 → 6.18 → 5.22, fan 62 3.64 → 2.17 — and the size
+scales as `1/(fan − f0)`, which is why one `A1` absorbs all of it. **The chamber
+warms through the session and the numerator falls at 2.47 per minute**, so the
+gap drifts at **−0.117 degC/min at fan 64** and **−0.221 at fan 54**. It is not
+hysteresis in the fan and it is not the seal.
+
+**This is the number that decides the preheat spec**, § below.
+
+### The preheat spec: fix the inlet, not BT (operator, 2026-09-13)
+
+The operator: *"I propose we preheat at a fixed inlet temp, then we know the
+machine's starting point. BT is relevant to beans, not preheat air."*
+
+**Adopt it.** The ladder makes the argument quantitative. The session drift has
+to land on *some* variable: hold BT and the inlet drifts at 0.117 degC/min at
+fan 64; hold the inlet and BT drifts instead. **The precharge inlet carries most
+of the leverage on the turning point and the preheat BT is nearly inert** (§ 6;
+roast 57's BT gain is 0.100), so putting the drift on BT costs roughly a ninth of
+what putting it on the inlet costs. Over a ±10 minute uncertainty in when CHARGE
+happens that is ~0.1 degC of turning point instead of ~1.1.
+
+It is also the variable the operator *commands* — the inlet SV is set directly,
+where BT is a PID's controlled variable and the inlet is that PID's output. **A
+preheat specified in BT is specified in the one quantity the controller pins
+regardless of the machine's state**, which is what made roasts 56 and 60 look
+identical when they were 8.8 degC apart.
+
+**Spec: fan 64 from the start of the preheat, `T_inlet` SV fixed at 141.8,
+CHARGE when BT has been flat for 2 minutes. Record BT — it is a readout, not a
+setting.** Expect BT ≈ 139-141: at fan 64 the fitted gap runs +2.8 early in a
+session to +0.5 after twenty more minutes.
+
+#### Why the fan must not be stepped near CHARGE — and what it may have been doing
+
+**Roasts 56 and 57 both stepped the fan to 64 within 8 s of CHARGE**
+(58 → 64 at −5.5 s; 60 → 64 at −8 s) and the inlet had not moved at all by
+CHARGE — roast 56 read 141.9 at −1 s against a settled fan-58 value of 142.7.
+**They charged with fan-58/60 air at fan-64 flow.** Roast 60 stepped at −361 s
+and charged settled.
+
+That reconciles a contradiction § 1b could not. Read as an inlet lever, roasts 56
+and 57 say the gain is **0.11** and roasts 56 and 60 say **0.94**, which cannot
+both be true. Read as a fan-step burst, it is one story: 56 and 57 both got the
+burst and land within 1.5 degC of each other **despite 14 degC of preheat
+difference**, and 60 had no burst and lands 8.3 degC deeper.
+
+**This is a hypothesis, not a measurement** — no roast has isolated it — but it
+is the more economical explanation, and either way the instruction is the same:
+**preheat at the fan you will charge at.** A fan step in the last minute puts a
+slug of hotter air through the bed at the new flow, inside the PID-off window
+where nothing corrects it.
+
+**Row P now measures the settled inlet gain directly.** Against roast 60 — same
+settled fan 64, same background, same `.aset` — it moves the commanded inlet
+133.0 → 141.8 and nothing else. If the turning point comes back to ~61 the gain
+is near 0.94 and the inlet is the lever; if it stays near 53 the gain is near 0.1
+and the burst was doing the work in roasts 56 and 57.
