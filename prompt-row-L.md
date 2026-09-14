@@ -65,7 +65,12 @@ are measured and which are assumed — one roast cannot identify both.
 
 - the term implemented in `make_background.py`, with `--help` and the module
   docstring updated in the file's existing voice;
-- a new background authored for **400 g, `greens_temp −5.0`, `C1043`**
+- a new background authored for **400 g, `--greens-temp -5`, `C1043`** — keep the
+  standing nominal even though the dip it authors is ~5 degC too shallow
+  (background TP 59.2 against roast 62's measured 53.8). That offset is known and
+  tolerated: roast 62 shows it does not break the entry slope, and a nominal that
+  moves per roast makes backgrounds incomparable, which is the whole reason the
+  nominal exists. **Do not "fix" it inside this task**;
   (`tools/analysis/beans.py --coffee C1043` for `--fcs` / `--ror-at-fcs`),
   written to `artisan/` with a version-bumped name;
 - **the desk check, printed and pasted into the commit**: all four constraints at
@@ -96,6 +101,11 @@ change is the background.
    and 62 agree to 0.07 per 100 g and that is what makes them comparable; roast
    56 sits 1.77 off and cannot be paired with either. If the new roast is more
    than ~0.2 from roast 62, say so and treat the pairing as weakened.
+   **Pair on the proxy, never on the entered `greens_temp`** — it is a nominal
+   from an emissivity-sensitive IR reading of the bean *surface*, and two
+   independent instruments put roasts 60/62 12-17 degC colder than roast 56 while
+   the entered number was identical for all three
+   (state-current.md § 1b).
 3. **B6 and B3** from `state-plan.md § Phase B` — mass, greens, alarm rows, no
    `Air` event at 120 s, nothing in the gate between +1 s and the PID handover,
    `LA 6` at ~46 s, no SV step at 105 s, and the auto-DROP chain firing within a

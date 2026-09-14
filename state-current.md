@@ -84,21 +84,50 @@ point.** That is the whole argument and it needs no model:
   preheat BT, 0.11 per degC of precharge inlet — which is § 6 as originally
   written, and the correction in § 1b's earlier form is retracted.
 
-**What separates roast 56 from 60 and 62 is not identified.**
-`charge_state.py`'s air-corrected mixing proxy puts **60 and 62 at 15.80 and
-15.87** — the same charge to 0.07 — and **roast 56 at 14.10**, 1.77 lower. All
-four roasts logged `greens_temp −5.0`, so **the entered charge temperature does
-not explain the gap** and an earlier version of this section was wrong to read it
-as colder beans. Candidates none of the logs separate: the beans' real
-temperature differing from the entered one (time out of the freezer before
-CHARGE), a lot property drifting over six days, or proxy noise — which is
-unquantified, because no two roasts in this project have ever repeated a charge.
+**What separates roast 56 from 60 and 62 is the charge, and `greens_temp` did
+not see it.** The operator: *"they well could have been colder beans. i try to
+measure, but there's a ton of noise in the IR sensor (emissivity sensitive)."*
+**Two independent instruments agree with that and with each other:**
 
-**Two things follow for every roast from here.** Record `greens_temp` *and* how
-long the beans were out of the freezer; and treat the charge proxy as the check
-that a comparison is fair — **roasts 60 and 62 agreeing to 0.07 is what makes
-their 0.11 inlet gain trustworthy**, and roast 56's 1.77 gap is why it cannot be
-paired with either on the charge.
+| | roast 56 | roasts 60 / 62 | difference |
+|---|---|---|---|
+| entered `greens_temp` | −5.0 | −5.0 / −5.0 | **0** |
+| charge proxy → `T_bean` | −7.8 | −24.8 / −24.9 | **16.9 degC** |
+| dip model → `--greens-temp` reproducing the measured TP | ≈ −2.5 | ≈ −14.5 | **12 degC** |
+
+`charge_state.py`'s proxy is a **control-independent** BT-drop measurement;
+`charge_dip.dip` is a **fitted mixing model** inverted against the observed
+turning point. They share no data and no parameters, and both say roasts 60 and
+62 charged **12-17 degC colder than roast 56** while the entered number was
+identical. Their absolute values differ because each carries its own calibration
+assumption; only the difference is being read here.
+
+**So the entered `greens_temp` is a nominal, not a measurement** — which is
+§ Robustness over precision as originally written, now with a number on the
+error. An IR gun reads the bean *surface*, and beans out of a freezer warm at the
+surface within minutes while the core stays cold, so the reading is warm-biased
+by an amount that depends on how long they have been out. That is the shape of
+this disagreement.
+
+**And it is a bias, not scatter: roasts 60 and 62 agree to 0.07 on the proxy.**
+Whatever was done on 2026-09-13 is repeatable to better than 1 degC of bean
+temperature. **So standardise the handling rather than the measurement** — a
+fixed time out of the freezer before CHARGE, the same every roast — and use the
+proxy to verify it. Do not chase the IR reading, and do not re-nominal
+`--greens-temp` per roast; a moving nominal makes backgrounds incomparable, which
+is the whole reason the nominal exists.
+
+**One consequence to carry into authoring.** The background's dip is authored at
+the nominal, so it is systematically **too shallow** — the background's TP is
+59.2 where roast 62 delivered 53.8. Roast 62 shows a 5.4 degC dip mismatch does
+*not* break the entry slope, so this is a known tolerated offset rather than a
+fault; but it is why the loop has work to do in the first 50 s, and it is worth
+revisiting once the handling is fixed and the proxy is stable across several
+roasts.
+
+**Pair roasts on the proxy, never on the entered temperature.** Roasts 60 and 62
+agreeing to 0.07 is what makes their 0.11 inlet gain trustworthy; roast 56's
+1.77 gap is why it cannot be paired with either on the charge.
 
 ### 1c. What the precharge inlet *does* do — it sets the PID handover
 

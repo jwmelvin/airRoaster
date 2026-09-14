@@ -1758,14 +1758,26 @@ point**.
 | 62 | **15.87** | 141.9 | −5.0 | **53.8** |
 
 **Roasts 60 and 62 are indistinguishable in charge state (15.80 against 15.87)
-and roast 56 sits 1.77 lower.** All four logged `greens_temp −5.0` — an earlier
-version of this section read roast 62's then-unentered `0.0` as colder beans and
-that is withdrawn; the operator confirms −5.0 and corrected the file. **The gap
-between roast 56 and the other two is unexplained**: candidates are the beans'
-real temperature differing from the entered one, a lot property drifting over six
-days, or proxy noise, which is unquantified because no two roasts in this project
-have ever repeated a charge. **None of it affects what follows** — the inlet
-gain below is read from roasts 60 and 62, which agree on the charge to 0.07.
+and roast 56 sits 1.77 lower.** All four logged `greens_temp −5.0`, and the
+operator's account of why that does not settle it is decisive: *"they well could
+have been colder beans. i try to measure, but there's a ton of noise in the IR
+sensor (emissivity sensitive)."*
+
+**Two independent instruments say the beans were 12-17 degC colder.** The proxy
+above inverts to `T_bean` −7.8 (roast 56) against −24.8 / −24.9 (roasts 60 / 62);
+independently, `make_background.py`'s dip model needs `--greens-temp ≈ −2.5` to
+reproduce roast 56's turning point of 61.1 and `≈ −14.5` to reproduce roast 62's
+53.8. A control-independent BT-drop proxy and a fitted mixing model inverted
+against the dip share no data and no parameters, and they agree on direction and
+on size to about 30 %. **The entered number is a nominal and the IR gun reads the
+bean surface**, which warms within minutes of leaving a freezer while the core
+does not — a warm bias that grows with time out, which is exactly the shape of
+the disagreement.
+
+**It is a bias and not scatter — roasts 60 and 62 agree to 0.07** — so the fix is
+to standardise the *handling*, a fixed time out of the freezer, and verify it with
+the proxy. **None of it affects what follows** — the inlet gain below is read
+from roasts 60 and 62, which agree on the charge.
 
 - **the precharge-inlet gain is 0.11**, from roasts 60 and 62 at the same charge
   state and inlets 8.9 degC apart — and that matches roast 57's 0.11 exactly.
