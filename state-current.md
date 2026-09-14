@@ -60,8 +60,49 @@ BT to 130, then stepped to 64 at −5.5 s. At −2 s: **Inlet 142.0 / BT 130.6**
 against roast 56's 141.8 / 130.4. Both variables pinned, which the spec as
 written (fix inlet, let BT float) does not do.
 
-**And the precharge inlet's job is the PID handover, not the dip.** At +15 s the
-loop inherits whatever SV the preheat left:
+**Why it matters is § 1c: the precharge inlet sets the PID handover**, not the
+dip.
+
+### 1b. The 0.94 precharge-inlet gain is withdrawn — the inlet does not set the turning point
+
+**Roast 62 carries roast 56's precharge inlet and returns roast 60's turning
+point.** That is the whole argument and it needs no model:
+
+| roast | inlet_pre | greens | **TP** | charge proxy /100 g |
+|---|---|---|---|---|
+| 56 | **142.0** | −5.0 | **61.1** | 14.10 |
+| 57 | 155.3 | −5.0 | 62.6 | 16.92 |
+| 60 | **133.0** | −5.0 | **52.8** | 15.80 |
+| 62 | **141.9** | −5.0 | **53.8** | 15.87 |
+
+- **the precharge-inlet gain is 0.11** — roasts 60 and 62, inlets 8.9 degC apart,
+  turning points 1.0 degC apart — and that matches roast 57's 0.11 exactly.
+  **The 0.94 read off roasts 56 and 60 is withdrawn**; those two differ in
+  something else as well, and roast 62 is the control that separates them. The
+  dip model's near-inert `--inlet-precharge` (gain 0.13) was right;
+- **so the preheat is a weak lever in both its variables** — 0.100 per degC of
+  preheat BT, 0.11 per degC of precharge inlet — which is § 6 as originally
+  written, and the correction in § 1b's earlier form is retracted.
+
+**What separates roast 56 from 60 and 62 is not identified.**
+`charge_state.py`'s air-corrected mixing proxy puts **60 and 62 at 15.80 and
+15.87** — the same charge to 0.07 — and **roast 56 at 14.10**, 1.77 lower. All
+four roasts logged `greens_temp −5.0`, so **the entered charge temperature does
+not explain the gap** and an earlier version of this section was wrong to read it
+as colder beans. Candidates none of the logs separate: the beans' real
+temperature differing from the entered one (time out of the freezer before
+CHARGE), a lot property drifting over six days, or proxy noise — which is
+unquantified, because no two roasts in this project have ever repeated a charge.
+
+**Two things follow for every roast from here.** Record `greens_temp` *and* how
+long the beans were out of the freezer; and treat the charge proxy as the check
+that a comparison is fair — **roasts 60 and 62 agreeing to 0.07 is what makes
+their 0.11 inlet gain trustworthy**, and roast 56's 1.77 gap is why it cannot be
+paired with either on the charge.
+
+### 1c. What the precharge inlet *does* do — it sets the PID handover
+
+At +15 s the loop inherits whatever SV the preheat left:
 
 | | precharge inlet | peak SV, first minute | entry slope |
 |---|---|---|---|
@@ -72,31 +113,10 @@ loop inherits whatever SV the preheat left:
 Roast 60 handed the PID an SV 9 degC below what it needed, it slammed to 180.6
 within 7 s of switching on, and spent 100 s unwinding — which is the whole reason
 Phase B could not be scored. **Hand the loop the right operating point and it
-does not have to catch up through the measurement window.**
+does not have to catch up through the measurement window.** That is why fixing
+the inlet is right, and the reason is the handover, not the dip.
 
-### 1b. The 0.94 precharge-inlet gain is withdrawn — the turning point is the charge state
-
-Roast 62 carries roast 56's inlet and roast 60's charge state and returns **roast
-60's turning point**. `charge_state.py`'s air-corrected, control-independent
-mixing proxy:
-
-| roast | proxy /100 g | inlet_pre | logged greens | TP |
-|---|---|---|---|---|
-| 56 | **14.10** | 142.0 | −5.0 | **61.1** |
-| 60 | **15.80** | 133.0 | −5.0 | **52.8** |
-| 62 | **15.87** | 141.9 | **0.0 — not entered** | **53.8** |
-
-Roasts 60 and 62 are indistinguishable and roast 56 is 1.7 warmer. So the
-precharge-inlet gain is **0.11** (roasts 60 vs 62, same charge state, inlets
-8.9 apart), matching roast 57's 0.11 — and **the 0.94 was an unmeasured bean
-temperature read as an inlet effect.** The dip model's near-inert
-`--inlet-precharge` was right after all.
-
-**So record `greens_temp` on every roast.** It is the only unmeasured term left
-in the charge, it moved the turning point 7 degC between two otherwise identical
-roasts, and the proxy can only say which roast was colder, never by how much.
-
-### 1c. The fan ladder (roast 61) — the gap law behind the preheat
+### 1e. The fan ladder (roast 61) — the gap law behind the preheat
 
 Roast 60 held the specified preheat **BT 130.1** but its precharge inlet settled
 at **132.8 against the specified 141.8**, because the machine had soaked 23.8 min
@@ -162,7 +182,7 @@ single roasts confounded with soak and ambient, so neither calibrates anything �
 but the disagreement in *ordering* is why **row P reproduces a measured preheat
 point instead of authoring a dip for a new one.**
 
-### 1d. The duty model composes between roasts, and must not be used inside one
+### 1f. The duty model composes between roasts, and must not be used inside one
 
 Phase A's `HT = A(fan−f0)(Inlet−amb)+c` — fitted on a bench ladder, empty and
 with 345 g of *roasted* beans — predicts roast 60's live duty from roast 56's to

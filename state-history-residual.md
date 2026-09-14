@@ -1755,19 +1755,25 @@ point**.
 | 56 | **14.10** | 142.0 | −5.0 | **61.1** |
 | 57 | 16.92 | 155.3 | −5.0 | 62.6 |
 | 60 | **15.80** | 133.0 | −5.0 | **52.8** |
-| 62 | **15.87** | 141.9 | **0.0 (not entered)** | **53.8** |
+| 62 | **15.87** | 141.9 | −5.0 | **53.8** |
 
 **Roasts 60 and 62 are indistinguishable in charge state (15.80 against 15.87)
-and roast 56 is 1.7 warmer** — after the air correction, so this is the beans,
-not the inlet. Roast 62 was the third session of the evening on a hot chamber,
-which if anything biases its proxy *down*, so the reading is conservative.
+and roast 56 sits 1.77 lower.** All four logged `greens_temp −5.0` — an earlier
+version of this section read roast 62's then-unentered `0.0` as colder beans and
+that is withdrawn; the operator confirms −5.0 and corrected the file. **The gap
+between roast 56 and the other two is unexplained**: candidates are the beans'
+real temperature differing from the entered one, a lot property drifting over six
+days, or proxy noise, which is unquantified because no two roasts in this project
+have ever repeated a charge. **None of it affects what follows** — the inlet
+gain below is read from roasts 60 and 62, which agree on the charge to 0.07.
 
 - **the precharge-inlet gain is 0.11**, from roasts 60 and 62 at the same charge
   state and inlets 8.9 degC apart — and that matches roast 57's 0.11 exactly.
-  **The 0.94 was an unmeasured bean-temperature difference between roasts 56 and
-  60 read as an inlet effect.** Withdrawn;
-- **the turning point is set by the charge state**, which nothing in the log
-  measures because `greens_temp` is not being recorded (0.0 here);
+  **The 0.94 read off roasts 56 and 60 is withdrawn** — those two differ in
+  something besides the inlet, and roast 62 is the control that separates them;
+- **what does set the turning point is not identified.** It tracks the charge
+  proxy across these four roasts and not the inlet, but the proxy is an
+  inference and `greens_temp` was −5.0 in all of them;
 - **and the precharge inlet's real job is the handover.** At +15 s the PID
   inherits whatever SV the preheat left. Roast 60 handed it **132.8** against a
   demand near 142, so it slammed to **180.6 by 21.6 s** and spent 100 s unwinding
@@ -1779,7 +1785,9 @@ which if anything biases its proxy *down*, so the reading is conservative.
 precharge inlet buys is a loop that starts from the right operating point instead
 of catching up through the measurement window.
 
-**One consequence for every future roast: record `greens_temp`.** It is the only
-unmeasured term left in the charge, it moves the turning point by 7 degC between
-two roasts that were otherwise identical, and the proxy can only ever say which
-roast was colder, not by how much.
+**One consequence for every future roast: log the charge proxy and check it
+before pairing two roasts.** Roasts 60 and 62 agreeing to **0.07** is what makes
+their 0.11 inlet gain trustworthy; roast 56's 1.77 gap is why it cannot be paired
+with either on the charge. Record `greens_temp` *and* how long the beans were out
+of the freezer — the entered temperature was identical across all four and did
+not predict the proxy.
