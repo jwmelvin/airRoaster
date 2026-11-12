@@ -2025,10 +2025,12 @@ does not discriminate.
 
 **Outside the measurement programme, and unscored against it.** It changed
 everything at once: mass 500 g, lot `C1066` (Ethiopia Crown Jewel Natural
-Lalesa, `moisture_greens` 12.0), `greens_temp` entered 0.0, precharge inlet
+Lalesa, `moisture_greens` 12.0), precharge inlet
 **153** (roast 62: 142), and fan **65 → 62 over the first 26 s**, held at 62 to
 DROP. The background was `profile_500g_m5C_dev52_v8.alog`, which was authored
-for −5 degC and 11.0 %. Gains as logged on every roast since 56 (`pidKp 2.4 /
+for −5 degC and 11.0 %. **The beans were frozen, at −5 like 56-62; the log's
+`greens_temp 0.0` is a data-entry slip** (operator, 2026-11-11), so the charge
+matched the background. Gains as logged on every roast since 56 (`pidKp 2.4 /
 pidKi 0.056`, `svLookahead 6`), and `LA 6` fired at 46 s (SV +24).
 
 | | v8 | roast 63 |
@@ -2043,8 +2045,11 @@ pidKi 0.056`, `svLookahead 6`), and `LA 6` fired at 46 s (SV +24).
 **0.0 to +0.1 from 300 to 400 s**. Inlet tracked SV at rms 3.1 overall (0.4 on
 the preheat plateau), and the heater never saturated (64-75 % through the ramp),
 so the first-minute lag is in the reference, not the loop. The dip model's TP
-was 1.7 degC high and 4 s early at 500 g. That is the mass term (state-current.md
-§ The mass term) or the 0.0 greens entry, and this roast cannot say which.
+was 1.7 degC high and 4 s early at 500 g. With the charge temperature matched, the candidates are
+**the mass term** (state-current.md § The mass term; `phi` saturates, so the
+model over-credits a heavier bed), **fan 62 against the 64 the series ran**
+(`mdot ~ fan − 40`, so about −8 % of flow), and the new lot. A warmer
+charge was never one of them, since it would have run fast, not slow.
 
 **The 85-115 s entry slope is about +6.6 degC/min, so the residual window fails
 the ±2 gate** and nothing in it can be compared with roasts 56-62.

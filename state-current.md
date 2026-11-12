@@ -472,8 +472,8 @@ programme: `artisan/profile_500g_m5C_dev52_v8.alog`**. It uses v7's marks and
 drying term at 500 g / −5 degC with `--development 52`, so DROP is 205.3 at 7:31.
 **Roast 63 ran it** (500 g `C1066`): BT was **−8.5 degC behind at 60 s**, on the
 curve from 300 s, DROP **206.0 at 7:44**, and the bed circulated at fan 62. The
-first-minute lag is in the reference, either the mass term or the charge, and it
-is not scored. Record: state-history-residual.md § Roast 63. Do not score it
+beans were −5 (the log's 0.0 is an entry slip), so the first-minute lag is the
+mass term, fan 62 or the lot, and it is not scored. Record: state-history-residual.md § Roast 63. Do not score it
 against the 400 g series.
 
 `--development` places DROP at `FCs + <seconds>` with whatever temperature
