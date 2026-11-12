@@ -468,15 +468,13 @@ the recipe, the check block to read, and the traps. In short:
 unchanged (§ 1).
 
 **A 500 g background exists for a darker roast, outside the measurement
-programme: `artisan/profile_500g_m5C_dev52_v8.alog`** (2026-11-11). It uses v7's
-marks and drying term at 500 g / −5 degC with `--development 52`, so DROP is
-**205.3 at 7:31**, +2.9 degC and +24 s on v7, and the curve is identical to v7
-from 180 s to FCs. The dip is deeper (TP 54.3 vs 59.2) and the peak is 49.5 vs
-46.0 degC/min. Pinning `--drop 427:205.4` instead misses its marks by 0.1 and
-peaks at 66 degC/min, so that one is rejected. **It is unvalidated twice over**:
-the mass term is untested at 500 g (§ The mass term), and 500 g needs more fan
-than 400 g's 64 to circulate, which has not been sized. Do not score it against
-the 400 g series.
+programme: `artisan/profile_500g_m5C_dev52_v8.alog`**. It uses v7's marks and
+drying term at 500 g / −5 degC with `--development 52`, so DROP is 205.3 at 7:31.
+**Roast 63 ran it** (500 g `C1066`): BT was **−8.5 degC behind at 60 s**, on the
+curve from 300 s, DROP **206.0 at 7:44**, and the bed circulated at fan 62. The
+first-minute lag is in the reference, either the mass term or the charge, and it
+is not scored. Record: state-history-residual.md § Roast 63. Do not score it
+against the 400 g series.
 
 `--development` places DROP at `FCs + <seconds>` with whatever temperature
 follows; `--fcs <s>:<BT>` sets the crack mark, and the per-lot value comes from

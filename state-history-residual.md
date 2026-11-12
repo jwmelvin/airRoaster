@@ -2020,3 +2020,36 @@ does not discriminate.
   it nor makes it worse (its own contribution is 0.05 degC), and the fit runs on
   the same grid the file ships on, so the marks are exact for the curve Artisan
   actually plays. Changing it would reshape every background authored to date.
+
+### Roast 63 (2026-11-11, 20:20) — 500 g of a new lot on v8: the +3 degC was delivered, and the first minute was not
+
+**Outside the measurement programme, and unscored against it.** It changed
+everything at once: mass 500 g, lot `C1066` (Ethiopia Crown Jewel Natural
+Lalesa, `moisture_greens` 12.0), `greens_temp` entered 0.0, precharge inlet
+**153** (roast 62: 142), and fan **65 → 62 over the first 26 s**, held at 62 to
+DROP. The background was `profile_500g_m5C_dev52_v8.alog`, which was authored
+for −5 degC and 11.0 %. Gains as logged on every roast since 56 (`pidKp 2.4 /
+pidKi 0.056`, `svLookahead 6`), and `LA 6` fired at 46 s (SV +24).
+
+| | v8 | roast 63 |
+|---|---|---|
+| TP | 54.3 @ 29 s | **52.6 @ 33 s** |
+| DRY END | 149.6 @ 3:12 | 149.1 @ 3:14 |
+| FCs | (label) 198.8 @ 6:39 | **199.6 @ 6:46.5** |
+| DROP | 205.3 @ 7:31 | **206.0 @ 7:44** (57.5 s development) |
+
+`e = BT − bkg`: **−6.8 at 45 s, −8.5 at 60, −2.8 at 90**, then +0.2 to +0.6 over
+110-140, **−1.1 to −1.25 over 180-200** (the drying window again), and then
+**0.0 to +0.1 from 300 to 400 s**. Inlet tracked SV at rms 3.1 overall (0.4 on
+the preheat plateau), and the heater never saturated (64-75 % through the ramp),
+so the first-minute lag is in the reference, not the loop. The dip model's TP
+was 1.7 degC high and 4 s early at 500 g. That is the mass term (state-current.md
+§ The mass term) or the 0.0 greens entry, and this roast cannot say which.
+
+**The 85-115 s entry slope is about +6.6 degC/min, so the residual window fails
+the ±2 gate** and nothing in it can be compared with roasts 56-62.
+
+**What it does establish:** 500 g circulates and sustains at **fan 62**, and
+C1066 cracked at **199.6**, its first point for `beans.py`. DROP was +3.6 degC
+on v7's 202.4, as asked, with the extra 13 s past the curve's end coming from the
+operator's drop.
