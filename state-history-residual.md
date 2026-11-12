@@ -2054,7 +2054,9 @@ charge was never one of them, since it would have run fast, not slow.
 **The 85-115 s entry slope is about +6.6 degC/min, so the residual window fails
 the ±2 gate** and nothing in it can be compared with roasts 56-62.
 
-**What it does establish:** 500 g circulates and sustains at **fan 62**, and
+**What it does establish:** 500 g **of `C1066`** circulates and sustains at
+**fan 62**. That holds for this lot only, because each bean shape lofts differently
+(operator) and another lot's floor has to be found on its own charge. And
 C1066 cracked at **199.6**, its first point for `beans.py`. DROP was +3.6 degC
 on v7's 202.4, as asked, with the extra 13 s past the curve's end coming from the
 operator's drop.
