@@ -12,8 +12,9 @@
 >   F-numbered review findings.
 > - [roast-space.md](roast-space.md) — a second effort, started 2026-11-15:
 >   which curve to roast, in phase coordinates anchored on first crack. **Its
->   experiment S1 is half run**: roast 64 was batch A, and batch B runs
->   `artisan/profile_463g_m18C_fast_v10.alog`, DROP at 7:27 by the clock.
+>   experiment S1 is run** (roasts 64 and 65, `C1055`): 12.34 % against 14.20 %
+>   weight loss, cup comparison outstanding. The ramp is now eligible for a
+>   revision: three heavy roasts ran 7-8 degC behind at 60 s.
 >   Row L below is still unscored and waits for a 400 g roast at fan 64.
 >
 > **Update discipline.** When a phase completes, move its detail out of *plan*

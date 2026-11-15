@@ -154,65 +154,36 @@ degC/min cannot be told apart in one roast.
 
 | # | question | design | status |
 |---|---|---|---|
-| **S1** | does roast level show up in weight loss and in the cup? | `C1055`, two 462 g batches at one total time: A light (roast 64), B with crack 30 s sooner and +9.6 after it | **A done, B next — § 7** |
+| **S1** | does roast level show up in weight loss and in the cup? | `C1055`, two 462 g batches at one total time: A light (roast 64), B with crack 44 s sooner and +10.6 after it | **run — § 7. Weight loss: yes. Cup: outstanding** |
 | S2 | is `D(Q)` the right index: do a short-hot and a long-cool development with equal `D` roast the same? | ready to author | needs tooling |
 | S3 | **the slope at FCs as the variable** | same three points, `S_FC` about 6 against about 10 | ready to author |
 | S4 | Maillard length at fixed development | move `t_FC` with `t_DE` and the development segment held | ready to author |
 | S5 | does lower airflow change the cup? | pairs differing only in fan, off the loft floor | not scheduled; the loop is fan-sensitive |
 
-## 7. S1 — the two `C1055` batches
+## 7. S1 — result: roast level resolves in weight loss, by three times the noise
 
-**A is done (roast 64, § Record). B was redrawn at the operator's call**
-(2026-11-15): a higher finish at **the same total time as A**, so first crack
-comes sooner and the bed goes through it faster. B is no longer "A with a later
-drop". It differs from A in crack time, slope at crack and finish, and the cup
-comparison is between two roasts, not along one variable.
+Two 462 g batches of `C1055` at one total time (2026-11-15). Records: § Roast 64,
+§ Roast 65.
 
-| | **A — roast 64, as run** | **B — to run** |
+| | **A — roast 64** | **B — roast 65** |
 |---|---|---|
-| background | `profile_462g_m5C_space_v9.alog` | **`profile_463g_m18C_fast_v10.alog`** |
-| DRY END | 3:15 | 3:12 |
-| FCs | 201.8 @ 6:50 | **201.8 @ 6:20** on the curve |
-| slope at FCs | 6.6 (curve 7.9) | **curve 10.0** |
-| DROP | 205.3 @ **7:27** | **at 7:27 by the clock**, curve 211.4 |
-| `dT_dev` | +3.5 in 37 s | +9.6 in 67 s |
-| `D(2)` / `D(3)` | 42 / 46 | 97 / 122 |
-| weight loss | 12.34 % | |
+| background | `profile_462g_m5C_space_v9.alog` | `profile_463g_m18C_fast_v10.alog` |
+| FCs | 201.8 @ 6:50 | 201.2 @ 6:06 |
+| slope at FCs | 6.6 | 11.0 |
+| DROP | 205.3 @ 7:27 | 211.8 @ 7:29 |
+| development | 37 s, +3.5 | 83 s, +10.6 |
+| `D(2)` / `D(3)` | 42 / 46 | 126 / 163 |
+| **weight loss** | **12.34 %** | **14.20 %** |
 
-```
-make_background.py --mass 463 --greens-temp -18 --fcs 380:201.8 --ror-at-fcs 10.0 \
-    --development 100 --moisture-greens 11.0
-```
+**+1.86 % of weight loss for 3× the development index**, against 0.59 % of
+scatter. B's 14.2 % is the median of this lot's Behmor history (14.3), the
+roasts the operator called overroasted; A's 12.3 % is below anything it has had.
+**The cup comparison is outstanding**, and it is between two roasts that differ
+in crack time, slope through crack and finish, not along one variable. Two
+points cannot say what `Q` is.
 
-All four constraints at 0.00, RoR monotone, peak 51.5 degC/min at 53 s. The
-curve runs on to 8:00 so SV does not fall away before the drop.
-
-**Three things in that command are not what was first planned:**
-
-- **`--greens-temp −18`.** A turned at 47.5 against a predicted 56.0. −18 is the
-  input that makes the dip model turn at 47.8 for this mass, so B's reference
-  starts where A's bed actually was. It is a fitted nominal, not a reading.
-- **FCs at 6:20, not sooner.** With DRY END held at 3:12 this curve family
-  cannot put 201.8 earlier than about 6:17: asked for 6:07 it misses all three
-  marks by about 1 degC. 6:20 is the earliest it hits exactly.
-- **Slope 10.0.** That is what the crack point needs at 6:20, and it is the
-  first spec outside 8.1-9.5. The achieved slope has run 0.7-1.3 under the
-  curve, so expect about 9.
-
-**Prediction for B, written before it is run:**
-
-| | expect | would mean something is wrong |
-|---|---|---|
-| TP | 47-49 | above 52: this charge was warmer than A's, and the first two minutes will lead |
-| FCs | 201.8 ± 1 between 6:08 and 6:22 | outside ± 1.5: `T_FC` for this lot is not 201.8 |
-| `e` from 300 s to FCs | drifts up by 1-2 degC, as on A | flat: A's late gain was not the bean |
-| DROP at 7:27 | 211-212.5 | under 210: the loop did not deliver the faster Maillard |
-| weight loss | above 13.0 % | within 0.6 % of A: weight loss does not resolve roast level here |
-
-**Same as A:** config, preheat (inlet SV 142, BT 130), frozen charge handled the
-way A's was, and **A's fan schedule**: 65 at charge, 63 at 0:12, 62 at 0:17, 61
-at 0:24, then untouched. Enter `greens_temp` and the moisture reading if there
-is one. Record weight out.
+**`T_FC` for `C1055`: 201.8 and 201.2**, marked by ear on roasts whose crack was
+hard to hear. The operator's standing estimate is about 200.
 
 ## Record
 
@@ -249,3 +220,60 @@ DROP         205.3 @ 447 s        weight loss 12.34 %
 - The tracking error from DRY END to FCs (rms 1.09) is about twice roasts 60-63.
 - 37 s and +3.5 at 12.34 % sits inside the 400 g series' corner, as designed.
 
+
+### Roast 65 (2026-11-15, 17:48) — S1 batch B: DROP 211.8 at 7:29, 14.20 %
+
+`scorecard.py 65`, against `profile_463g_m18C_fast_v10.alog`:
+
+```
+charge       BT 134.3, inlet 140.8, fan 64@1 62@8, held 62
+TP           45.6 @ 32 s          (curve 47.8 @ 29 s)
+e 45/60/90/120       −6.68 / −7.84 / −1.95 / +0.04
+entry slope 85-115   +5.32 degC/min     -> the 120-230 s window is unscored
+e 180/240/300/360    −1.75 / −1.47 / −0.40 / +1.81       rms DRY END-FCs 1.25
+DRY END      195 s (+3.5 s)
+FCs          201.2 @ 366 s        slope 11.0 (curve 10.7)
+development  83 s, +10.6, D2 126, D3 163, mean e +1.03
+DROP         211.8 @ 449 s        weight loss 14.20 %
+```
+
+**Against the prediction written before it ran:**
+
+| | predicted | got | |
+|---|---|---|---|
+| TP | 47-49 | 45.6 | 1.4 under the band, and on the cold side |
+| FCs | 201.8 ± 1, 6:08-6:22 | 201.2 @ 6:06 | temperature held; 2 s early |
+| `e` from 300 s to FCs | up 1-2 | **+2.2** (−0.40 → +1.81) | held, a little over |
+| DROP at 7:27 | 211-212.5 | 211.8 @ 7:29 | held |
+| weight loss | above 13.0 % | 14.20 % | held |
+
+**Not as planned:** the fan went 64 → 62 at 8 s instead of repeating A's
+65/63/62/61 schedule, charge BT was 134.3 against A's 130.3, and `greens_temp`
+and `moisture_greens` again read 0.0.
+
+- **The dip input was the right correction.** Authored at a nominal −18, the
+  curve's TP was 2.2 above the bed's; at −5 it was 8.5 above (roast 64).
+- **The first minute did not improve with it.** `e60` is −7.8 with the TP
+  matched, against −7.3 with it missed by 8.5. So the lag at 45-90 s is not the
+  dip handing the ramp a wrong start. **It is the ramp**: the curves peak at
+  53-55 s and these beds peak later and higher while catching up.
+
+  | roast | mass | bed's RoR peak | curve's | `e60` | entry slope |
+  |---|---|---|---|---|---|
+  | 62 | 400 g | 53.6 @ 61 s | 44.6 @ 54 s | −3.7 | +0.1 |
+  | 63 | 500 g | 58.4 @ 71 s | 49.2 @ 55 s | −8.5 | +8.0 |
+  | 64 | 462 g | 62.0 @ 65 s | 48.0 @ 55 s | −7.3 | +5.2 |
+  | 65 | 462 g | 62.4 @ 73 s | 51.1 @ 55 s | −7.8 | +5.3 |
+
+  Three roasts, one sign, far outside any scatter. The cheaper explanation
+  still standing is the fan: all three heavy roasts stepped it down inside the
+  first 30 s and roast 62 held 64. **Ramp: eligible for a revision** under
+  playbook § 3, with mass and the fan step still confounded.
+- **The late gain repeated.** `e` over 300 → 360 s: roast 64 **+1.8**, roast 65
+  **+2.2**; roasts 62 and 63 +0.3 and +0.1. Both `C1055` roasts ran 1.3-1.8 degC
+  ahead from 330 s to FCs with the inlet coming down. Two roasts, one lot, one
+  sign: this is the lot, and it is what "takes off at the end" looks like here.
+  The loop contains it to under 2 degC; it does not remove it.
+- **Slope at FCs 11.0 against the curve's 10.7**: the first roast on record to go
+  through crack *faster* than asked (the ten before it average −0.70). It is
+  also the first whose spec was above 9.5.

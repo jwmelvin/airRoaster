@@ -33,15 +33,16 @@ roast-space.md § Record and stop there.
 
 | part | lives in | its numbers | fitted on | known to be wrong about |
 |---|---|---|---|---|
-| **dip** (0 → TP) | `analysis/charge_dip.py` | `phi(mass)`, `tau_mix`, `w_c` | roasts 50/51/53/54 | `BT_c` term 4.7 degC too steep; mass (5.4 % out at 380 g; TP 1.7 high and 4 s early at 500 g; **8.5 high at 462 g of `C1055`, roast 64**); knows nothing of fan |
+| **dip** (0 → TP) | `analysis/charge_dip.py` | `phi(mass)`, `tau_mix`, `w_c` | roasts 50/51/53/54 | `BT_c` term 4.7 degC too steep; mass (5.4 % out at 380 g; TP 1.7 high and 4 s early at 500 g; 8.5 high at 462 g of `C1055`, roast 64, and 2.2 high once authored at a nominal −18, roast 65); knows nothing of fan |
 | **plant card** | `analysis/plant_roast46.json` | `a`, `theta`, loss cubic | roast 46 | `theta` is total lag, not delay |
-| **ramp** (TP → ~110 s) | `make_background.py` `--ror-peak-at` | peak time 53 s | a convention, not a fit | a heavy bed peaks near 70 s (roast 63) |
+| **ramp** (TP → ~110 s) | `make_background.py` `--ror-peak-at` | peak time 53 s | a convention, not a fit | **eligible for revision**: beds of 462-500 g peak at 65-73 s and run 7.3-8.5 degC behind at 60 s (roasts 63, 64, 65), with the TP matched or not. Confounded with a fan step-down inside 30 s |
 | **drying term** | `make_background.py` `drying_K` | `eta`, window BT 100-140, shape | roast 62 | **unscored**; scaling with water mass is assumed |
 | **RoR family and solver** | `make_background.py` `fit` | four parameters, four constraints | — | with DRY END at 3:12 it cannot put a 201.8 crack before about 6:17 |
 | **development segment** | `make_background.py` `development_segment` | `k`, solved from the spec's DROP | nothing: it is geometry | **never roasted**; the step in RoR's slope at FCs is untested on the loop |
 | **bean table** | `analysis/beans.py` | `T_FC` per lot | the logs | n = 1 on a new lot |
 | **the loop** | `analysis/artisan_pid.py`, `sim.py` | Kp/Ki, lookahead | roasts 46-49 | the docs say 3.0/0.07; the logs and the `.aset` say 2.4/0.056 |
-| **slope through crack** | nowhere yet | — | — | achieved runs 0.70 ± 0.68 degC/min under spec (roasts 49-63) |
+| **slope through crack** | nowhere yet | — | — | achieved runs 0.70 ± 0.68 degC/min under spec (roasts 49-63) for specs of 8.1-9.5; +0.3 over at a spec of 10.7 (roast 65) |
+| **late gain, per lot** | nowhere yet | — | — | `C1055` gains 1.8-2.2 degC on the curve over 300-360 s (roasts 64, 65); `C1043` and `C1066` do not |
 | **roast degree** | nowhere yet | — | — | weight loss scatters 0.59 % at fixed development |
 
 **Residual → owner.** Read the scorecard top to bottom and assign each miss
