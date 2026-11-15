@@ -112,17 +112,24 @@ development that means `(dt_dev, dT_dev)` become independent choices, inside the
 bound `dT_dev <= R_FC * dt_dev` if RoR is never allowed to rise after crack.
 **That bound is the "takes off at the end" guard written as a spec.**
 
-**Open: what "a simple gamma curve" should mean.** Two readings:
+**This is the operator's "gamma curve", with the ends repaired** (settled
+2026-11-15). The idea is display gamma: between two fixed points, one number
+says how far the curve departs above or below the straight line. Written
+literally, `y = x^g`, it has a defect here: the slope at one end is zero or
+infinite, so RoR would stall or spike at every phase boundary. The exponential
+form does the same job with finite slopes at both ends:
 
-1. *RoR shaped like a gamma density*, `u^(a−1) * exp(−u/b)`. That is a rise
-   then a long fall, and it is close to the family the tool already has.
-2. *A power law between fixed points*, `y = x^g` as in display gamma. One
-   number per phase, but it forces RoR to zero or infinity at one end of every
-   phase, so the boundaries kink.
+```
+y(s) = (1 − exp(−k*s)) / (1 − exp(−k))        y = fraction of the phase's dT
+bow  = y(0.5) − 0.5 = tanh(k/4) / 2
+```
 
-The exponential-per-phase form above keeps the "one shape number between fixed
-points" idea of (2) without the kinks. **Operator to say which was meant before
-any tooling is written.**
+**`bow` is the number to think in**: how far above the straight line the curve
+sits at mid-phase, as a fraction of the phase's temperature span. `bow = 0` is
+linear (constant RoR), positive is front-loaded (declining RoR), negative is
+back-loaded. `bow = +0.10` is `k = 0.81`, an entry RoR 2.25× the exit. For scale,
+v9's Maillard phase (149.6 → 198.8 over 207 s, RoR 23 → 8.3) is about
+`bow = +0.13`.
 
 ## 6. Experiments
 
