@@ -110,20 +110,32 @@ background: the dip as physics, then a RoR that is smooth and monotone through
 the points. How well its curve turns into the roast that was asked for is what
 [playbook-model-feedback.md](playbook-model-feedback.md) measures and corrects.
 
-**What the engine does with this spec today:**
+**The engine takes the whole spec** (since 2026-11-15):
 
 ```
-make_background.py --dry-end 192:149.6 --fcs <t>:<T_FC> --ror-at-fcs <S_FC> --development <dt_dev>
+make_background.py --dry-end 192:149.6 --fcs <t>:<T_FC> --ror-at-fcs <S_FC> \
+    --drop-after <dt_dev>:<dT_dev>
 ```
 
-That pins DRY END, FCs and the slope, and `dT_dev` follows from the curve.
-`--drop <t>:<BT>` pins the DROP point instead and the slope follows. **All four
-at once is one constraint more than the single RoR curve has**, so it needs a
-development segment of its own after FCs: RoR leaving `S_FC` and decaying at
-whatever rate lands `dT_dev` in `dt_dev`. With RoR never allowed to rise after
-crack that is possible only while `dT_dev <= S_FC * dt_dev`, and that bound is
-the "takes off at the end" guard written as a spec. Not built yet; S1 does not
-need it.
+The single RoR curve has four parameters and is used up by DRY END, FCs, the
+slope and the ramp. So `--drop-after` cuts it at FCs and gives development a
+segment of its own: RoR leaves at `S_FC` and decays exponentially at whatever
+rate lands `dT_dev` in `dt_dev`, exactly, on the grid the file ships on. RoR is
+continuous through crack; its own slope steps there, and the tool prints both
+sides.
+
+**The tool refuses a DROP that needs RoR to rise after crack**, i.e. any
+`dT_dev` above `S_FC * dt_dev`. That bound is the "takes off at the end" guard
+written as a spec.
+
+**`--hold` (default 30 s with `--drop-after`)** carries the curve and the file's
+DROP mark past the intended drop. Artisan stops updating SV at the background's
+DROP mark less the lookahead, so a mark placed at the real drop freezes the
+target if the crack is late (roast 63's last 13 s). **Drop by the clock or the
+spec, never by the mark.**
+
+`--development <s>` (slope pinned, DROP temperature follows) and `--drop <t>:<BT>`
+(DROP pinned, slope follows) still author the uncut curve.
 
 **What the logs already say about the slope (2026-11-15).** Measured as the BT
 slope over FCs ± 15 s, against the background's over the same seconds, on the
@@ -143,9 +155,9 @@ degC/min cannot be told apart in one roast.
 | # | question | design | status |
 |---|---|---|---|
 | **S1** | does roast level show up in weight loss and in the cup? | `C1055`, two 462 g batches at one total time: A light (roast 64), B with crack 30 s sooner and +9.6 after it | **A done, B next — § 7** |
-| S2 | is `D(Q)` the right index: do a short-hot and a long-cool development with equal `D` roast the same? | needs the development segment (§ 5) | needs tooling |
-| S3 | **the slope at FCs as the variable** | same three points, `S_FC` about 6 against about 10 | needs the development segment |
-| S4 | Maillard length at fixed development | move `t_FC` with `t_DE` and the development segment held | needs tooling |
+| S2 | is `D(Q)` the right index: do a short-hot and a long-cool development with equal `D` roast the same? | ready to author | needs tooling |
+| S3 | **the slope at FCs as the variable** | same three points, `S_FC` about 6 against about 10 | ready to author |
+| S4 | Maillard length at fixed development | move `t_FC` with `t_DE` and the development segment held | ready to author |
 | S5 | does lower airflow change the cup? | pairs differing only in fan, off the loft floor | not scheduled; the loop is fan-sensitive |
 
 ## 7. S1 — the two `C1055` batches

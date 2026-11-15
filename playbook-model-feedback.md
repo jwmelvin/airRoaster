@@ -13,6 +13,7 @@ check you.**
 
 ```
 spec:   DRY END (time)   FCs (time, at the lot's T_FC)   slope at FCs   DROP (dt, dT after FCs)
+        --dry-end        --fcs                           --ror-at-fcs   --drop-after
 batch:  mass, greens_temp, moisture, lot, fan, preheat
                     |
         tools/make_background.py  ->  artisan/profile_*.alog  ->  the loop follows it  ->  the roast
@@ -36,7 +37,8 @@ roast-space.md § Record and stop there.
 | **plant card** | `analysis/plant_roast46.json` | `a`, `theta`, loss cubic | roast 46 | `theta` is total lag, not delay |
 | **ramp** (TP → ~110 s) | `make_background.py` `--ror-peak-at` | peak time 53 s | a convention, not a fit | a heavy bed peaks near 70 s (roast 63) |
 | **drying term** | `make_background.py` `drying_K` | `eta`, window BT 100-140, shape | roast 62 | **unscored**; scaling with water mass is assumed |
-| **RoR family and solver** | `make_background.py` `fit` | four parameters, four constraints | — | cannot take DROP and slope together; with DRY END at 3:12 it cannot put a 201.8 crack before about 6:17 |
+| **RoR family and solver** | `make_background.py` `fit` | four parameters, four constraints | — | with DRY END at 3:12 it cannot put a 201.8 crack before about 6:17 |
+| **development segment** | `make_background.py` `development_segment` | `k`, solved from the spec's DROP | nothing: it is geometry | **never roasted**; the step in RoR's slope at FCs is untested on the loop |
 | **bean table** | `analysis/beans.py` | `T_FC` per lot | the logs | n = 1 on a new lot |
 | **the loop** | `analysis/artisan_pid.py`, `sim.py` | Kp/Ki, lookahead | roasts 46-49 | the docs say 3.0/0.07; the logs and the `.aset` say 2.4/0.056 |
 | **slope through crack** | nowhere yet | — | — | achieved runs 0.70 ± 0.68 degC/min under spec (roasts 49-63) |
@@ -182,8 +184,8 @@ roast-space.md § Record, before any beans are used:
 
 ## 6. Backlog — what the engine needs next, in order of what it unblocks
 
-1. **A development segment**, so the spec's DROP point and slope at FCs can both
-   be pinned (roast-space.md § 5). Unblocks experiments S2-S4.
+1. ~~A development segment~~ — built 2026-11-15 (`--drop-after`, `--hold`).
+   What it needs now is a roast: does the loop follow the bend at FCs?
 2. **A slope-through-crack correction**: the bed arrives 0.7 degC/min under the
    curve. Needs the slope varied on purpose first (S3); do not fit it on ten
    roasts that all asked for 8-9.5.

@@ -8,6 +8,10 @@ USAGE -- the whole recipe is four lines; tools/README.md is the orientation.
         --fcs 399:197.7 --development 28 --ror-at-fcs 9.4 \\
         --compare artisan/<the background it replaces>.alog --out artisan/<new>.alog
 
+To pin DROP too, swap --development for `--drop-after <s after FCs>:<degC above
+FCs>`; development then gets a segment of its own (`development_segment`) and
+the file's DROP mark sits --hold seconds late on purpose.
+
 Pass --mass and --greens-temp for the roast you are ACTUALLY about to run --
 never scale.  --moisture-greens sizes the drying term and is on the roast's own
 `moisture_greens` field.  Read the printed check block before loading it: all
@@ -137,7 +141,7 @@ import os
 import sys
 
 import numpy as np
-from scipy.optimize import least_squares
+from scipy.optimize import brentq, least_squares
 from scipy.special import beta as beta_fn
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'analysis'))
@@ -469,6 +473,57 @@ def fit(t, dip_bt, i_tp, marks, decline='exp', ror_mark=None, peak_at=None,
     return best.x, np.asarray(best.fun)
 
 
+def development_segment(bt, R, i_fc, n_dev, dT):
+    """Replace everything after FCs with a segment that lands DROP where asked.
+
+    The single RoR curve has four parameters and four constraints, so with DRY
+    END, FCs, the slope at FCs and the ramp pinned, DROP's temperature is
+    whatever the curve gives.  The roast spec wants it chosen (roast-space.md
+    § 5): DROP is ``n_dev`` seconds after FCs and ``dT`` degC above it.  So the
+    curve is cut at FCs and development gets one number of its own:
+
+        RoR(v) = S_FC * exp(-k * v / n_dev),     v = seconds past FCs
+
+    RoR is continuous at FCs by construction -- it leaves at the slope the
+    approach arrives with -- and ``k`` is solved so that the BT gained over
+    ``n_dev`` seconds is exactly ``dT`` **on the 1 s grid the file ships on**
+    (the same left-Riemann sum `build` uses), not on the continuous formula.
+    What is not continuous is dRoR/dt: the approach and the segment decline at
+    different rates, and `main` prints both.
+
+    ``k = 0`` is a constant RoR and gains ``S_FC * n_dev / 60``.  Asking for
+    more than that needs RoR to RISE after first crack, and this refuses: that
+    bound is the "takes off at the end" guard, written as a spec.  The segment
+    carries on past DROP at the same decay, for `--hold`.
+
+    Returns ``(k, gain at k = 0)``; ``bt`` and ``R`` are edited in place.
+    """
+    S = float(R[i_fc])
+    v = np.arange(len(R) - i_fc, dtype=float)
+
+    def gain(k):
+        return float(np.sum(S * np.exp(-k * v[:n_dev] / n_dev))) / 60.0
+
+    flat = gain(0.0)
+    if dT > flat + 1e-9:
+        raise ValueError(
+            f"DROP {dT:.1f} degC above FCs in {n_dev} s needs RoR to rise after "
+            f"first crack: at the {S:.1f} degC/min it arrives with, a constant "
+            f"RoR gains only {flat:.1f}. Raise --ror-at-fcs, lengthen the "
+            f"development, or ask for less.")
+    if dT <= gain(60.0):
+        raise ValueError(
+            f"DROP {dT:.1f} degC above FCs in {n_dev} s is less than the bed "
+            f"gains while the RoR collapses ({gain(60.0):.1f}); shorten the "
+            f"development or lower --ror-at-fcs.")
+    k = 0.0 if abs(dT - flat) < 1e-9 else brentq(lambda x: gain(x) - dT, 0.0, 60.0,
+                                                 xtol=1e-13)
+    seg = S * np.exp(-k * v / n_dev)
+    R[i_fc:] = seg
+    bt[i_fc + 1:] = bt[i_fc] + np.cumsum(seg[:-1]) / 60.0
+    return k, flat
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -490,6 +545,21 @@ def main():
                          'follows from the curve instead of being pinned, which '
                          'is how the operator roasts. Implies --ror-at-fcs as '
                          'the third constraint')
+    ap.add_argument('--drop-after', type=_pair, default=None, metavar='S:DT',
+                    help='<seconds after FCs>:<degC above FCs>. Pins DROP '
+                         'RELATIVE to first crack while --ror-at-fcs still sets '
+                         'the slope through it, by giving development a segment '
+                         'of its own (see `development_segment`). The whole '
+                         'roast spec: DRY END, FCs, the slope at FCs, and DROP. '
+                         'Excludes --drop and --development')
+    ap.add_argument('--hold', type=float, default=None,
+                    help='seconds of curve to carry PAST the specified DROP '
+                         '(default 30 with --drop-after, else 0). Artisan stops '
+                         'updating SV at the background\'s DROP mark minus the '
+                         'lookahead (pid_control calcSV), so the mark in the '
+                         'file is placed this much later than the drop you '
+                         'intend -- a late crack or a slow hand otherwise ends '
+                         'the roast with a frozen target (roast 63)')
     ap.add_argument('--ror-at-fcs', type=float, default=FC_ROR_DEFAULT,
                     help='degC/min through first crack, the third constraint in '
                          f'--development mode (roasts 50-55: 6.2-9.8, mean '
@@ -546,8 +616,16 @@ def main():
 
     if args.drop and args.development:
         ap.error('--drop and --development are mutually exclusive')
+    seg_mode = args.drop_after is not None
+    if seg_mode and (args.drop or args.development):
+        ap.error('--drop-after excludes --drop and --development')
+    if seg_mode and args.decline != 'exp':
+        ap.error('--drop-after is only built for --decline exp')
+    hold = (30.0 if seg_mode else 0.0) if args.hold is None else args.hold
     dev_mode = args.drop is None
     if dev_mode:
+        if seg_mode:
+            args.development = args.drop_after[0]
         if args.development is None:
             args.development = DEVELOPMENT_DEFAULT
         t_drop = args.fcs[0] + args.development
@@ -557,7 +635,8 @@ def main():
         t_drop = args.drop[0]
         marks = [args.dry_end, args.fcs, args.drop]
         ror_mark = None
-    t = np.arange(0.0, t_drop + 2.0, 1.0)
+    t_last = t_drop + hold          # where the file, and the control window, end
+    t = np.arange(0.0, t_last + 2.0, 1.0)
     dip_bt = cd.dip(t, args.charge_bt, args.greens_temp, args.mass,
                     lambda _t: args.inlet_precharge, plant,
                     phi=cd.phi_of_mass(args.mass, c_b, C_ch), phi_ref=phi400,
@@ -606,6 +685,17 @@ def main():
     params, err = fit(t, dip_bt, i_tp, marks, args.decline, ror_mark, peak_at,
                       dry_K, dry)
     bt, R = build(t, dip_bt, i_tp, params, args.decline, dry_K, dry)
+    seg = None
+    if seg_mode:
+        i_fc, n_dev = int(round(args.fcs[0])), int(round(args.drop_after[0]))
+        ror_in = (float(R[i_fc]) - float(R[i_fc - 1])) * 60.0
+        ror_free = float(np.interp(t_drop, t, bt)) - float(bt[i_fc])
+        try:
+            k_dev, flat = development_segment(bt, R, i_fc, n_dev, args.drop_after[1])
+        except ValueError as exc:
+            ap.error(str(exc))
+        seg = {'k': k_dev, 'flat': flat, 'free': ror_free, 'in': ror_in,
+               'out': (float(R[i_fc + 1]) - float(R[i_fc])) * 60.0}
 
     names = ['DRY END', 'FCs', 'DROP']
     print("\n   mark      target            authored          error")
@@ -618,10 +708,18 @@ def main():
         print(f"   RoR@FCs   {args.fcs[0]:5.0f} s          "
               f"{args.ror_at_fcs:6.1f}   {float(np.interp(args.fcs[0], t, R)):6.1f}   "
               f"{err[len(marks)]:+6.2f} degC/min")
-        print(f"   DROP      {t_drop:5.0f} s "
-              f"({t_drop//60:.0f}:{t_drop%60:02.0f})     ---   "
-              f"{float(np.interp(t_drop, t, bt)):6.1f}      --   "
-              f"<- {args.development:.0f} s past FCs, temperature NOT pinned")
+        if seg_mode:
+            want = args.fcs[1] + args.drop_after[1]
+            got = float(np.interp(t_drop, t, bt))
+            print(f"   DROP      {t_drop:5.0f} s "
+                  f"({t_drop//60:.0f}:{t_drop%60:02.0f})  {want:6.1f}   "
+                  f"{got:6.1f}   {got - want:+6.2f} degC   <- {args.development:.0f} s "
+                  f"past FCs, {args.drop_after[1]:+.1f} above it: PINNED")
+        else:
+            print(f"   DROP      {t_drop:5.0f} s "
+                  f"({t_drop//60:.0f}:{t_drop%60:02.0f})     ---   "
+                  f"{float(np.interp(t_drop, t, bt)):6.1f}      --   "
+                  f"<- {args.development:.0f} s past FCs, temperature NOT pinned")
     i_pk = int(np.argmax(R))
     # The peak is flat, so a 1 s argmax can sit a couple of seconds off the true
     # stationary point.  Refine on a 0.1 s grid for reporting.
@@ -645,6 +743,18 @@ def main():
           f"(roast 54's machine delivered 72)")
     print(f"   monotone rising TP->peak: {rising};  monotone falling peak->DROP: "
           f"{falling};  RoR at DROP {float(np.interp(t_drop, t, R)):.1f}")
+    if seg is not None:
+        print(f"   development segment: RoR {args.ror_at_fcs:.1f} -> "
+              f"{float(np.interp(t_drop, t, R)):.1f} over {args.development:.0f} s "
+              f"(k = {seg['k']:.3f}).\n        Left alone the curve would have gained "
+              f"{seg['free']:+.1f}; a constant RoR gains {seg['flat']:+.1f}, which is "
+              f"the most this allows.\n        RoR's own slope steps at FCs: "
+              f"{seg['in']:+.2f} degC/min per min arriving, {seg['out']:+.2f} leaving.")
+    if hold > 0.0:
+        print(f"   hold: the curve and the file's DROP mark run on to {t_last:.0f} s "
+              f"({t_last//60:.0f}:{t_last%60:02.0f}), {hold:.0f} s past the DROP "
+              f"above.\n        DROP BY THE CLOCK OR THE SPEC, not by the mark: "
+              f"it is only there so SV keeps updating.")
     if not falling:
         print("   *** RoR is NOT monotone after the peak -- the marks are not "
               "reachable by this\n       family; try --decline exp, or move a mark.")
@@ -675,7 +785,7 @@ def main():
 
     with open(args.template) as fh:
         raw = ast.literal_eval(fh.read())
-    n = int(t_drop) + 1
+    n = int(t_last) + 1
     src_t = np.asarray(raw['timex'], dtype=float)
     src_t = src_t - src_t[raw['timeindex'][0]]
     raw['timex'] = [float(x) for x in t[:n]]
@@ -685,7 +795,7 @@ def main():
     raw['temp1'] = [float(x) for x in
                     np.interp(t[:n], src_t, np.asarray(raw['temp1'], dtype=float))]
     raw['timeindex'] = [0, int(round(args.dry_end[0])), int(round(args.fcs[0])),
-                        0, 0, 0, int(round(t_drop)), 0]
+                        0, 0, 0, int(round(t_last)), 0]
     raw['roastingnotes'] = (
         f"Authored by tools/make_background.py: {args.mass:.0f} g at "
         f"greens_temp {args.greens_temp:+.1f} degC (operator scale), charge BT "
@@ -697,6 +807,12 @@ def main():
            f"{args.development:.0f} s past FCs at "
            f"{float(np.interp(t_drop, t, bt)):.1f} degC."
            if dev_mode else "DRY END/FCs/DROP.")
+        + (f" DEVELOPMENT SEGMENT: DROP pinned {args.drop_after[0]:.0f} s after "
+           f"FCs and {args.drop_after[1]:+.1f} degC above it, RoR decaying "
+           f"exp(-{seg['k']:.3f} v/{args.drop_after[0]:.0f})." if seg is not None
+           else "")
+        + (f" The DROP MARK is {hold:.0f} s later than the intended drop at "
+           f"{t_drop:.0f} s, to keep SV updating." if hold > 0.0 else "")
         + (f" RoR peak pinned at {peak_at:.0f} s." if peak_at is not None
            else " RAMP UNPINNED (--free-ramp): underdetermined.")
         + (f" Drying term: {args.moisture_greens:.1f} % moisture, eta "

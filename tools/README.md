@@ -28,6 +28,14 @@ Two halves, drawn separately:
 | `--development` | how the operator roasts: seconds from FCs to DROP | pin a DROP temperature instead unless you mean to |
 | `--moisture-greens` | the roast's own `moisture_greens` field (11.0 on this lot) | leave it at the default for a lot that reads differently — it sets the drying term's size |
 
+**To pin DROP as well, use `--drop-after <s>:<dT>` in place of
+`--development`**: DROP that many seconds after FCs and that many degC above it,
+with `--ror-at-fcs` still setting the slope through crack. Development then gets
+its own decaying segment after FCs (roast-space.md § 5). The tool refuses a DROP
+that would need RoR to rise after crack. It also defaults `--hold 30`, which
+puts the file's DROP mark 30 s after the intended drop so SV keeps updating:
+**drop by the clock, not by the mark.** `--hold <s>` works in the other modes too.
+
 A sixth input, `--ror-peak-at`, has a default (53 s) and normally stays there.
 It is the constraint that pins the **ramp**; see § The ramp used to be a lottery.
 The drying term (§ below) has three more, `--drying-eta`, `--drying-window` and
