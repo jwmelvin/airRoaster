@@ -142,7 +142,7 @@ degC/min cannot be told apart in one roast.
 
 | # | question | design | status |
 |---|---|---|---|
-| **S1** | does roast level show up, in weight loss and in the cup, when only `dt_dev` changes? | `C1055`, two 462 g batches on one background, DROP at FCs + 35 s and FCs + 80 s | **next — § 7** |
+| **S1** | does roast level show up in weight loss and in the cup? | `C1055`, two 462 g batches at one total time: A light (roast 64), B with crack 30 s sooner and +9.6 after it | **A done, B next — § 7** |
 | S2 | is `D(Q)` the right index: do a short-hot and a long-cool development with equal `D` roast the same? | needs the development segment (§ 5) | needs tooling |
 | S3 | **the slope at FCs as the variable** | same three points, `S_FC` about 6 against about 10 | needs the development segment |
 | S4 | Maillard length at fixed development | move `t_FC` with `t_DE` and the development segment held | needs tooling |
@@ -150,72 +150,90 @@ degC/min cannot be told apart in one roast.
 
 ## 7. S1 — the two `C1055` batches
 
-**One file, two drop rules.** Both batches run
-`artisan/profile_462g_m5C_space_v9.alog`, so everything up to first crack is a
-replicate and the only designed difference is when the beans leave.
+**A is done (roast 64, § Record). B was redrawn at the operator's call**
+(2026-11-15): a higher finish at **the same total time as A**, so first crack
+comes sooner and the bed goes through it faster. B is no longer "A with a later
+drop". It differs from A in crack time, slope at crack and finish, and the cup
+comparison is between two roasts, not along one variable.
 
-```
-make_background.py --mass 462 --greens-temp -5 --fcs 399:198.8 --ror-at-fcs 8.3 \
-    --development 120 --moisture-greens 11.0
-```
-
-TP 56.0 @ 29 s, peak 48.3 degC/min @ 53 s, DRY END 149.6 @ 3:12, the FCs
-*label* at 198.8 @ 6:39, RoR 8.3 there. All four constraints at 0.00, RoR
-monotone. **The curve runs to 8:39 on purpose**: the background's DROP mark is
-not the drop, it is room for a late crack.
-
-| | **A — light, first** | **B — darker, second** |
+| | **A — roast 64, as run** | **B — to run** |
 |---|---|---|
-| mass | 462 g | 463 g (what is left) |
-| DROP | **FCs + 35 s** | **FCs + 80 s** |
-| expected `dT_dev` | +4.5 (4.2-4.8) | +9.4 (8.8-10.0) |
-| expected DROP BT, if FCs is 198.8 | 203.3 | 208.2 |
-| `D(2)` / `D(3)` | 41 / 46 s | 115 / 144 s |
-| RoR at DROP | 7.2 | 6.0 |
+| background | `profile_462g_m5C_space_v9.alog` | **`profile_463g_m18C_fast_v10.alog`** |
+| DRY END | 3:15 | 3:12 |
+| FCs | 201.8 @ 6:50 | **201.8 @ 6:20** on the curve |
+| slope at FCs | 6.6 (curve 7.9) | **curve 10.0** |
+| DROP | 205.3 @ **7:27** | **at 7:27 by the clock**, curve 211.4 |
+| `dT_dev` | +3.5 in 37 s | +9.6 in 67 s |
+| `D(2)` / `D(3)` | 42 / 46 | 97 / 122 |
+| weight loss | 12.34 % | |
 
-(The ranges are for a crack anywhere from 6:25 to 6:55.)
+```
+make_background.py --mass 463 --greens-temp -18 --fcs 380:201.8 --ror-at-fcs 10.0 \
+    --development 100 --moisture-greens 11.0
+```
 
-**Why these.** A is the corner the 400 g series lives in, so it ties this lot
-to seventeen existing roasts. B is 2.8× the index and still shorter and cooler
-than most of the Behmor history that read as overroasted. The gap should be
-worth well over the 0.6 % weight-loss noise.
+All four constraints at 0.00, RoR monotone, peak 51.5 degC/min at 53 s. The
+curve runs on to 8:00 so SV does not fall away before the drop.
 
-**Why equal masses, and not a 400/525 mass pair.** The mass term is an open item
-(state-current.md § The mass term) and this was a chance at it. But a mass pair
-would put a different first two minutes under each roast level, and the cup
-comparison is the point. 462 g also gives a third mass on the same ramp spec
-between 400 and 500.
+**Three things in that command are not what was first planned:**
 
-**Held the same for both, deliberately not experiments today:**
+- **`--greens-temp −18`.** A turned at 47.5 against a predicted 56.0. −18 is the
+  input that makes the dip model turn at 47.8 for this mass, so B's reference
+  starts where A's bed actually was. It is a fitted nominal, not a reading.
+- **FCs at 6:20, not sooner.** With DRY END held at 3:12 this curve family
+  cannot put 201.8 earlier than about 6:17: asked for 6:07 it misses all three
+  marks by about 1 degC. 6:20 is the earliest it hits exactly.
+- **Slope 10.0.** That is what the crack point needs at 6:20, and it is the
+  first spec outside 8.1-9.5. The achieved slope has run 0.7-1.3 under the
+  curve, so expect about 9.
 
-- **Charge: frozen, enter `greens_temp −5.0`.** The dip model is anchored there.
-- **No pre-hydration.** It changes the drying load, which the background carries
-  a term for.
-- **Preheat as roast 62**: inlet SV 142.0, trim BT to 130 with the fan.
-- **Fan: A finds it, B copies it.** On A, charge at 64 and come down to the
-  lowest level that keeps the bed circulating, finished by 30 s, then **do not
-  touch it again**. B repeats A's fan events at A's times.
-- **Config** `airRoaster_cascadePID_phaseB.aset`, alarm rows 7 and 8 off.
-- `moisture_greens` is authored at 11.0 because no log of this lot records it.
-  If a meter reading exists, enter it; the drying term will be off by the ratio.
+**Prediction for B, written before it is run:**
 
-**To record, both batches:** FCs marked at the first sustained cracks, **weight
-out**, and anything about the spout or chaff. Cup them side by side, blind, at
-the same rest.
+| | expect | would mean something is wrong |
+|---|---|---|
+| TP | 47-49 | above 52: this charge was warmer than A's, and the first two minutes will lead |
+| FCs | 201.8 ± 1 between 6:08 and 6:22 | outside ± 1.5: `T_FC` for this lot is not 201.8 |
+| `e` from 300 s to FCs | drifts up by 1-2 degC, as on A | flat: A's late gain was not the bean |
+| DROP at 7:27 | 211-212.5 | under 210: the loop did not deliver the faster Maillard |
+| weight loss | above 13.0 % | within 0.6 % of A: weight loss does not resolve roast level here |
 
-**What each batch is read for:**
-
-1. `T_FC` for `C1055` on this probe (unknown: the Behmor and roast 8 are other
-   scales). A and B give two readings.
-2. `e` at 45/60/90 s against roast 63's −6.8/−8.5/−2.8 at 500 g.
-3. A against B from 110 s to FCs: the repeatability of the reference itself.
-4. **Whether the loop holds the curve through development.** `e` and
-   `Temp_Drive` (inlet − BT) from FCs to DROP. If this bean "takes off", the
-   inlet has to back away to hold 8 → 6 degC/min, and the size of that retreat
-   is the exotherm on this machine. Roast 63's drive *rose* 31.6 → 35.4 over the
-   same stretch (`scorecard.py`).
-5. Weight loss A against B, against the 0.59 % noise.
+**Same as A:** config, preheat (inlet SV 142, BT 130), frozen charge handled the
+way A's was, and **A's fan schedule**: 65 at charge, 63 at 0:12, 62 at 0:17, 61
+at 0:24, then untouched. Enter `greens_temp` and the moisture reading if there
+is one. Record weight out.
 
 ## Record
 
-*(nothing yet)*
+### Roast 64 (2026-11-15, 17:26) — S1 batch A: 462 g `C1055`, DROP 205.3 at 7:27
+
+`scorecard.py 64`, against `profile_462g_m5C_space_v9.alog`:
+
+```
+charge       BT 130.3, inlet 140.2, fan 65@1 63@12 62@17 61@24, held 61
+TP           47.5 @ 27 s          (curve 56.0 @ 29 s)
+e 45/60/90/120       −8.72 / −7.29 / −0.40 / +1.31
+entry slope 85-115   +5.17 degC/min     -> the 120-230 s window is unscored
+e 180/240/300/360    −1.40 / −0.87 / −0.53 / +1.30       rms DRY END-FCs 1.09
+DRY END      195 s (+2.5 s)
+FCs          201.8 @ 410 s        slope 6.6 (curve 7.9)
+development  37 s, +3.5, D2 42, D3 46, mean e +1.10
+DROP         205.3 @ 447 s        weight loss 12.34 %
+```
+
+- **The dip was 8.5 degC deeper than the model's.** Roast 63 (500 g, another
+  lot) missed by 1.7 the same way. Charge and preheat matched the spec (BT
+  130.3, inlet 140.2), so it is the beans, the lot, or the 12.9 degC room. The
+  log's `greens_temp` and `moisture_greens` both read 0.0, i.e. not entered.
+  **Watching: dip, one roast.** B is authored at a nominal −18 to match.
+- **`T_FC` for `C1055` on this probe: 201.8** (n = 1), the highest of any lot on
+  the airRoaster.
+- **The bed gained on the curve before crack while the loop was taking heat
+  away.** `e` went −0.53 → +1.30 between 300 and 360 s as the inlet came down
+  241 → 232, and the drive fell from 62 degC at 4:41 to 26 at FCs. Roasts 62 and
+  63 are flat over the same stretch (+0.2, +0.1). That is consistent with the
+  operator's "takes off at the end", and it is one roast. **Watching:
+  development, one roast.**
+- **Slope at FCs 1.3 under the curve**, in line with the −0.70 ± 0.68 on record.
+- The tracking error from DRY END to FCs (rms 1.09) is about twice roasts 60-63.
+- 37 s and +3.5 at 12.34 % sits inside the 400 g series' corner, as designed.
+
