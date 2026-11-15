@@ -10,6 +10,11 @@
 >   [residual](state-history-residual.md) (57-59).
 > - [state-archive.md](state-archive.md) — completed firmware work and the
 >   F-numbered review findings.
+> - [roast-space.md](roast-space.md) — a second effort, started 2026-11-15:
+>   which curve to roast, in phase coordinates anchored on first crack. **Its
+>   experiment S1 is the next two roasts** (`C1055`, 2 × 462 g on
+>   `artisan/profile_462g_m5C_space_v9.alog`, DROP at FCs + 35 s and + 80 s).
+>   Row L below is still unscored and waits for a 400 g roast at fan 64.
 >
 > **Update discipline.** When a phase completes, move its detail out of *plan*
 > and re-point this file at the next phase. When a section here turns into a

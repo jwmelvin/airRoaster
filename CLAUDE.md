@@ -34,6 +34,9 @@ and the version/branch truth. [state-plan.md](state-plan.md) is work not yet
 done and the specifications in force. [state-archive.md](state-archive.md) is
 completed firmware work and the F-numbered review findings.
 
+[roast-space.md](roast-space.md) is the roast-space effort (which curve to
+roast): its framework, planned experiments and record in one file.
+
 The investigation record is split by effort and indexed in
 [state-history.md](state-history.md): [cascade](state-history-cascade.md)
 (roasts 40-49), [charge](state-history-charge.md) (50-56),
