@@ -36,7 +36,10 @@ that would need RoR to rise after crack. It also defaults `--hold 30`, which
 puts the file's DROP mark 30 s after the intended drop so SV keeps updating:
 **drop by the clock, not by the mark.** `--hold <s>` works in the other modes too.
 
-A sixth input, `--ror-peak-at`, has a default (53 s) and normally stays there.
+A sixth input, `--ror-peak-at`, has a default and normally stays there: **53 s
+to 400 g, then 0.20 s later per gram** (66 s at 463 g, 73 s at 500 g; empirical,
+roast-space.md § Ramp revision). Backgrounds v8-v10 predate that and need
+`--ror-peak-at 53` to reproduce.
 It is the constraint that pins the **ramp**; see § The ramp used to be a lottery.
 The drying term (§ below) has three more, `--drying-eta`, `--drying-window` and
 `--drying-shape`, which are the *calibration* and stay put; `--no-drying`

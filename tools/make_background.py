@@ -181,7 +181,24 @@ DEVELOPMENT_DEFAULT = 28.0    # s from FCs to DROP
 # measurement: it is the draw the underdetermined solver happened to make on
 # that run, promoted to a spec so that it stops moving on its own.  Vary it
 # deliberately, one roast at a time, like any other design number.
-ROR_PEAK_AT_DEFAULT = 53.0    # s since CHARGE
+ROR_PEAK_AT_DEFAULT = 53.0    # s since CHARGE, at 400 g and below
+# Above 400 g the peak moves later, by this many seconds per gram (2026-11-15,
+# roast-space.md § Ramp revision).  EMPIRICAL, on two roasts: with the dip
+# matched to the bed's own turning point, 463 g (roast 65) is followed best with
+# the peak at 66 s and 500 g (roast 63) at 70 s or later, against 7.3 and 6.2
+# degC behind at 60 s with the peak at 53.  Heat capacity alone predicts 3-4 s
+# of this, not 13-20, so it is not a physical scaling and must not be trusted
+# outside 400-500 g.  Roast 64 (462 g) is NOT evidence for it: its curve's dip
+# was 8.5 degC shallow, the loop's integrator was preloaded by that error, and
+# the bed kept up with a 53 s ramp.
+ROR_PEAK_PER_GRAM = 0.20      # s/g above 400 g
+ROR_PEAK_AT_MAX = 75.0        # s, the top of the band fit() converges in
+
+
+def ror_peak_default(mass):
+    """Default RoR-peak time for a charge mass -- 53 s to 400 g, later above."""
+    return min(ROR_PEAK_AT_MAX,
+               ROR_PEAK_AT_DEFAULT + ROR_PEAK_PER_GRAM * max(0.0, mass - 400.0))
 
 # --- the drying (latent-heat) term, 2026-09-13, runbook row L -------------
 # The RoR specification above is a smooth rise-times-fall and carries no
@@ -564,11 +581,13 @@ def main():
                     help='degC/min through first crack, the third constraint in '
                          f'--development mode (roasts 50-55: 6.2-9.8, mean '
                          f'{FC_ROR_DEFAULT})')
-    ap.add_argument('--ror-peak-at', type=float, default=ROR_PEAK_AT_DEFAULT,
+    ap.add_argument('--ror-peak-at', type=float, default=None,
                     help='seconds since CHARGE at which the RoR peaks -- the '
                          'FOURTH constraint, and what makes the exponential fit '
                          'determined at all (default '
-                         f'{ROR_PEAK_AT_DEFAULT:.0f}). Ignored for --decline '
+                         f'{ROR_PEAK_AT_DEFAULT:.0f} to 400 g, then +'
+                         f'{ROR_PEAK_PER_GRAM:.2f} s per gram: `ror_peak_default`). '
+                         'Ignored for --decline '
                          'linear, which is square without it')
     ap.add_argument('--free-ramp', action='store_true',
                     help='drop the peak constraint and reproduce the '
@@ -657,7 +676,13 @@ def main():
     # parameter and are underdetermined without the peak pin (see `fit`).
     peak_at = None
     if not args.free_ramp and args.decline != 'linear':
-        peak_at = args.ror_peak_at
+        peak_at = (ror_peak_default(args.mass) if args.ror_peak_at is None
+                   else args.ror_peak_at)
+        if args.ror_peak_at is None and peak_at != ROR_PEAK_AT_DEFAULT:
+            print(f"   ramp: RoR peak at {peak_at:.0f} s for {args.mass:.0f} g "
+                  f"(53 s + {ROR_PEAK_PER_GRAM:.2f} s/g above 400 g; empirical, "
+                  "roasts 63 and 65).\n        Backgrounds v8-v10 were authored "
+                  "at 53: pass --ror-peak-at 53 to reproduce them.")
         if peak_at <= t[i_tp]:
             ap.error(f'--ror-peak-at {peak_at:.0f} is at or before the turning '
                      f'point ({t[i_tp]:.0f} s); the ramp does not exist yet')

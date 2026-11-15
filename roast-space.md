@@ -253,22 +253,10 @@ and `moisture_greens` again read 0.0.
 
 - **The dip input was the right correction.** Authored at a nominal −18, the
   curve's TP was 2.2 above the bed's; at −5 it was 8.5 above (roast 64).
-- **The first minute did not improve with it.** `e60` is −7.8 with the TP
-  matched, against −7.3 with it missed by 8.5. So the lag at 45-90 s is not the
-  dip handing the ramp a wrong start. **It is the ramp**: the curves peak at
-  53-55 s and these beds peak later and higher while catching up.
-
-  | roast | mass | bed's RoR peak | curve's | `e60` | entry slope |
-  |---|---|---|---|---|---|
-  | 62 | 400 g | 53.6 @ 61 s | 44.6 @ 54 s | −3.7 | +0.1 |
-  | 63 | 500 g | 58.4 @ 71 s | 49.2 @ 55 s | −8.5 | +8.0 |
-  | 64 | 462 g | 62.0 @ 65 s | 48.0 @ 55 s | −7.3 | +5.2 |
-  | 65 | 462 g | 62.4 @ 73 s | 51.1 @ 55 s | −7.8 | +5.3 |
-
-  Three roasts, one sign, far outside any scatter. The cheaper explanation
-  still standing is the fan: all three heavy roasts stepped it down inside the
-  first 30 s and roast 62 held 64. **Ramp: eligible for a revision** under
-  playbook § 3, with mass and the fan step still confounded.
+- **The first minute did not improve with it**: `e60` is −7.8 with the TP
+  matched, against −7.3 with it missed by 8.5. What that means took a back-test
+  to read, and it is § Ramp revision below: roast 64's lag was the dip mismatch
+  and this roast's is the ramp.
 - **The late gain repeated.** `e` over 300 → 360 s: roast 64 **+1.8**, roast 65
   **+2.2**; roasts 62 and 63 +0.3 and +0.1. Both `C1055` roasts ran 1.3-1.8 degC
   ahead from 330 s to FCs with the inlet coming down. Two roasts, one lot, one
@@ -277,3 +265,71 @@ and `moisture_greens` again read 0.0.
 - **Slope at FCs 11.0 against the curve's 10.7**: the first roast on record to go
   through crack *faster* than asked (the ten before it average −0.70). It is
   also the first whose spec was above 9.5.
+
+### Ramp revision (2026-11-15) — above 400 g the RoR peak moves later, 0.20 s per gram
+
+**Playbook run on roasts 63-65.** One part changed: the ramp. `--ror-peak-at`
+now defaults to `53 + 0.20 * (mass − 400)` seconds above 400 g, capped at 75
+(`ror_peak_default`): 66 s at 463 g, 73 s at 500 g. 400 g and below are
+untouched, and v7 regenerates byte-identical. v8-v10 were authored at 53 and
+need `--ror-peak-at 53` to reproduce.
+
+**The back-test.** Each roast's background re-authored with the dip input set so
+the model's TP equals the bed's own, then `e = bed − curve` for a sweep of peak
+times. `e` at 45/60/75/90 s, the 85-115 s entry slope, and rms over 40-110 s:
+
+```
+roast  mass  curve TP − bed TP   peak 53                          best in sweep
+                as roasted
+ 56    400      −1.9             −2.1 −3.1 −1.8 −1.1  +0.7  2.01   62 s: rms 0.55
+ 62    400      +5.4             +0.3 −0.1 +1.2 +1.4  −2.1  0.95   53 s
+ 60    400      +6.4             +4.7 +5.4 +5.7 +4.7  −7.3  4.81   53 s (bed ahead)
+ 64    462      +8.5             −1.2 −1.2 +1.2 +3.1  +1.3  2.23   53 s
+ 65    463      +2.2             −4.7 −6.2 −3.6 −1.0  +4.3  3.97   66 s: −2.2 −2.5 −0.1 +1.9  +1.4  2.03
+ 63    500      +1.7             −5.3 −7.3 −4.9 −2.1  +7.2  4.75   70 s: −2.3 −2.5 −0.1 +1.9  +3.4  2.12
+```
+
+**Two effects are in the first minute, and the scorecard alone could not
+separate them:**
+
+1. **Preload.** A roast whose curve dipped less than its bed (60, 62, 64) keeps
+   up with a 53 s ramp or runs ahead of it. The dip error re-seeds the loop's
+   integrator at the floor, so a shallow curve buys a harder early drive. About
+   +0.7 degC of `e60` per degC of dip mismatch.
+2. **Mass.** At a small mismatch (56, 65, 63) the heavy beds are about 5 degC
+   further behind at 60 s than 400 g is, and they want the peak 13-20 s later.
+
+**So roast 64 is not evidence for this change, and one claim made on roast 65
+was wrong**: 64's slow first minute *was* the dip handing the ramp a wrong
+start. Its bed followed a TP-matched 53 s ramp to −1.2 degC. The revision rests
+on roasts 63 and 65, and it makes 64's back-test worse (rms 2.23 → about 4.6),
+for the reason in (1).
+
+**What is measured and what is not.** Measured: two heavy roasts with a matched
+dip, both best with a later peak. Not measured: that the dependence is linear in
+mass, or that it is mass at all and not the fan step-down all three heavy roasts
+made inside 30 s. Heat capacity alone predicts 3-4 s, not 13-20. It is an
+empirical default for 400-500 g.
+
+**New against old at 463 g** (v10's spec, peak 66 against 53):
+
+```
+   t      30     60     90    120    180    240    300 .. DROP
+ dBT     0.0   −3.4   −2.6   −1.4   −0.2   +0.2   +0.1 .. 0.0
+```
+
+The change is confined to the first three minutes, but it reaches 120 s, so it
+moves the entry to the drying window as well.
+
+**Prediction, for the next roast above 450 g authored with this default and a
+dip input that puts the curve's TP within 2.5 degC of the bed's:**
+
+| | expect | would mean it is wrong |
+|---|---|---|
+| `e60` | −4 to 0 (was −6 to −8) | above +2: the ramp is now too slow, and preload mattered more than mass |
+| entry slope 85-115 s | +1 to +4 degC/min (was +5 to +8) | still above +5: the peak time is not what the bed is missing |
+| `e` at 180 s and after | unchanged from roasts 63-65 | moves by more than 0.5 |
+| at 400 g | nothing changes | — |
+
+**Still watching, unchanged:** the dip at 462 g of `C1055` (two roasts, needs a
+nominal near −18 to −22), the late gain on `C1055`, the slope through crack.

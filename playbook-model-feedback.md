@@ -35,7 +35,7 @@ roast-space.md § Record and stop there.
 |---|---|---|---|---|
 | **dip** (0 → TP) | `analysis/charge_dip.py` | `phi(mass)`, `tau_mix`, `w_c` | roasts 50/51/53/54 | `BT_c` term 4.7 degC too steep; mass (5.4 % out at 380 g; TP 1.7 high and 4 s early at 500 g; 8.5 high at 462 g of `C1055`, roast 64, and 2.2 high once authored at a nominal −18, roast 65); knows nothing of fan |
 | **plant card** | `analysis/plant_roast46.json` | `a`, `theta`, loss cubic | roast 46 | `theta` is total lag, not delay |
-| **ramp** (TP → ~110 s) | `make_background.py` `--ror-peak-at` | peak time 53 s | a convention, not a fit | **eligible for revision**: beds of 462-500 g peak at 65-73 s and run 7.3-8.5 degC behind at 60 s (roasts 63, 64, 65), with the TP matched or not. Confounded with a fan step-down inside 30 s |
+| **ramp** (TP → ~110 s) | `make_background.py` `ror_peak_default` | peak 53 s to 400 g, +0.20 s/g above | 53: a convention. The mass slope: roasts 63 and 65 (2026-11-15) | **unscored**; linear-in-mass is assumed; confounded with a fan step-down inside 30 s; the bed's first minute also depends on the dip mismatch through loop preload (+0.7 degC of `e60` per degC), so a back-test of the ramp must match the TP first |
 | **drying term** | `make_background.py` `drying_K` | `eta`, window BT 100-140, shape | roast 62 | **unscored**; scaling with water mass is assumed |
 | **RoR family and solver** | `make_background.py` `fit` | four parameters, four constraints | — | with DRY END at 3:12 it cannot put a 201.8 crack before about 6:17 |
 | **development segment** | `make_background.py` `development_segment` | `k`, solved from the spec's DROP | nothing: it is geometry | **never roasted**; the step in RoR's slope at FCs is untested on the loop |
@@ -180,6 +180,11 @@ roast-space.md § Record, before any beans are used:
   transport delay. Do not move a number between models that define it
   differently.
 - **Circulation is per lot.** A fan floor from one coffee is not another's.
+- **The bed is not independent of the curve it chased.** A roast whose
+  background dipped too little ran its first minute on a preloaded integrator
+  and looks like it can follow anything. Back-testing a new curve against an
+  old bed is only fair where the two start from the same turning point, and
+  even then it is a guide: the forward simulation (backlog 3) is the real test.
 - **The operator knows things no log shows**: what the bed looked like, where
   the beans came from, what they meant to type. Ask before modelling around it.
 

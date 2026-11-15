@@ -13,8 +13,9 @@
 > - [roast-space.md](roast-space.md) — a second effort, started 2026-11-15:
 >   which curve to roast, in phase coordinates anchored on first crack. **Its
 >   experiment S1 is run** (roasts 64 and 65, `C1055`): 12.34 % against 14.20 %
->   weight loss, cup comparison outstanding. The ramp is now eligible for a
->   revision: three heavy roasts ran 7-8 degC behind at 60 s.
+>   weight loss, cup comparison outstanding. The ramp default now moves later
+>   above 400 g (roast-space.md § Ramp revision); unscored until the next heavy
+>   roast.
 >   Row L below is still unscored and waits for a 400 g roast at fan 64.
 >
 > **Update discipline.** When a phase completes, move its detail out of *plan*
