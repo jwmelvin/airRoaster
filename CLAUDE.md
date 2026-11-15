@@ -36,6 +36,8 @@ completed firmware work and the F-numbered review findings.
 
 [roast-space.md](roast-space.md) is the roast-space effort (which curve to
 roast): its framework, planned experiments and record in one file.
+[playbook-model-feedback.md](playbook-model-feedback.md) is the procedure for
+revising the background-authoring engine from a batch of roasts.
 
 The investigation record is split by effort and indexed in
 [state-history.md](state-history.md): [cascade](state-history-cascade.md)

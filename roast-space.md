@@ -90,55 +90,63 @@ of those is "easy to overroast, it takes off at the end". The one earlier
 airRoaster roast of it (roast 8, 575 g, pre-cascade) lost 13.6 %. So this lot's
 unexplored region is **below 13 %**.
 
-## 5. The curve family
+## 5. The roast spec: three points and the slope at first crack
 
-**What exists.** `make_background.py` draws TP → DROP as one RoR function, a
-rise times an exponential fall, less the drying term. It has four parameters
-and four constraints (DRY END, FCs, RoR at FCs, RoR peak time). Development is
-just that same curve continued, so `dT_dev` is not free: it is whatever
-`dt_dev` gives at the RoR the approach leaves.
+**A roast is specified by where it has to be and how fast it is going when it
+cracks:**
 
-**What this effort needs.** A per-phase description that keeps RoR continuous
-at the two boundaries. With each phase an exponential in RoR:
+| | what is given | |
+|---|---|---|
+| DRY END | time, at BT 149.6 | fixed point |
+| **FCs** | time, at the lot's `T_FC` | fixed point |
+| **slope at FCs** | `S_FC`, degC/min | **the roast parameter** |
+| DROP | `dt_dev` after FCs, `dT_dev` above it | fixed point |
 
-```
-RoR(s) = R_in * exp(−k * s),   s = 0..1 through the phase
-dT     = R_in * dt * (1 − exp(−k)) / k
-```
+**The shape between the points is the engine's business, not a roast
+parameter.** The engine is `tools/make_background.py` and the models it reads
+(the dip, the plant card, the drying term, the bean table). It takes this spec
+plus the batch (mass, charge temperature, moisture, lot) and returns the
+background: the dip as physics, then a RoR that is smooth and monotone through
+the points. How well its curve turns into the roast that was asked for is what
+[playbook-model-feedback.md](playbook-model-feedback.md) measures and corrects.
 
-one number `k = ln(R_in / R_out)` shapes each phase, `k = 0` is a straight
-line, and continuity hands each phase's `R_out` to the next as `R_in`. For
-development that means `(dt_dev, dT_dev)` become independent choices, inside the
-bound `dT_dev <= R_FC * dt_dev` if RoR is never allowed to rise after crack.
-**That bound is the "takes off at the end" guard written as a spec.**
-
-**This is the operator's "gamma curve", with the ends repaired** (settled
-2026-11-15). The idea is display gamma: between two fixed points, one number
-says how far the curve departs above or below the straight line. Written
-literally, `y = x^g`, it has a defect here: the slope at one end is zero or
-infinite, so RoR would stall or spike at every phase boundary. The exponential
-form does the same job with finite slopes at both ends:
+**What the engine does with this spec today:**
 
 ```
-y(s) = (1 − exp(−k*s)) / (1 − exp(−k))        y = fraction of the phase's dT
-bow  = y(0.5) − 0.5 = tanh(k/4) / 2
+make_background.py --dry-end 192:149.6 --fcs <t>:<T_FC> --ror-at-fcs <S_FC> --development <dt_dev>
 ```
 
-**`bow` is the number to think in**: how far above the straight line the curve
-sits at mid-phase, as a fraction of the phase's temperature span. `bow = 0` is
-linear (constant RoR), positive is front-loaded (declining RoR), negative is
-back-loaded. `bow = +0.10` is `k = 0.81`, an entry RoR 2.25× the exit. For scale,
-v9's Maillard phase (149.6 → 198.8 over 207 s, RoR 23 → 8.3) is about
-`bow = +0.13`.
+That pins DRY END, FCs and the slope, and `dT_dev` follows from the curve.
+`--drop <t>:<BT>` pins the DROP point instead and the slope follows. **All four
+at once is one constraint more than the single RoR curve has**, so it needs a
+development segment of its own after FCs: RoR leaving `S_FC` and decaying at
+whatever rate lands `dT_dev` in `dt_dev`. With RoR never allowed to rise after
+crack that is possible only while `dT_dev <= S_FC * dt_dev`, and that bound is
+the "takes off at the end" guard written as a spec. Not built yet; S1 does not
+need it.
+
+**What the logs already say about the slope (2026-11-15).** Measured as the BT
+slope over FCs ± 15 s, against the background's over the same seconds, on the
+ten roasts from 49 to 63 that have both:
+
+```
+achieved − specified = −0.70 degC/min, sd 0.68        (range −2.28 to 0.00)
+```
+
+**The bed goes through first crack slower than the curve says, by about 0.7.**
+And every one of those specs sat between 8.1 and 9.5, so the parameter this
+effort is built on has never been varied. Two specs closer than about 1.5
+degC/min cannot be told apart in one roast.
 
 ## 6. Experiments
 
 | # | question | design | status |
 |---|---|---|---|
 | **S1** | does roast level show up, in weight loss and in the cup, when only `dt_dev` changes? | `C1055`, two 462 g batches on one background, DROP at FCs + 35 s and FCs + 80 s | **next — § 7** |
-| S2 | is `D(Q)` the right index: do a short-hot and a long-cool development with equal `D` roast the same? | needs the per-phase development segment (§ 5) | needs tooling |
-| S3 | Maillard length at fixed development | move `t_FC` with `t_DE` and the development segment held | needs tooling |
-| S4 | does lower airflow change the cup? | pairs differing only in fan, off the loft floor | not scheduled; the loop is fan-sensitive |
+| S2 | is `D(Q)` the right index: do a short-hot and a long-cool development with equal `D` roast the same? | needs the development segment (§ 5) | needs tooling |
+| S3 | **the slope at FCs as the variable** | same three points, `S_FC` about 6 against about 10 | needs the development segment |
+| S4 | Maillard length at fixed development | move `t_FC` with `t_DE` and the development segment held | needs tooling |
+| S5 | does lower airflow change the cup? | pairs differing only in fan, off the loft floor | not scheduled; the loop is fan-sensitive |
 
 ## 7. S1 — the two `C1055` batches
 
@@ -204,8 +212,8 @@ the same rest.
 4. **Whether the loop holds the curve through development.** `e` and
    `Temp_Drive` (inlet − BT) from FCs to DROP. If this bean "takes off", the
    inlet has to back away to hold 8 → 6 degC/min, and the size of that retreat
-   is the exotherm on this machine. Roast 63's drive *rose* 31.5 → 34.5 over the
-   same stretch.
+   is the exotherm on this machine. Roast 63's drive *rose* 31.6 → 35.4 over the
+   same stretch (`scorecard.py`).
 5. Weight loss A against B, against the 0.59 % noise.
 
 ## Record

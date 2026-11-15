@@ -2051,7 +2051,7 @@ model over-credits a heavier bed), **fan 62 against the 64 the series ran**
 (`mdot ~ fan − 40`, so about −8 % of flow), and the new lot. A warmer
 charge was never one of them, since it would have run fast, not slow.
 
-**The 85-115 s entry slope is about +6.6 degC/min, so the residual window fails
+**The 85-115 s entry slope is +8.0 degC/min, so the residual window fails
 the ±2 gate** and nothing in it can be compared with roasts 56-62.
 
 **What it does establish:** 500 g **of `C1066`** circulates and sustains at
