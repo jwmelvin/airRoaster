@@ -2056,7 +2056,10 @@ the ±2 gate** and nothing in it can be compared with roasts 56-62.
 
 **What it does establish:** 500 g **of `C1066`** circulates and sustains at
 **fan 62**. That holds for this lot only, because each bean shape lofts differently
-(operator) and another lot's floor has to be found on its own charge. And
+(operator) and another lot's floor has to be found on its own charge.
+The step down from 64 was forced from above: at 500 g, **64 pushed the
+top of the spout too high** (operator), so 62 sits between that loft ceiling and
+the circulation floor. And
 C1066 cracked at **199.6**, its first point for `beans.py`. DROP was +3.6 degC
 on v7's 202.4, as asked, with the extra 13 s past the curve's end coming from the
 operator's drop.
