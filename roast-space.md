@@ -67,22 +67,23 @@ roaster at all. Colour is read on the operator's meter and logged in Artisan's
 
 **What the meter's number is** (a MAX30101 running
 [juztins-lab/roast-meter](https://github.com/juztins-lab/roast-meter), source
-read 2026-11-15; the code is not on this computer, so the unit's own constants
-are unconfirmed):
+read 2026-11-15; a fork for improving it is at `~/src/roast-meter`. The unit's
+own stored constants are unconfirmed):
 
 - **Infrared only.** Red and green are switched off; the reading is the 880 nm
   LED's reflected count, the band commercial meters use.
 - `x = IR count // 1000`, then **`reading = round(x − (117 − x) × 0.165)`**,
   i.e. `1.165 x − 19.3`. The firmware labels this "agtron"; 117 and 0.165 are
-  its defaults, a straight line and not a calibration of this unit. **Higher is
-  lighter.** 94 is `x = 97`, 82 is `x = 87`.
+  its defaults. **Higher is lighter.** 94 is `x = 97`, 82 is `x = 87`.
+- **Calibrated at one point**: the LED current was set so baking soda reads the
+  community's agreed 230 (`x ≈ 214`, about 80 % of the sensor's full scale).
+  That fixes the gain against a white standard on the day it was done.
 - **One step of `x` is 1.165 units**, so the display cannot resolve better than
   about 1.2.
-- **Nothing in it is referenced.** There is no white or dark standard: the
-  count scales with the LED current setting (`ledBrightness`, default 135),
-  with LED temperature (the Bluetooth build waits 60 s to warm up), and with
-  how the grounds are packed against the window. Readings compare within a
-  session; across sessions they need a retained reference read each time.
+- **Nothing is referenced at read time.** The count scales with LED
+  temperature (the operator warms it at least 60 s) and with how the grounds
+  are packed against the window, and there is no dark reading. A baking-soda
+  read at the start of a session is the check that the 230 still holds.
 
 ## 4. What the logs already say (2026-11-15)
 
@@ -204,8 +205,8 @@ in crack time, slope through crack and finish, not along one variable. Two
 points cannot say what `Q` is.
 
 **Colour agrees: 94 against 82**, 12 units for 1.86 % of weight loss, about 6.5
-units per percent on this lot. One reading per roast, so **the meter's
-repeatability is not known** and nothing says yet how many units are noise.
+units per percent on this lot. Each roast was read twice and the two reads
+agreed, so the difference is at least ten times the 1.2-unit resolution.
 What colour can do that weight loss cannot is separate moisture leaving from
 browning: two roasts at one weight loss and different colour, or the reverse,
 would be the first evidence about path (S2) that does not need a cup.
