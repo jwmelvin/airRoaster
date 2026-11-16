@@ -62,10 +62,27 @@ can be called equal or not.
 
 **The measured side of roast degree is weight loss and ground colour.** Weight
 loss is machine-independent, which is what lets the Behmor history speak to this
-roaster at all. Colour is read on the operator's own meter (a MAX30101
-reflectance sensor) and logged in Artisan's `ground_color`; **the scale is the
-meter's own, higher is lighter**, and it is not an Agtron number until it has
-been compared against one. `scorecard.py` prints it. Readings begin at roast 64.
+roaster at all. Colour is read on the operator's meter and logged in Artisan's
+`ground_color`; `scorecard.py` prints it. Readings begin at roast 64.
+
+**What the meter's number is** (a MAX30101 running
+[juztins-lab/roast-meter](https://github.com/juztins-lab/roast-meter), source
+read 2026-11-15; the code is not on this computer, so the unit's own constants
+are unconfirmed):
+
+- **Infrared only.** Red and green are switched off; the reading is the 880 nm
+  LED's reflected count, the band commercial meters use.
+- `x = IR count // 1000`, then **`reading = round(x − (117 − x) × 0.165)`**,
+  i.e. `1.165 x − 19.3`. The firmware labels this "agtron"; 117 and 0.165 are
+  its defaults, a straight line and not a calibration of this unit. **Higher is
+  lighter.** 94 is `x = 97`, 82 is `x = 87`.
+- **One step of `x` is 1.165 units**, so the display cannot resolve better than
+  about 1.2.
+- **Nothing in it is referenced.** There is no white or dark standard: the
+  count scales with the LED current setting (`ledBrightness`, default 135),
+  with LED temperature (the Bluetooth build waits 60 s to warm up), and with
+  how the grounds are packed against the window. Readings compare within a
+  session; across sessions they need a retained reference read each time.
 
 ## 4. What the logs already say (2026-11-15)
 
