@@ -60,9 +60,12 @@ here has measured it.** Its job is to turn `(dt_dev, dT_dev)` into one number
 that predicts roast degree, so that a short hot development and a long cool one
 can be called equal or not.
 
-**The measured side of roast degree is weight loss**, and colour if a meter
-turns up. Weight loss is machine-independent, which is what lets the Behmor
-history speak to this roaster at all.
+**The measured side of roast degree is weight loss and ground colour.** Weight
+loss is machine-independent, which is what lets the Behmor history speak to this
+roaster at all. Colour is read on the operator's own meter (a MAX30101
+reflectance sensor) and logged in Artisan's `ground_color`; **the scale is the
+meter's own, higher is lighter**, and it is not an Agtron number until it has
+been compared against one. `scorecard.py` prints it. Readings begin at roast 64.
 
 ## 4. What the logs already say (2026-11-15)
 
@@ -174,6 +177,7 @@ Two 462 g batches of `C1055` at one total time (2026-11-15). Records: § Roast 6
 | development | 37 s, +3.5 | 83 s, +10.6 |
 | `D(2)` / `D(3)` | 42 / 46 | 126 / 163 |
 | **weight loss** | **12.34 %** | **14.20 %** |
+| **ground colour** (operator's meter) | **94** | **82** |
 
 **+1.86 % of weight loss for 3× the development index**, against 0.59 % of
 scatter. B's 14.2 % is the median of this lot's Behmor history (14.3), the
@@ -181,6 +185,13 @@ roasts the operator called overroasted; A's 12.3 % is below anything it has had.
 **The cup comparison is outstanding**, and it is between two roasts that differ
 in crack time, slope through crack and finish, not along one variable. Two
 points cannot say what `Q` is.
+
+**Colour agrees: 94 against 82**, 12 units for 1.86 % of weight loss, about 6.5
+units per percent on this lot. One reading per roast, so **the meter's
+repeatability is not known** and nothing says yet how many units are noise.
+What colour can do that weight loss cannot is separate moisture leaving from
+browning: two roasts at one weight loss and different colour, or the reverse,
+would be the first evidence about path (S2) that does not need a cup.
 
 **`T_FC` for `C1055`: 201.8 and 201.2**, marked by ear on roasts whose crack was
 hard to hear. The operator's standing estimate is about 200.
@@ -200,13 +211,14 @@ e 180/240/300/360    −1.40 / −0.87 / −0.53 / +1.30       rms DRY END-FCs 1
 DRY END      195 s (+2.5 s)
 FCs          201.8 @ 410 s        slope 6.6 (curve 7.9)
 development  37 s, +3.5, D2 42, D3 46, mean e +1.10
-DROP         205.3 @ 447 s        weight loss 12.34 %
+DROP         205.3 @ 447 s        weight loss 12.34 %   ground colour 94
 ```
 
 - **The dip was 8.5 degC deeper than the model's.** Roast 63 (500 g, another
   lot) missed by 1.7 the same way. Charge and preheat matched the spec (BT
   130.3, inlet 140.2), so it is the beans, the lot, or the 12.9 degC room. The
-  log's `greens_temp` and `moisture_greens` both read 0.0, i.e. not entered.
+  log's `greens_temp` was entered afterwards as the nominal −5.0;
+  `moisture_greens` reads 0.0, i.e. not entered.
   **Watching: dip, one roast.** B is authored at a nominal −18 to match.
 - **`T_FC` for `C1055` on this probe: 201.8** (n = 1), the highest of any lot on
   the airRoaster.
@@ -234,7 +246,7 @@ e 180/240/300/360    −1.75 / −1.47 / −0.40 / +1.81       rms DRY END-FCs 1
 DRY END      195 s (+3.5 s)
 FCs          201.2 @ 366 s        slope 11.0 (curve 10.7)
 development  83 s, +10.6, D2 126, D3 163, mean e +1.03
-DROP         211.8 @ 449 s        weight loss 14.20 %
+DROP         211.8 @ 449 s        weight loss 14.20 %   ground colour 82
 ```
 
 **Against the prediction written before it ran:**
@@ -248,8 +260,8 @@ DROP         211.8 @ 449 s        weight loss 14.20 %
 | weight loss | above 13.0 % | 14.20 % | held |
 
 **Not as planned:** the fan went 64 → 62 at 8 s instead of repeating A's
-65/63/62/61 schedule, charge BT was 134.3 against A's 130.3, and `greens_temp`
-and `moisture_greens` again read 0.0.
+65/63/62/61 schedule, charge BT was 134.3 against A's 130.3, and `moisture_greens`
+again reads 0.0 (`greens_temp` was entered afterwards as the nominal −5.0).
 
 - **The dip input was the right correction.** Authored at a nominal −18, the
   curve's TP was 2.2 above the bed's; at −5 it was 8.5 above (roast 64).

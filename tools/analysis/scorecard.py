@@ -115,6 +115,9 @@ def score(rid, bkg_path=None):
          'moisture': d.get('moisture_greens')}
     w = d['weight']
     r['loss'] = (w[0] - w[1]) / w[0] * 100 if w[0] and w[1] else None
+    # the operator's meter (MAX30101), on its own scale: higher is lighter. 0.0 is "not read"
+    r['ground'] = d.get('ground_color') or None
+    r['whole'] = d.get('whole_color') or None
     inlet = channel(d, 'Inlet')
     r['charge_bt'] = bt[ti[0]]
     r['inlet_pre'] = at(t, inlet, -2.0) if inlet else None
@@ -204,6 +207,7 @@ CARD = [
     ('drive FCs -> end', lambda r: f"{f(r.get('drive_fc'))} -> {f(r.get('drive_drop'))} degC of inlet over BT, read at {f(r.get('drive_end_t'), '.0f')} s"),
     ('DROP', lambda r: f"{f(r['drop_bt'])} @ {f(r['drop_t'], '.0f')} s"),
     ('weight loss', lambda r: f"{f(r['loss'], '.2f')} %" if r['loss'] is not None else '-- no weight out'),
+    ('colour', lambda r: f"ground {f(r.get('ground'), '.0f')}   whole {f(r.get('whole'), '.0f')}   (operator's meter, own scale; higher is lighter)"),
 ]
 
 COLS = [('roast', 'roast', '', 5), ('g', 'mass', '.0f', 4), ('TP', 'tp_bt', '.1f', 5),
@@ -211,7 +215,7 @@ COLS = [('roast', 'roast', '', 5), ('g', 'mass', '.0f', 4), ('TP', 'tp_bt', '.1f
         ('min_e', 'min_e', '+.2f', 6), ('rms', 'rms_mid', '.2f', 5), ('DE_dt', 'de_dt', '+.0f', 5),
         ('FC_bt', 'fc_bt', '.1f', 6), ('FC_dt', 'fc_dt', '+.0f', 5), ('RoR_FC', 'ror_fc', '.1f', 6),
         ('dev_s', 'dev_dt', '.0f', 5), ('dev_dT', 'dev_dT', '+.1f', 6), ('D2', 'D2', '.0f', 4),
-        ('loss%', 'loss', '.2f', 6)]
+        ('loss%', 'loss', '.2f', 6), ('gnd', 'ground', '.0f', 4)]
 
 
 def main():

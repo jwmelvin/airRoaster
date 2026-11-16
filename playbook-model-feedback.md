@@ -43,7 +43,7 @@ roast-space.md § Record and stop there.
 | **the loop** | `analysis/artisan_pid.py`, `sim.py` | Kp/Ki, lookahead | roasts 46-49 | the docs say 3.0/0.07; the logs and the `.aset` say 2.4/0.056 |
 | **slope through crack** | nowhere yet | — | — | achieved runs 0.70 ± 0.68 degC/min under spec (roasts 49-63) for specs of 8.1-9.5; +0.3 over at a spec of 10.7 (roast 65) |
 | **late gain, per lot** | nowhere yet | — | — | `C1055` gains 1.8-2.2 degC on the curve over 300-360 s (roasts 64, 65); `C1043` and `C1066` do not |
-| **roast degree** | nowhere yet | — | — | weight loss scatters 0.59 % at fixed development |
+| **roast degree** | nowhere yet | — | — | weight loss scatters 0.59 % at fixed development; ground colour (operator's meter, own scale, higher is lighter) from roast 64: 94 at 12.34 %, 82 at 14.20 %, repeatability unmeasured |
 
 **Residual → owner.** Read the scorecard top to bottom and assign each miss
 before thinking about fixes:
